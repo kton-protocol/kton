@@ -1,5 +1,7 @@
 # kton
 
+**[kton.dev](https://kton.dev)** · content-addressed provenance for computations and sign-offs
+
 **kton** is a content-addressed substrate for verifiable science: it records **how a result was
 produced** (the **plankton** layer) and **who vouched for it** (the **nekton** layer) as small, signed,
 content-addressed records anyone can verify - no central server, no shared database, no blockchain. A
