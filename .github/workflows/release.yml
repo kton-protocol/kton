@@ -1,0 +1,67 @@
+name: release
+
+# Cut a release by pushing a tag: `git tag v0.1.0 && git push origin v0.1.0`.
+# Builds the three binaries (plankton, nekton, kton) for the common platforms, packages each
+# platform into one archive with a SHA-256, and attaches them to a DRAFT GitHub Release for review
+# before publishing. This is the one-step install path a stranger uses ("download, run") - no Go
+# toolchain, no vanity-import setup required. (`go install kton.dev/...@latest` additionally needs
+# kton.dev to serve a go-import meta redirect; the binaries below do not.)
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: build the three binaries and package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME}"
+          ext=""; [ "$GOOS" = windows ] && ext=".exe"
+          name="kton_${ver}_${GOOS}_${GOARCH}"
+          mkdir -p "dist/$name"
+          # each kernel + the cockpit lives in its own module; build all three with -trimpath (no build-path leak)
+          ( cd reference        && go build -trimpath -ldflags "-s -w" -o "$GITHUB_WORKSPACE/dist/$name/plankton$ext" ./cmd/plankton )
+          ( cd nekton/reference && go build -trimpath -ldflags "-s -w" -o "$GITHUB_WORKSPACE/dist/$name/nekton$ext"   ./cmd/nekton   )
+          ( cd kton/reference   && go build -trimpath -ldflags "-s -w" -o "$GITHUB_WORKSPACE/dist/$name/kton$ext"     ./cmd/kton     )
+          cp LICENSE "dist/$name/" 2>/dev/null || true
+          cd dist
+          if [ "$GOOS" = windows ]; then
+            zip -qr "$name.zip" "$name"; asset="$name.zip"
+          else
+            tar czf "$name.tar.gz" "$name"; asset="$name.tar.gz"
+          fi
+          sha256sum "$asset" | tee "$asset.sha256"
+          echo "ASSET=dist/$asset" >> "$GITHUB_ENV"
+
+      - name: attach to the draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256

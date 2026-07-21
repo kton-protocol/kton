@@ -1,0 +1,26 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "warfarin_PK nonmem foton (plankton)",
+      "digest": {
+        "sha256": "5da55d7885d87097e5decf17d7edf6e49597a655f401249cca66bd77a17121f1"
+      }
+    }
+  ],
+  "predicateType": "https://kton.dev/claim/v0",
+  "predicate": {
+    "predicate": {
+      "uri": "https://kton.dev/v/reproduced"
+    },
+    "object": {
+      "value": "L2",
+      "datatype": {
+        "uri": "https://kton.dev/v/normalization-level"
+      }
+    },
+    "by": "reviewer:org-pki:CN=A. Reviewer",
+    "when": "2026-07-02T12:00:00Z",
+    "why": "Re-ran the frozen warfarin foton; canonical outputs match within tolerance (L2)."
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "normalizer": "strip-license-date",
+  "version": "v1",
+  "description": "The L1 equivalence criterion for NONMEM .lst output: remove the incidental content two correct runs legitimately differ on - license/licensee, run date, run directory. A pure, content-addressed normalizer POTENTIAL: a definition, not an executor. It is realised by a normalizer-executor (e.g. spike-rcockpit/potentials/normalize.py), which - because it RUNS - must itself be qualified at L0 (byte-exact re-run) before it can be trusted to normalize outputs for qualifying other tools.",
+  "strip_line_patterns": ["License", "Current Date", "Run Directory"]
+}

@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# nekton-vote - a bash EXECUTOR for the vote.
+#
+# Strict boundary:
+#   - nekton (the kernel) records signed claims; it does NOT run anything.
+#   - THIS tool runs: it resolves liquid-democracy delegations and counts.
+#   - Its OUTPUT is a plankton foton Statement (kind=tally). plankton only records it.
+#
+# Inputs are content-addressed:
+#   - motion.json, roster.json (pinned by hash)
+#   - a directory of SIGNED nekton claim DSSE files (the sealed ballot box)
+#
+# Determinism (so plankton can re-run and get the same output hash):
+#   sorted voter order · direct vote overrides delegation · topic-scoped delegation ·
+#   transitive resolution · cycle/dangling -> abstain · latest `when` then greatest hash ·
+#   canonical-JSON output. No wall-clock, no randomness.
+#
+# Usage:
+#   nekton-vote --motion m.json --roster r.json --ballots DIR --keys PUBDIR \
+#               --method liquid-democracy@0.1 --sign key.pem -o result.json
+#   Ballots are COUNTED by VERIFIED signing keyid (--keys = the eligible voters' *.pub; roster voter
+#   ids ARE keyids). A ballot's self-declared `by` is display-only and never confers a vote.
+#
+# JSON/crypto are delegated to ./nekton-codec (production: jq + openssl). The LOGIC is bash.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"; CODEC="$HERE/nekton-codec"
+
+MOTION= ROSTER= BALLOTS= METHOD="liquid-democracy@0.1" KEY= OUT="result.json" KEYS=
+while [[ $# -gt 0 ]]; do case "$1" in
+  --motion) MOTION="$2"; shift 2;; --roster) ROSTER="$2"; shift 2;;
+  --ballots) BALLOTS="$2"; shift 2;; --method) METHOD="$2"; shift 2;;
+  --keys) KEYS="$2"; shift 2;;
+  --sign) KEY="$2"; shift 2;; -o) OUT="$2"; shift 2;;
+  *) echo "unknown arg $1" >&2; exit 2;; esac; done
+: "${MOTION:?--motion required}" "${ROSTER:?--roster required}" "${BALLOTS:?--ballots required}" "${KEY:?--sign required}" \
+  "${KEYS:?--keys DIR of the eligible voters .pub keys is required to verify ballots}"
+NEKTON="${NEKTON:-nekton}"   # the kernel verifier used to authenticate each ballot's signature
+
+py() { python3 -c "$1" "${@:2}"; }   # tiny inline reads for the two scalar pulls we need
+TOPIC="$(py 'import json,sys;print(json.load(open(sys.argv[1]))["topic"])' "$MOTION")"
+MOTION_ID="$(py 'import json,sys;print(json.load(open(sys.argv[1]))["id"])' "$MOTION")"
+mapfile -t CHOICES < <(py 'import json,sys;[print(c) for c in json.load(open(sys.argv[1]))["choices"]]' "$MOTION")
+declare -A WEIGHT; while IFS=$'\t' read -r vid w; do WEIGHT["$vid"]="$w"; done < <(
+  py 'import json,sys
+r=json.load(open(sys.argv[1]))
+[print(v["id"],v["weight"],sep="\t") for v in r["voters"]]' "$ROSTER")
+
+# ---- map each eligible voter's keyid -> its public key file (the roster is keyed BY keyid) ----
+declare -A PUBFILE
+for pf in "$KEYS"/*.pub; do
+  [[ -e "$pf" ]] || continue
+  kid="$(py 'import hashlib,sys;print(hashlib.sha256(bytes.fromhex(open(sys.argv[1]).read().strip())).hexdigest()[:16])' "$pf")"
+  PUBFILE["$kid"]="$pf"
+done
+
+# ---- read the sealed ballot box: one SIGNATURE-VERIFIED claim -> one extracted line -----------
+declare -A VOTE VOTE_KEY DELEG DELEG_KEY
+declare -a INPUT_HASHES
+for f in "$BALLOTS"/*.json; do
+  h="$($CODEC sha256 "$f")"; INPUT_HASHES+=("ballots/$(basename "$f")	$h")
+  IFS=$'\t' read -r declared kind subject object context when < <($CODEC extract-claim "$f")
+  # SECURITY: the voter identity is the VERIFIED signing keyid, never the self-declared `by`. A ballot
+  # signed by ANY key that sets by:"alice" must NOT count as alice (round-2 C1). Find the eligible voter
+  # whose PUBLIC KEY actually verifies this ballot's DSSE signature; drop any ballot that verifies
+  # against no eligible key (forged, ineligible, or unsigned). `declared` is kept only for diagnostics.
+  signer=""
+  for kid in "${!WEIGHT[@]}"; do
+    [[ -n "${PUBFILE[$kid]:-}" ]] || continue
+    if "$NEKTON" verify "$f" "${PUBFILE[$kid]}" >/dev/null 2>&1; then signer="$kid"; break; fi
+  done
+  [[ -n "$signer" ]] || continue
+  key="${when}|${h}"                                      # latest when, tie-break greatest hash
+  if [[ "$kind" == "vote" && "$subject" == "$MOTION_ID" ]]; then
+    if [[ -z "${VOTE_KEY[$signer]:-}" || "$key" > "${VOTE_KEY[$signer]}" ]]; then
+      VOTE["$signer"]="$object"; VOTE_KEY["$signer"]="$key"; fi
+  elif [[ "$kind" == "delegate" && "$context" == "$TOPIC" ]]; then   # topic-scoped only
+    if [[ -z "${DELEG_KEY[$signer]:-}" || "$key" > "${DELEG_KEY[$signer]}" ]]; then
+      DELEG["$signer"]="$object"; DELEG_KEY["$signer"]="$key"; fi
+  fi
+done
+
+# ---- deterministic resolution: direct vote wins; else follow delegation; cycle -> abstain
+resolve() {  # $1 voter -> echoes "choice|via" ; "ABSTAIN|<why>" if none
+  local v="$1"; shift; local seen=" $* "
+  if [[ -n "${VOTE[$v]:-}" ]]; then echo "${VOTE[$v]}|direct"; return; fi
+  if [[ -n "${DELEG[$v]:-}" ]]; then
+    local t="${DELEG[$v]}"
+    if [[ "$seen" == *" $t "* || -z "${WEIGHT[$t]:-}" ]]; then echo "ABSTAIN|cycle-or-dangling"; return; fi
+    resolve "$t" $* "$v"; return
+  fi
+  echo "ABSTAIN|no-vote"
+}
+
+declare -A TALLY; for c in "${CHOICES[@]}"; do TALLY["$c"]=0; done
+RES_JSON=""; ABSTAIN=(); TURNOUT=0
+mapfile -t VOTERS < <(printf '%s\n' "${!WEIGHT[@]}" | sort)    # sorted voter order
+for v in "${VOTERS[@]}"; do
+  r="$(resolve "$v" "$v")"; choice="${r%%|*}"; via="${r##*|}"
+  if [[ "$choice" == "ABSTAIN" ]]; then
+    ABSTAIN+=("$v"); RES_JSON+="$(printf '"%s":{"choice":null,"via":"%s"},' "$v" "$via")"
+  else
+    TALLY["$choice"]=$(( TALLY["$choice"] + WEIGHT["$v"] )); TURNOUT=$(( TURNOUT + WEIGHT["$v"] ))
+    RES_JSON+="$(printf '"%s":{"choice":"%s","via":"%s"},' "$v" "$choice" "$via")"
+  fi
+done
+
+# ---- winner (deterministic tie-break by choice name; genuine tie -> null) ----------------
+WINNER=null; best=-1; tie=0
+for c in $(printf '%s\n' "${CHOICES[@]}" | sort); do
+  t=${TALLY[$c]}
+  if (( t > best )); then best=$t; WINNER="\"$c\""; tie=0
+  elif (( t == best )); then tie=1; fi
+done
+(( TURNOUT > 0 )) || WINNER=null
+(( tie == 1 )) && WINNER=null
+
+# ---- write result.json (canonical) + hash ------------------------------------------------
+tally_json=""; for c in "${CHOICES[@]}"; do tally_json+="$(printf '"%s":%s,' "$c" "${TALLY[$c]}")"; done
+abstain_json="$(printf '%s\n' "${ABSTAIN[@]:-}" | { grep -v '^$' || true; } | sort | sed 's/.*/"&"/' | paste -sd, -)"
+inputset="$(printf '%s\n' "${INPUT_HASHES[@]}" | cut -f2 | sort | sed 's/.*/"&"/' | paste -sd, -)"
+roster_h="$($CODEC canon-hash "$ROSTER")"; motion_h="$($CODEC canon-hash "$MOTION")"
+raw_result=$(cat <<JSON
+{"motion":"$MOTION_ID","method":"$METHOD","tally":{${tally_json%,}},"winner":$WINNER,
+ "turnout":$TURNOUT,"abstentions":[${abstain_json}],"resolution":{${RES_JSON%,}},
+ "input_set":{"roster":"$roster_h","motion":"$motion_h","ballots":[${inputset}]}}
+JSON
+)
+# canonicalize via codec so the hash is stable
+echo "$raw_result" | python3 -c 'import json,sys;json.dump(json.load(sys.stdin),open(sys.argv[1],"w"),indent=2)' "$OUT"
+RESULT_H="$($CODEC canon-hash "$OUT")"
+
+# ---- emit the plankton foton Statement (kind=tally) + sign DSSE --------------------------
+PROTO="$(mktemp)"; cat > "$PROTO" <<JSON
+{"method":{"id":"${METHOD%@*}","version":"${METHOD#*@}",
+  "rules":{"direct_vote_overrides_delegation":true,"delegation_scoped_to_topic":true,
+           "cycle_without_direct_vote":"abstain","multiple_votes":"latest-when-then-greatest-hash",
+           "voter_order":"sorted-by-id"}},
+ "env":{"tool":"nekton-vote","version":"0.1"},"outputs_capture":["result.json"]}
+JSON
+INPUTS_TSV="$(mktemp)"; { printf 'roster.json\t%s\n' "$roster_h"; printf 'motion.json\t%s\n' "$motion_h"
+  printf '%s\n' "${INPUT_HASHES[@]}"; } > "$INPUTS_TSV"
+$CODEC foton "$RESULT_H" "$PROTO" "$INPUTS_TSV" > tally.foton.statement.json
+$CODEC dsse-sign tally.foton.statement.json "$KEY" > tally.foton.dsse.json
+PROTO_REF="$(python3 -c 'import json,sys;print(json.load(open("tally.foton.statement.json"))["predicate"]["protocol"]["ref"])')"
+rm -f "$PROTO" "$INPUTS_TSV"
+
+# ---- report ------------------------------------------------------------------------------
+echo "nekton-vote: topic        $TOPIC"
+echo "nekton-vote: ballot box   ${#INPUT_HASHES[@]} claims (sealed, by hash)"
+printf 'nekton-vote: tally        '; for c in "${CHOICES[@]}"; do printf '%s=%s ' "$c" "${TALLY[$c]}"; done; echo
+echo "nekton-vote: winner       $WINNER   abstain=${ABSTAIN[*]:-none}"
+echo "nekton-vote: result.json  $RESULT_H"
+echo "nekton-vote: protocol.ref $PROTO_REF"
+echo "nekton-vote: emitted      tally.foton.dsse.json  (kind=tally, signed)"
+echo "             -> hand to:  plankton record --foton tally.foton.dsse.json   (plankton runs nothing)"

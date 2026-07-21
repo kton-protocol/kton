@@ -1,0 +1,44 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "modelfit_dir1/NM_run1/warfarin_PK.lst",
+      "digest": {
+        "sha256": "048755ecd72c2114bf80c1814824db494b555f6c30bf3547bebffc7e64b45cf1"
+      }
+    },
+    {
+      "name": "modelfit_dir1/NM_run1/warfarin_PK.ext",
+      "digest": {
+        "sha256": "babcae187bdf9c89f12bcf85f7d4027ff4285d233b1ca40644bb9d38b8bfc5d9"
+      }
+    }
+  ],
+  "predicateType": "https://kton.dev/foton/v0",
+  "predicate": {
+    "inputs": [
+      {
+        "name": "raw/warfarin_conc.csv",
+        "digest": {
+          "sha256": "f96b27171838193998ec3c2c7fc61fa13a392da97b78b8193eb5994f3d077c88"
+        }
+      }
+    ],
+    "protocol": {
+      "kind": "nonmem",
+      "ref": "sha256:b7bab29b50af985ee87cdf5c2c4dbb61710027853289a8672cd4c42686a829e6",
+      "descriptor": {
+        "command_file": "sha256:548d6917ef3c933b56d974920027764121883cddd6f1704f2abac642c7a80353",
+        "env": {
+          "tool": "PsN/NONMEM",
+          "version": "7.4.1",
+          "method": "FOCE-INTER"
+        },
+        "outputs_capture": [
+          "modelfit_dir1/NM_run1/*.lst",
+          "modelfit_dir1/NM_run1/*.ext"
+        ]
+      }
+    }
+  }
+}

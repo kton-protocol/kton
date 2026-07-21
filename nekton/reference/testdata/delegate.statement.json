@@ -1,0 +1,23 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "uri": "did:example:chair"
+    }
+  ],
+  "predicateType": "https://kton.dev/claim/v0",
+  "predicate": {
+    "predicate": {
+      "uri": "https://kton.dev/v/delegate"
+    },
+    "object": {
+      "id": "did:example:delegate-qc"
+    },
+    "context": {
+      "uri": "https://kton.dev/v/pmx-board"
+    },
+    "by": "did:example:chair",
+    "when": "2026-07-01T09:00:00Z",
+    "why": "Delegating GxP review authority to the QC lead for the pmx-board scope."
+  }
+}

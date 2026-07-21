@@ -1,0 +1,168 @@
+.TH NEKTON 1 "2026-07-07" "nekton v0" "nekton manual"
+.SH NAME
+nekton \- signed statements (claims) about content-addressed things
+.SH SYNOPSIS
+.B nekton
+.I command
+[\fIarguments\fR]
+.SH DESCRIPTION
+.B nekton
+records \fIsigned commitments\fR - claims an accountable identity makes ABOUT content:
+a plankton foton, a file, a URI, or another claim. Where
+.BR plankton (1)
+records what is \fIreproducible\fR (checkable by re-running/hashing), nekton records what is
+\fIattestable\fR (checkable only by \fIwhose\fR signature carries it): a description, a rationale,
+a finding, a review, a tool validation.
+.PP
+A claim is a signed subject\(->predicate\(->object triple (RDF-flavoured, DSSE-signed). The kernel
+treats predicates and context as \fBopaque terms\fR: it stores and indexes them but never
+interprets vocabulary. It prescribes \fBno ontology and no templates\fR - those are federated
+\fIdata\fR you bring. nekton depends on plankton (shared hashing/DSSE); never the reverse. It never
+executes or reasons over the world.
+.SH CONCEPTS
+.TP
+.B claim
+subject (a hash/URI) + predicate (an opaque term IRI) + optional object/context + \fBby\fR (signer)
++ \fBwhen\fR + optional evidence - all DSSE-signed.
+.TP
+.B "alias / CURIE"
+Authoring sugar in an aliases file, resolved to full IRIs BEFORE signing (so the wire form always
+carries the full IRI). A \fBterm\fR is a short name (\fIreviewed\fR); a \fBCURIE\fR is a
+\fIprefix:local\fR compact IRI (\fIgxp:reviewed\fR \(-> the prefix's namespace + \fIreviewed\fR); a
+\fBtemplate alias\fR is a short name for a whole template.
+.TP
+.B template
+A content-addressed JSON form definition (a predicate + typed fields). It is authoring sugar, not
+the record: filling it produces one signed claim. Templates are DATA (read from a directory), never
+built into the binary.
+.TP
+.B "scope / seed (subnekton)"
+The one structural grammar the kernel enforces. A \fBseed\fR opens a scope (a bounded, federatable
+sub-registry - a \fIsubnekton\fR); scoped claims chain under it via \fB--scope\fR/\fB--prev\fR. A
+seed's id IS the scope id. This is how a set of claims (e.g. a shared template/ontology commons) is
+delivered federated and vouched for wholesale.
+.TP
+.B nanopublication
+The interop face: a claim RENDERS as a nanopublication (RDF/TriG) via
+.BR "nekton export --nanopub" .
+The DSSE claim stays the stored/signed form.
+.SH COMMANDS
+.TP
+.B nekton keygen \fIname\fR
+Generate an Ed25519 identity (\fIname\fR.key / \fIname\fR.pub). Same format as plankton.
+.TP
+.B nekton annotate \fIsubject\fR|--foton \fIF\fR --template \fIname\fR|\fIalias\fR --set \fIk\fR=\fIv\fR ... --sign \fIkey\fR [--by \fIID\fR] [--scope \fIid\fR --prev \fIid\fR] [--templates-dir \fID\fR] [-o \fIout\fR]
+Author + sign a claim from a template. The subject is a sha256:... , a URI, or \fB--foton \fIF\fR
+(a foton envelope, whose \fIfoton id\fR becomes the subject - so the claim joins plankton's index
+under the same id). Resolves term/CURIE/template aliases, hashes any file-typed field into evidence,
+and auto-stamps \fBwhen\fR. Needs no jq/openssl.
+.RS
+.nf
+
+  nekton annotate --foton fit.foton.json --template desc \\
+      --set summary="mean is 1.5" --set rationale="central-tendency check" \\
+      --by "CN=Analyst" --sign me.key -o desc.dsse.json
+.fi
+.RE
+.TP
+.B nekton templates [--show \fIname\fR]
+List installed templates (from NEKTON_TEMPLATES) and their aliases. With \fB--show \fIname\fR (or a
+positional name/alias) it prints that template's fields: name, type, required/optional, role, and
+enum options - so you never have to open the template JSON to learn its `--set` keys.
+.TP
+.B nekton show \fIclaim.dsse.json\fR|\fIsha256:id\fR
+Print one claim: subject, predicate, the object/statement, signer, and timestamp (from a file or a
+registry id). The compact read that `about`/`by` (which return only pointers) do not give.
+.TP
+.B nekton seed \fIscope-name\fR --sign \fIkey\fR [--by \fIID\fR] [--parent \fIseedId\fR] [-o \fIout\fR]
+Open a (sub)nekton scope. Prints the scope id (the seed's claim id). To fill the scope, on each
+claim set:
+.RS
+.IP \(bu 3
+.B --scope
+= this scope id - the SAME value for every claim in the scope (it never changes);
+.IP \(bu 3
+.B --prev
+= the scope id for the FIRST claim, then the PREVIOUS claim's id for each next one (a hash chain).
+.RE
+.TP
+.B nekton claim \fIspec.json\fR \fIkey.key\fR [\fIout.dsse\fR] [--add] [--registry \fID\fR]
+Author + sign a claim from an explicit JSON spec (when a template does not fit). The authoring spec
+differs from the wire claim: \fBsubject\fR is an ARRAY and \fBpredicate\fR is a BARE string.
+.RS
+.nf
+
+  {
+    "subject":   [ {"hash":"sha256:…"} | {"uri":"…"} ],           # REQUIRED (array)
+    "predicate": "<IRI or alias>",                                # REQUIRED (string)
+    "object":    {"value":"…"} | {"hash":"sha256:…"} | {"uri":"…"},  # optional
+    "by":        "<identity>",  "when": "<RFC3339 UTC>",          # REQUIRED
+    "why":       "…",  "evidence": [ {"hash":"sha256:…"} ],       # optional
+    "scope":     "sha256:<seedId>",  "prev": "sha256:<prevId>"    # for a SCOPED / chained claim
+  }
+.fi
+.RE
+.TP
+.B nekton add \fIenvelope.dsse.json\fR [--registry \fID\fR]
+Ingest a signed claim (enforces the scope chain) into the registry (default ./nekton-data).
+.TP
+.B nekton verify \fIenvelope.dsse.json\fR \fIpubkey.pub\fR|\fIhex\fR
+Verify a DSSE signature and report the claim (prints the \fBclaim id\fR). The public key may be a
+\fB.pub file path\fR OR the hex string itself.
+.TP
+.B nekton about \fIsubject\fR
+Claims about a subject (a "sha256:..." hash or a URI).
+.TP
+.B nekton by \fIsigner\fR|\fIpredicate\fR|\fIobject\fR \fIvalue\fR
+Claims by signer, predicate term, or object. For \fBsigner\fR the value may be a keyid, a .pub file,
+or a public-key hex - all are normalised to the keyid.
+.TP
+.B nekton head \fIscope-id\fR
+Print the tip of a scope's hash chain: the in-scope claim that no other names as \fBprev\fR. Because
+each claim id covers its \fBprev\fR, the head transitively commits to the whole chain, so publishing
+it (or \fBkton anchor\fR on it) makes every prior edit in the scope tamper-evident. A linear chain has
+one head; a branched scope (claims sharing a \fBprev\fR) has several. An empty scope reports the seed
+itself as its tip.
+.TP
+.B nekton export [--title \fIT\fR] [\fIout\fR]
+Serialize claims as JSON.
+.TP
+.B nekton export --nanopub \fIclaim.dsse.json\fR|\fIsha256:id\fR [-o \fIout\fR]
+Render a claim (or a seed) to its nanopublication (RDF/TriG) face.
+.TP
+.B nekton mirror \fIlocal-registry-dir\fR
+Overlay a peer's claims by hash (local, no network) - how a session receives a subnekton
+commons. For a URL peer use
+.BR "kton mirror" .
+To author a scoped/chained claim you must first mirror the registry holding its scope seed and every
+\fBprev\fR ancestor: \fBadd\fR refuses a claim whose \fBprev\fR does not resolve locally.
+.TP
+.B nekton man
+Print this manual page (roff source; pipe to \fBman -l -\fR to render). Embedded in the binary.
+.SH ENVIRONMENT
+.TP
+.B NEKTON_DIR
+Registry directory (default ./nekton-data).
+.TP
+.B NEKTON_TEMPLATES
+Template directory (default ./templates) - federated data, not built in.
+.TP
+.B NEKTON_ALIASES
+Alias file (default ./aliases.json) - CURIE/term/template sugar.
+.SH EXAMPLES
+Receive a shared commons (templates + ontology, delivered as a seeded subnekton), then use it:
+.RS
+.nf
+
+  nekton mirror ../lab/commons/nekton-data     # federated delivery, no server
+  export NEKTON_TEMPLATES=../lab/share/templates NEKTON_ALIASES=../lab/share/aliases.json
+  nekton templates                             # see what's available (with aliases)
+  nekton annotate --foton r.foton.json --template result \\
+      --set statement="early intervention lowers the peak more" --set holds=supported \\
+      --by "CN=Me" --sign me.key -o finding.dsse.json
+  nekton add finding.dsse.json
+.fi
+.RE
+.SH "SEE ALSO"
+.BR plankton (1),
+.BR kton (1)

@@ -1,0 +1,210 @@
+.TH PLANKTON 1 "2026-07-07" "plankton v0" "plankton manual"
+.SH NAME
+plankton \- content-addressed substrate for reproducible results (fotons)
+.SH SYNOPSIS
+.B plankton
+.I command
+[\fIarguments\fR]
+.SH DESCRIPTION
+.B plankton
+records \fIreproducible results\fR: it content-addresses files, records how they
+were produced as a signed \fBfoton\fR, and answers lineage/reproduction questions by
+hash. It is a metadata plane - it stores no file bytes.
+.PP
+Two invariants govern everything:
+.TP
+.B plankton documents, it never executes.
+It hashes, verifies, compares, and indexes. It never runs your commands, tools, or
+normalisers - those are done by \fIexecutors\fR (separate programs) and plankton merely
+records and compares the results by hash.
+.TP
+.B the kernel is network-free.
+Serving a port, mirroring a URL peer, transparency-log anchoring, and byte pinning are
+\fInot\fR plankton - they live in the cockpit,
+.BR kton (1).
+plankton keeps only \fIlocal\fR overlay-by-hash federation.
+.SH CONCEPTS
+.TP
+.B foton
+A signed record that a set of input files, under a protocol (a command descriptor), produced
+a set of output files - all by content hash. Authored with
+.B plankton author
+and ingested with
+.BR "plankton add" .
+.TP
+.B ray
+The chain of fotons an output passes through, e.g. a raw output followed by a normalisation
+foton. Two results are equivalent when their rays \fIconverge\fR (terminal hashes match).
+.TP
+.B "reproduction identity (L0/L1)"
+.B L0
+= byte-identical (raw hashes equal).
+.B L1
+= equal after the same normaliser is applied in the ray. L0 is strictest and implies L1.
+The L0/L1 \fInaming\fR is a label applied on top; plankton just reports whether rays converge.
+.TP
+.B potential
+A pure recipe (e.g. "strip license/date lines") - a normaliser \fIdefinition\fR. Applying
+it needs an \fIexecutor\fR (never plankton); plankton only compares the resulting fotons.
+.TP
+.B spectrum
+The object that \fIdefines a tool\fR: a set of reference fotons (gold model+data \(-> output)
+plus a normaliser potential. A candidate tool \fIfulfils\fR the spectrum when it reproduces
+every reference output. Whether that fulfilment is \fIaccepted\fR as a validation, and called
+"L1", is a signed
+.BR nekton (1)
+attestation - not plankton's verdict.
+.SH COMMANDS
+.TP
+.B plankton keygen \fIname\fR
+Generate an Ed25519 signing identity: writes \fIname\fR.key (secret) and \fIname\fR.pub.
+.TP
+.B plankton author --in \fIF\fR --out \fIF\fR --cmd \fB"..."\fR [--kind \fIK\fR] [--environment \fIsha256:…\fR] [--sign \fIkey\fR] [-o \fIout\fR] [--add] [--registry \fID\fR]
+Author + sign a foton from files that ALREADY EXIST: it hashes each \fB--in\fR/\fB--out\fR file
+and RECORDS the \fB--cmd\fR descriptor. It does not run \fB--cmd\fR. Repeat \fB--in\fR/\fB--out\fR
+for multiple files. Default output: foton.dsse.json.
+.br
+\fB--add\fR ingests the foton into the registry in the same step (the common "record it now" case);
+with \fB--add\fR and no \fB-o\fR, no intermediate file is written. \fB--registry \fID\fR picks the
+target registry (else \fBPLANKTON_DIR\fR, else ./plankton-data).
+.br
+\fB--environment\fR \fIsha256:…\fR (optional) records an ENV-SPECTRUM id (see \fBplankton spectrum\fR,
+\fBenv\fR spectra) the producing environment claims to fulfil. It rides inside the protocol descriptor,
+so it is COVERED - part of \fBprotocol.ref\fR and the action key: a foton produced "under a
+qualified-X environment" is a distinct computation. It is executor-agnostic (names a qualification, not
+a docker image). Concrete environment data (an OCI digest, a lockfile hash) is instead CARRIED, opaque
+to the kernel, and never changes the foton id.
+.RS
+.nf
+
+  plankton author --in data.csv --out fit.txt --cmd "python fit.py data.csv" \\
+      --sign me.key -o fit.foton.json
+.fi
+.RE
+.TP
+.B plankton author \fIspec.json key.hex out.dsse\fR
+The explicit form: author from a JSON spec (inputs/outputs/protocol).
+.TP
+.B plankton add \fIenvelope.dsse.json\fR [--registry \fID\fR]
+Ingest a signed foton into the local registry (default ./plankton-data).
+\fBRecords without verifying\fR - a foton with a present-but-unchecked (even tampered) signature
+ingests here without complaint; run \fBplankton verify\fR to check authenticity. An \fBunsigned\fR
+foton (no signature at all) is rejected, and a foton whose \fBprotocol.ref\fR does not match its
+descriptor (SPEC 6.2) is rejected.
+.TP
+.B plankton verify \fIenvelope.dsse.json\fR \fIpubkey.pub\fR|\fIhex\fR
+Verify a DSSE signature against a public key (a \fB.pub file path\fR OR the hex). Always prints the
+\fBsigner's keyid\fR (embedded in the record) and \fByour key's keyid\fR, then one of:
+.RS
+.IP \(bu 2
+\fBVALID\fR (exit 0) - the signature checks out.
+.IP \(bu 2
+\fBWRONG KEY\fR (exit 2) - your keyid differs from the signer's: you verified against the wrong
+identity, \fInot\fR a tamper. Supply the signer's actual public key.
+.IP \(bu 2
+\fBTAMPERED\fR (exit 1) - the keyids match but the signature does not: the bytes were altered
+after signing.
+.RE
+\fBverify is the only command that checks signatures.\fR \fBadd\fR, \fBreproduces\fR and
+\fBspectrum\fR never do - they trust the hash, not the signer.
+.TP
+.B plankton show \fIfoton.dsse.json\fR|\fIsha256:id\fR|\fIsha256:outputHash\fR
+Print one foton: its command, inputs, and outputs. Accepts a foton envelope file, a foton id, OR an
+\fBoutput hash\fR (resolved to the foton that produced it). The command is what was RECORDED;
+plankton never ran it.
+.TP
+.B plankton hash \fIfile\fR
+Print a file's content address (sha256:...).
+.TP
+.B plankton producer [--source \fID\fR ...] \fIsha256:...\fR
+Which foton produced this file (lineage join).
+.TP
+.B plankton uses [--source \fID\fR ...] \fIsha256:...\fR
+Which fotons consumed this file (discovery).
+.TP
+.B plankton lineage [--source \fID\fR ...] \fIsha256:...\fR
+Walk producers backwards. Repeat \fB--source\fR to resolve over the \fBunion\fR of several registries
+at query time, deduped by content hash, with no copy (SPEC Clause 11) - so two independently-held
+stores join at a shared hash without mirroring. Without \fB--source\fR, the single \fBPLANKTON_DIR\fR
+is used.
+.TP
+.B plankton reproduces \fIref cand\fR [--via \fIpotential\fR]
+Do two outputs reproduce? \fBL0\fR if raw-equal, \fBL1\fR if equal after the SAME normaliser
+\fIpotential\fR (its protocol ref, or a normaliser foton id) has normalised BOTH in the ray.
+\fB--via names a potential, not a kind\fR: two different normalisers of the same kind are different
+comparisons and must not both satisfy one L1 assertion (SPEC 9). Only L0/L1 are kernel checks;
+\fBL2\fR (equal within tolerance) is \fInot\fR computed here - it is a comparator's signed verdict (a
+nekton attestation). So \(dqno L0/L1 match - an L2 comparator verdict is required\(dq is a pointer to
+that next step, not an error in plankton.
+.TP
+.B plankton reuse \fIfoton.statement.json\fR
+Action key + cache-hit check: has this exact computation (inputs + protocol) been recorded before?
+A HIT is a cache-key match, \fBnot a trust decision\fR: the matched foton's recorded output is
+untrusted until you \fBplankton verify\fR it against a key you trust. The action key binds to the
+protocol descriptor when one is carried; a bare (descriptor-less) ref is namespaced separately so it
+cannot collide with a verifiable descriptor.
+.TP
+.B plankton spectrum define --id \fIid\fR [--of \fB"..."\fR] [--normaliser \fIP\fR] [--member \fIname\fR=sha256:...] [-o \fIfile\fR]
+Create or extend a spectrum (a tool definition). Starts as a bare id and grows members. Default
+file: \fIid\fR.spectrum.json. Each \fB--member\fR (and \fB--candidate\fR, below) hash is an
+\fBoutput hash\fR (the gold/candidate result), not a foton id.
+.TP
+.B plankton spectrum show \fIspectrum.json\fR
+Show a spectrum's normaliser and reference members.
+.TP
+.B plankton spectrum check \fIspectrum.json\fR --candidate \fIname\fR=sha256:...
+Report whether the candidate FULFILS the spectrum (per member: identical, via the potential, or
+not). Compares fotons that already exist; runs nothing. Record the "validated at L0/L1" judgment
+as a
+.BR nekton (1)
+attestation.
+.TP
+.B plankton mirror \fIlocal-registry-dir\fR
+Overlay a peer registry (a local directory) into yours by hash - pure, no network. For a URL
+peer use
+.BR "kton mirror" .
+.TP
+.B plankton export [--title \fIT\fR] [\fIout\fR]
+Serialize the horizon graph as JSON (headless query projection).
+.TP
+.B plankton export --rdf [--lineage \fIfotonId\fR|\fIoutputHash\fR] [-o \fIout\fR]
+Project the foton lineage as RDF (Turtle, PROV-O): each foton a \fBprov:Activity\fR, inputs
+\fBprov:used\fR, outputs \fBprov:wasGeneratedBy\fR. Content nodes use the same \fBpk:\fR IRIs as the
+nekton nanopublication export, so the two graphs MERGE - a nekton claim about a foton and that
+foton's lineage meet at one node, and a consumer can reason across the whole kton (e.g. is there a
+reviewed step in a result's lineage?). \fB--lineage\fR restricts output to one record's ancestry (a
+subset). A pure offline serialization; plankton documents, it does not reason.
+.TP
+.B plankton man
+Print this manual page (roff source; pipe to \fBman -l -\fR to render). The page is embedded in the
+binary - the binary is self-documenting offline.
+.SH ENVIRONMENT
+.TP
+.B PLANKTON_DIR
+Registry directory (default ./plankton-data).
+.SH EXAMPLES
+Record a result, then verify a re-run reproduces it after normalisation:
+.RS
+.nf
+
+  plankton keygen me
+  plankton author --in in.csv --out out.lst --cmd "run" --sign me.key -o a.foton.json
+  plankton add a.foton.json
+  plankton producer $(plankton hash out.lst)      # who made out.lst
+  plankton reproduces $(plankton hash out.lst) $(plankton hash out2.lst) --via sha256:<normaliserProtocolRef>
+.fi
+.RE
+.PP
+Discover another session's results without a server:
+.RS
+.nf
+
+  plankton mirror ../session-1/plankton-data
+.fi
+.RE
+.SH "SEE ALSO"
+.BR nekton (1),
+.BR kton (1)
+.PP
+nekton records signed statements ABOUT fotons (reviews, findings, validations). kton is the
+cockpit that serves/mirrors over the network and anchors to a transparency log.

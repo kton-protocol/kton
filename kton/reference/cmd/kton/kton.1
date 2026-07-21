@@ -1,0 +1,85 @@
+.TH KTON 1 "2026-07-07" "kton v0" "kton manual"
+.SH NAME
+kton \- the cockpit that conducts plankton + nekton (network, anchoring, pinning)
+.SH SYNOPSIS
+.B kton
+.I command
+[\fIarguments\fR]
+.SH DESCRIPTION
+.B kton
+orchestrates
+.BR plankton (1)
+and
+.BR nekton (1)
+but \fBreimplements nothing\fR - every operation is a call into a kernel. Delete kton and each
+operation is still runnable directly.
+.PP
+It exists to hold the surface deliberately kept OUT of the kernels so they stay minimal and
+WebAssembly-compilable: the \fBnetwork\fR (serving a port, mirroring a URL peer), the
+\fBtransparency log\fR (Rekor anchoring), and optional \fBbyte pinning\fR. Pure, local
+overlay-by-hash federation stays in the kernels (\fBplankton mirror\fR / \fBnekton mirror\fR on a
+directory); kton adds the network peer. Like the kernels, kton never executes your programs.
+.SH COMMANDS
+.TP
+.B kton serve plankton [\fIaddr\fR]
+Serve the plankton federation API over HTTP (default :8787).
+.TP
+.B kton serve nekton [\fIaddr\fR]
+Serve the nekton federation API over HTTP (default :8788).
+.TP
+.B kton mirror plankton \fIpeer\fR [--pin]
+Pull + persist a peer plankton registry. \fIpeer\fR is a URL (needs a running \fBkton serve\fR) or
+a local registry directory (read directly, no port). \fB--pin\fR (URL peer only) also fetches and
+re-serves the verified bytes.
+.TP
+.B kton mirror nekton \fIpeer\fR
+Pull + persist a peer nekton registry (URL or local directory).
+.TP
+.B kton anchor \fIenvelope.dsse.json\fR \fIpubkey.pub\fR|\fIhex\fR
+Anchor a signed record in the Rekor transparency log (Sigstore) and verify the inclusion proof at
+anchor time. NOTE: the proof is printed to stdout, not (yet) embedded in the record, and there is no
+offline re-verification of a saved proof - see the spec's long-term-verifiability clause. The
+public key may be a .pub file path or the hex string.
+.TP
+.B kton pin \fIfile\fR
+Pin a file's bytes into the plankton blob store (optional; the kernel stores no bytes).
+.TP
+.B kton blob \fIsha256:...\fR
+Is this content pinned locally?
+.TP
+.B kton fetch \fIsha256:...\fR
+Resolve content to its bytes via signed nekton \fBlocated-at\fR claims (predicate
+\fBdcat:downloadURL\fR): dereference each suggested URI, verify the SHA-256, and pin. Fails if no
+signed location claim exists for the hash. The kernels never resolve URIs - this is a cockpit job.
+.TP
+.B kton man
+Print this manual page (roff source; pipe to \fBman -l -\fR to render). Embedded in the binary.
+.SH ENVIRONMENT
+.TP
+.B PLANKTON_DIR
+plankton registry directory (default ./plankton-data).
+.TP
+.B NEKTON_DIR
+nekton registry directory (default ./nekton-data).
+.SH EXAMPLES
+Share one session's results with another over the network:
+.RS
+.nf
+
+  # session A
+  PLANKTON_DIR=A kton serve plankton :8787
+  # session B
+  PLANKTON_DIR=B kton mirror plankton http://localhost:8787
+.fi
+.RE
+.PP
+Or, with no server at all, mirror a local directory with the kernel:
+.RS
+.nf
+
+  PLANKTON_DIR=B plankton mirror ../A/plankton-data
+.fi
+.RE
+.SH "SEE ALSO"
+.BR plankton (1),
+.BR nekton (1)

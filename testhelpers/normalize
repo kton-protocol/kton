@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# normalize - a bash normaliser-EXECUTOR that realises a strip-pattern potential. It RUNS, so it
+# is a test/lab helper, never part of any core package. Pure and deterministic: (recipe, input) ->
+# canonical form, dropping the lines the recipe declares non-meaningful. Same job as the spike's
+# normalize.py; a real executor in any language realises the same recipe identically.
+#
+# usage: normalize <recipe.json> <input> <output>
+set -euo pipefail
+recipe="${1:?recipe.json}"; input="${2:?input}"; output="${3:?output}"
+
+# read strip_line_patterns[] from the recipe (jq if present; a tiny fallback parser otherwise)
+if command -v jq >/dev/null 2>&1; then
+  mapfile -t pats < <(jq -r '.strip_line_patterns[]' "$recipe")
+else
+  mapfile -t pats < <(grep -oE '"[^"]+"' "$recipe" | sed 's/"//g' | \
+    awk 'seen{print} /strip_line_patterns/{seen=1}')
+fi
+
+drop_line() { local line="$1" p; for p in "${pats[@]}"; do [[ "$line" == *"$p"* ]] && return 0; done; return 1; }
+
+: > "$output"
+while IFS= read -r line || [[ -n "$line" ]]; do
+  drop_line "$line" || printf '%s\n' "$line" >> "$output"
+done < "$input"

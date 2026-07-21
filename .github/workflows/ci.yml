@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: build / test / vet (all three modules)
+        run: |
+          set -e
+          for m in reference nekton/reference kton/reference; do
+            echo "== $m =="
+            ( cd "$m" && go build ./... && go test ./... && go vet ./... )
+          done
+
+      - name: architecture guard (documents-never-executes, one-way deps, WASM-clean kernels)
+        run: bash scripts/check-import-direction.sh
+
+      - name: conformance vectors are frozen (regenerate → expect no diff)
+        run: |
+          ( cd reference && go run ./testdata/gen )
+          git diff --exit-code reference/testdata \
+            || { echo "::error::conformance vectors drifted - run 'go run ./testdata/gen' and commit"; exit 1; }
+
+  security-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: build binaries
+        run: |
+          set -e; mkdir -p "$RUNNER_TEMP/bin"
+          ( cd reference        && go build -o "$RUNNER_TEMP/bin/plankton" ./cmd/plankton )
+          ( cd nekton/reference && go build -o "$RUNNER_TEMP/bin/nekton"   ./cmd/nekton )
+          ( cd kton/reference   && go build -o "$RUNNER_TEMP/bin/kton"     ./cmd/kton )
+      - name: checkout kton-examples (for the viewer attack)
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          repository: gitmick/kton-examples
+          path: kton-examples
+      - name: security regression gate (every fixed attack must stay PREVENTED)
+        run: |
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          bash security/check.sh "$GITHUB_WORKSPACE/kton-examples"

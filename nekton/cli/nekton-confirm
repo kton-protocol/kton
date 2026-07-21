@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# nekton-confirm - sign acceptance of a result (closes the loop).
+#
+# This is NOT an executor: it computes nothing, it just writes one signed nekton claim
+# (predicate=confirmed by default) about a subject - typically a tally/result foton. It is the
+# reference implementation of `nekton confirm`. A claim is attestable, not reproducible, so a
+# wall-clock `when` is correct here.
+#
+# Zero dependencies: bash + openssl + sha256sum + base64 (no python, no jq).
+#
+# Usage:
+#   nekton-confirm --foton tally.foton.dsse.json --by "CN=Chair" --sign key.pem [--why "..."]
+#   nekton-confirm --subject sha256:138876cc… --predicate confirmed --sign key.pem
+set -euo pipefail
+
+SUBJECT= FOTON= PRED="https://kton.dev/v/confirmed" BY= KEY= WHY= CONTEXT= OUT=
+while [[ $# -gt 0 ]]; do case "$1" in
+  --subject) SUBJECT="$2"; shift 2;; --foton) FOTON="$2"; shift 2;;
+  --predicate) P="$2"; [[ "$P" == http* ]] && PRED="$P" || PRED="https://kton.dev/v/$P"; shift 2;;
+  --by) BY="$2"; shift 2;; --sign) KEY="$2"; shift 2;;
+  --why) WHY="$2"; shift 2;; --context) CONTEXT="$2"; shift 2;; -o) OUT="$2"; shift 2;;
+  *) echo "unknown arg $1" >&2; exit 2;; esac; done
+: "${KEY:?--sign required}"
+
+# subject: an explicit ref, or the content hash of the foton artifact being confirmed
+if [[ -n "$FOTON" ]]; then
+  SUBJECT="$(sha256sum "$FOTON" | cut -d' ' -f1)"; SUBJECT="sha256:$SUBJECT"
+fi
+: "${SUBJECT:?need --subject or --foton}"
+
+# minimal JSON string escaper (backslash, quote, strip newlines/tabs)
+esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\n\t'; }
+
+# subject member: digest if sha256:, else uri
+if [[ "$SUBJECT" == sha256:* ]]; then
+  SUBJ_MEMBER="{\"digest\":{\"sha256\":\"${SUBJECT#sha256:}\"}}"
+else
+  SUBJ_MEMBER="{\"uri\":\"$(esc "$SUBJECT")\"}"
+fi
+
+WHEN="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# keyid from raw ed25519 pubkey (last 32 bytes of DER SPKI)
+KEYID="$(openssl pkey -in "$KEY" -pubout -outform DER 2>/dev/null | tail -c 32 | sha256sum | cut -c1-16)"
+[[ -n "$BY" ]] || BY="key:$KEYID"
+
+# ---- build the nekton claim Statement in CANONICAL JSON (sorted keys, compact) -----------
+# predicate object, keys sorted: by, [context], predicate, when, [why]
+PRED_OBJ="\"by\":\"$(esc "$BY")\","
+[[ -n "$CONTEXT" ]] && PRED_OBJ+="\"context\":{\"uri\":\"$(esc "$CONTEXT")\"},"
+PRED_OBJ+="\"predicate\":{\"uri\":\"$(esc "$PRED")\"},"
+PRED_OBJ+="\"when\":\"$WHEN\""
+[[ -n "$WHY" ]] && PRED_OBJ+=",\"why\":\"$(esc "$WHY")\""
+# statement keys sorted: _type, predicate, predicateType, subject
+STMT="{\"_type\":\"https://in-toto.io/Statement/v1\",\"predicate\":{${PRED_OBJ}},\"predicateType\":\"https://kton.dev/claim/v0\",\"subject\":[${SUBJ_MEMBER}]}"
+
+CLAIM_ID="sha256:$(printf '%s' "$STMT" | sha256sum | cut -d' ' -f1)"
+
+# ---- DSSE sign the literal statement bytes (openssl ed25519) ------------------------------
+# PAE is over the RAW payload bytes ($STMT), not the base64 string. Envelope stores base64($STMT).
+PTYPE='application/vnd.in-toto+json'
+PAYLOAD_B64="$(printf '%s' "$STMT" | base64 -w0)"
+PLEN=$(printf '%s' "$STMT" | wc -c); TLEN=$(printf '%s' "$PTYPE" | wc -c)
+TMP="$(mktemp)"
+{ printf 'DSSEv1 %s %s %s ' "$TLEN" "$PTYPE" "$PLEN"; printf '%s' "$STMT"; } > "$TMP"
+SIG="$(openssl pkeyutl -sign -inkey "$KEY" -rawin -in "$TMP" 2>/dev/null | base64 -w0)"; rm -f "$TMP"
+
+ENVELOPE="{\"payloadType\":\"${PTYPE}\",\"payload\":\"${PAYLOAD_B64}\",\"signatures\":[{\"keyid\":\"${KEYID}\",\"sig\":\"${SIG}\"}]}"
+
+[[ -n "$OUT" ]] || OUT="claim.${PRED##*/}.dsse.json"
+printf '%s\n' "$ENVELOPE" > "$OUT"
+
+echo "nekton-confirm: predicate  $PRED"
+echo "nekton-confirm: subject    $SUBJECT"
+echo "nekton-confirm: by         $BY   (keyid $KEYID)"
+echo "nekton-confirm: when       $WHEN"
+echo "nekton-confirm: claim id   $CLAIM_ID"
+echo "nekton-confirm: wrote      $OUT   (signed nekton claim)"
+echo "             -> recorded by nekton (a claim, not a computation)"

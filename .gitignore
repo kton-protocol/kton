@@ -1,0 +1,15 @@
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# content-addressed store / local data (when reference impl exists)
+/data/
+*.db
+
+# build artifacts
+/bin/
+/dist/
+/target/
+__pycache__/

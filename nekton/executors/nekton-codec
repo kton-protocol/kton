@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+# nekton-codec - the swappable JSON/crypto codec for the bash executor.
+# In production this role is filled by `jq` (+ a multihash helper) and `openssl pkeyutl`.
+# Here it is one small shim so `nekton-vote` stays pure bash for the *logic*.
+#
+# Modes:
+#   extract-claim <dsse.json>     -> TSV: signer<TAB>kind<TAB>subject<TAB>object<TAB>context<TAB>when
+#   canon-hash    <file.json>     -> "sha256:<hex>" over canonical JSON (sorted keys, no ws)
+#   sha256        <file>          -> "sha256:<hex>" over raw bytes
+#   foton <result_hash> <protocol.json> <inputs.tsv>  -> canonical foton Statement on stdout
+#   dsse-sign <statement.json> <ed25519.pem>          -> signed DSSE envelope on stdout
+import sys, json, base64, hashlib
+
+def canon(o): return json.dumps(o, sort_keys=True, separators=(",", ":")).encode()
+def sha_bytes(b): return "sha256:" + hashlib.sha256(b).hexdigest()
+
+def main():
+    mode = sys.argv[1]
+    if mode == "extract-claim":
+        env = json.load(open(sys.argv[2]))
+        st = json.loads(base64.b64decode(env["payload"]))
+        p = st["predicate"]
+        kind = p["predicate"]["uri"].rsplit("/", 1)[-1]
+        subj = st["subject"][0].get("uri") or ("sha256:" + st["subject"][0]["digest"]["sha256"])
+        obj = ""
+        o = p.get("object")
+        if isinstance(o, dict):
+            obj = o.get("uri") or o.get("choice") or ""
+        ctx = (p.get("context") or {}).get("uri", "")
+        print("\t".join([p["by"], kind, subj, obj, ctx, p["when"]]))
+    elif mode == "canon-hash":
+        print(sha_bytes(canon(json.load(open(sys.argv[2])))))
+    elif mode == "sha256":
+        print(sha_bytes(open(sys.argv[2], "rb").read()))
+    elif mode == "foton":
+        result_hash, proto_path, inputs_tsv = sys.argv[2], sys.argv[3], sys.argv[4]
+        descriptor = json.load(open(proto_path))
+        proto_ref = sha_bytes(canon(descriptor))
+        inputs = []
+        for line in open(inputs_tsv):
+            line = line.rstrip("\n")
+            if not line: continue
+            name, h = line.split("\t")
+            inputs.append({"name": name, "digest": {"sha256": h.split(":")[1]}})
+        inputs.sort(key=lambda x: x["digest"]["sha256"])
+        st = {"_type": "https://in-toto.io/Statement/v1",
+              "subject": [{"name": "result.json", "digest": {"sha256": result_hash.split(":")[1]}}],
+              "predicateType": "https://kton.dev/foton/v0",
+              "predicate": {"inputs": inputs,
+                            "protocol": {"kind": "tally", "ref": proto_ref, "descriptor": descriptor}}}
+        sys.stdout.write(json.dumps(st, indent=2))
+    elif mode == "dsse-sign":
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key, Encoding, PublicFormat
+        st = json.load(open(sys.argv[2]))
+        payload = canon(st)
+        ptype = b"application/vnd.in-toto+json"
+        pae = b"DSSEv1 " + str(len(ptype)).encode() + b" " + ptype + b" " + \
+              str(len(payload)).encode() + b" " + payload
+        sk = load_pem_private_key(open(sys.argv[3], "rb").read(), password=None)
+        sig = sk.sign(pae)
+        pub = sk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        keyid = hashlib.sha256(pub).hexdigest()[:16]
+        env = {"payloadType": ptype.decode(),
+               "payload": base64.b64encode(payload).decode(),
+               "signatures": [{"keyid": keyid, "sig": base64.b64encode(sig).decode()}]}
+        sys.stdout.write(json.dumps(env, indent=2))
+    else:
+        sys.exit(f"unknown mode {mode}")
+
+if __name__ == "__main__":
+    main()

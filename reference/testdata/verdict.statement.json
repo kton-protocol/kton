@@ -1,0 +1,44 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "modelfit_dir1/NM_run1/warfarin_PK.lst",
+      "digest": {
+        "sha256": "212a8cbbec6e9d253491fe6e4a0b72076573d0714e5356fe1cb8b74c927751ab"
+      }
+    },
+    {
+      "name": "modelfit_dir1/NM_run1/warfarin_PK.ext",
+      "digest": {
+        "sha256": "c3d93f3cbe87ed6e25d10c938e9f3d1c0a5abb2354c3cf3a2a4f0c3fa2846ac0"
+      }
+    }
+  ],
+  "predicateType": "https://kton.dev/qualification-verdict/v0",
+  "predicate": {
+    "reference": [
+      "sha256:048755ecd72c2114bf80c1814824db494b555f6c30bf3547bebffc7e64b45cf1",
+      "sha256:babcae187bdf9c89f12bcf85f7d4027ff4285d233b1ca40644bb9d38b8bfc5d9"
+    ],
+    "candidate": [
+      "sha256:212a8cbbec6e9d253491fe6e4a0b72076573d0714e5356fe1cb8b74c927751ab",
+      "sha256:c3d93f3cbe87ed6e25d10c938e9f3d1c0a5abb2354c3cf3a2a4f0c3fa2846ac0"
+    ],
+    "criteria": {
+      "normalization_profile": "sha256:660f81ce2bb01f70a400d1afa0c61422c0e733cf149031cb3029870588f2568e",
+      "tolerance_spec": "sha256:192ae4ad33fd9ba871d91ffca8994d11597ba238a1bf57e024d00a071cd6a028"
+    },
+    "like_for_like": {
+      "tool": "NONMEM",
+      "version": "7.4.1",
+      "method": "FOCE-INTER"
+    },
+    "result": {
+      "L0_byte_identical": false,
+      "L1_canonical_identical": true,
+      "L2_within_tolerance": true,
+      "level_reached": "L2",
+      "verdict": "PASS"
+    }
+  }
+}

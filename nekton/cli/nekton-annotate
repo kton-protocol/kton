@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# nekton-annotate - write a signed nekton claim from a TEMPLATE.
+#
+# Not an executor: it computes nothing, it records one signed claim. It reads a template
+# (predicate, context, typed fields) and aliases (CURIE/term -> IRI), hashes any file-typed
+# field into the claim's evidence/object, resolves the predicate to a full IRI, and DSSE-signs.
+#
+# Dependencies: bash + sha256sum + base64 + openssl, plus jq (to read the template/alias JSON).
+# Claim construction + signing are zero-Python (printf + openssl), like nekton-confirm.
+#
+# Usage:
+#   nekton-annotate <subject|--foton FILE> --template gxp/review \
+#     --templates-dir ./templates --aliases ./aliases/aliases.json \
+#     --set outcome=pass --set sop=SOP-PMX-014 --set report=review.pdf \
+#     --by "CN=A. Reviewer" --sign key.pem [-o claim.dsse.json]
+set -euo pipefail
+
+SUBJECT= FOTON= TEMPLATE= TDIR="./templates" ALIASES="./aliases/aliases.json"
+BY= KEY= OUT=; declare -A SET
+while [[ $# -gt 0 ]]; do case "$1" in
+  --foton) FOTON="$2"; shift 2;; --template) TEMPLATE="$2"; shift 2;;
+  --templates-dir) TDIR="$2"; shift 2;; --aliases) ALIASES="$2"; shift 2;;
+  --set) k="${2%%=*}"; v="${2#*=}"; SET["$k"]="$v"; shift 2;;
+  --by) BY="$2"; shift 2;; --sign) KEY="$2"; shift 2;; -o) OUT="$2"; shift 2;;
+  --*) echo "unknown arg $1" >&2; exit 2;;
+  *) SUBJECT="$1"; shift;; esac; done
+: "${TEMPLATE:?--template}" "${KEY:?--sign}"
+
+TFILE="$TDIR/${TEMPLATE//\//-}.json"; [[ -f "$TFILE" ]] || { echo "no template $TFILE" >&2; exit 2; }
+esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\n\t'; }
+
+# ---- alias resolution (CURIE / term -> IRI) ---------------------------------------------
+declare -A PFX TRM
+while IFS=$'\t' read -r k v; do [[ -n "$k" ]] && PFX["$k"]="$v"; done < <(jq -r '.prefixes | to_entries[] | [.key,.value] | @tsv' "$ALIASES")
+while IFS=$'\t' read -r k v; do [[ -n "$k" ]] && TRM["$k"]="$v"; done < <(jq -r '.terms | to_entries[] | [.key,.value] | @tsv' "$ALIASES")
+resolve() { local x="$1"
+  case "$x" in *"://"*) printf '%s' "$x"; return;; esac          # already an IRI
+  if [[ -n "${TRM[$x]:-}" ]]; then x="${TRM[$x]}"; fi             # term -> CURIE
+  case "$x" in *:*) local p="${x%%:*}" l="${x#*:}"
+      if [[ -n "${PFX[$p]:-}" ]]; then printf '%s%s' "${PFX[$p]}" "$l"; return; fi;; esac
+  printf '%s' "$x"; }
+
+# ---- read template ----------------------------------------------------------------------
+TARGET="$(jq -r '.target' "$TFILE")"
+PRED="$(resolve "$(jq -r '.predicate' "$TFILE")")"
+CTX_RAW="$(jq -r '.context // empty' "$TFILE")"; CTX=""; [[ -n "$CTX_RAW" ]] && CTX="$(resolve "$CTX_RAW")"
+
+# ---- subject ----------------------------------------------------------------------------
+if [[ -n "$FOTON" ]]; then SUBJECT="sha256:$(sha256sum "$FOTON" | cut -d' ' -f1)"; fi
+: "${SUBJECT:?need a subject or --foton}"
+if [[ "$SUBJECT" == sha256:* ]]; then SUBJ_MEMBER="{\"digest\":{\"sha256\":\"${SUBJECT#sha256:}\"}}"
+else SUBJ_MEMBER="{\"uri\":\"$(esc "$SUBJECT")\"}"; fi
+# (advisory) target check
+case "$TARGET" in foton|file|either) : ;; esac
+
+# ---- walk template fields, consume --set, build object{} and evidence[] ------------------
+declare -A OBJ; EVID=""; evid_first=1
+while IFS=$'\t' read -r fname ftype frole freq fmedia; do
+  [[ -z "$fname" ]] && continue
+  val="${SET[$fname]:-}"
+  if [[ -z "$val" ]]; then
+    [[ "$freq" == "true" ]] && { echo "missing required field: $fname" >&2; exit 2; } || continue
+  fi
+  case "$ftype" in
+    file)
+      [[ -f "$val" ]] || { echo "file not found for $fname: $val" >&2; exit 2; }
+      fh="sha256:$(sha256sum "$val" | cut -d' ' -f1)"
+      member="{\"hash\":\"$fh\""; [[ -n "$fmedia" ]] && member+=",\"mediaType\":\"$(esc "$fmedia")\""; member+="}"
+      if [[ "$frole" == "evidence" ]]; then
+        [[ $evid_first == 1 ]] && evid_first=0 || EVID+=","; EVID+="$member"
+      else OBJ["$fname"]="\"$fh\""; fi ;;
+    ref)   OBJ["$fname"]="\"$(esc "$val")\"" ;;
+    enum|string|date|*) OBJ["$fname"]="\"$(esc "$val")\"" ;;
+  esac
+done < <(jq -r '.fields | to_entries[] | [.key,.value.type,(.value.role//"object"),(.value.required//false),(.value.mediaType//"")] | @tsv' "$TFILE")
+
+# object JSON (sorted keys for determinism), omit if empty
+OBJ_JSON=""; first=1
+for k in $(printf '%s\n' "${!OBJ[@]}" | sort); do
+  [[ $first == 1 ]] && first=0 || OBJ_JSON+=","; OBJ_JSON+="\"$(esc "$k")\":${OBJ[$k]}"; done
+
+# ---- assemble claim (predicate keys sorted: by,context,evidence,object,predicate,when) ----
+WHEN="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+KEYID="$(openssl pkey -in "$KEY" -pubout -outform DER 2>/dev/null | tail -c 32 | sha256sum | cut -c1-16)"
+[[ -n "$BY" ]] || BY="key:$KEYID"
+P="\"by\":\"$(esc "$BY")\","
+[[ -n "$CTX" ]]      && P+="\"context\":{\"uri\":\"$(esc "$CTX")\"},"
+[[ -n "$EVID" ]]     && P+="\"evidence\":[$EVID],"
+[[ -n "$OBJ_JSON" ]] && P+="\"object\":{$OBJ_JSON},"
+P+="\"predicate\":{\"uri\":\"$(esc "$PRED")\"},\"when\":\"$WHEN\""
+STMT="{\"_type\":\"https://in-toto.io/Statement/v1\",\"predicate\":{$P},\"predicateType\":\"https://kton.dev/claim/v0\",\"subject\":[$SUBJ_MEMBER]}"
+CLAIM_ID="sha256:$(printf '%s' "$STMT" | sha256sum | cut -d' ' -f1)"
+
+# ---- DSSE sign literal statement bytes (openssl) ----------------------------------------
+PTYPE='application/vnd.in-toto+json'
+PB64="$(printf '%s' "$STMT" | base64 -w0)"; PLEN=$(printf '%s' "$STMT" | wc -c); TLEN=${#PTYPE}
+TMP="$(mktemp)"; { printf 'DSSEv1 %s %s %s ' "$TLEN" "$PTYPE" "$PLEN"; printf '%s' "$STMT"; } > "$TMP"
+SIG="$(openssl pkeyutl -sign -inkey "$KEY" -rawin -in "$TMP" 2>/dev/null | base64 -w0)"; rm -f "$TMP"
+[[ -n "$OUT" ]] || OUT="claim.${TEMPLATE//\//-}.dsse.json"
+printf '{"payloadType":"%s","payload":"%s","signatures":[{"keyid":"%s","sig":"%s"}]}\n' \
+  "$PTYPE" "$PB64" "$KEYID" "$SIG" > "$OUT"
+
+echo "nekton-annotate: template  $TEMPLATE  (target=$TARGET)"
+echo "nekton-annotate: predicate $PRED"
+[[ -n "$CTX" ]]  && echo "nekton-annotate: context   $CTX"
+echo "nekton-annotate: subject   $SUBJECT"
+[[ -n "$OBJ_JSON" ]] && echo "nekton-annotate: object    {$OBJ_JSON}"
+[[ -n "$EVID" ]]     && echo "nekton-annotate: evidence  [$EVID]"
+echo "nekton-annotate: by        $BY  (keyid $KEYID)"
+echo "nekton-annotate: claim id  $CLAIM_ID"
+echo "nekton-annotate: wrote     $OUT"
