@@ -36,8 +36,9 @@ plankton is one half of an inert two-layer substrate:
 The dividing invariant: a machine can **verify** it (re-run / hash) → plankton; a person can
 only **vouch for** it (a signature) → nekton. Dependency is one-way: **nekton → plankton**,
 never the reverse. A reference cockpit, **kton**, conducts both and reimplements neither -
-delete kton and every operation still runs via the protocols directly. This repo is plankton
-(the results layer); nekton lives alongside it in [`nekton/`](nekton/), kton is a sibling repo.
+delete kton and every operation still runs via the protocols directly. This repository is a single
+Go workspace with all three modules: plankton (the results layer) in [`reference/`](reference/),
+nekton in [`nekton/`](nekton/), and the kton cockpit in [`kton/`](kton/).
 
 Positioning is **composition, not invention**: plankton composes in-toto/DSSE + SHA-256
 content-addressing; nekton composes the nanopublication / Trusty-URI model. The novelty is the

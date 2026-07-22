@@ -103,7 +103,7 @@ the kernel (one is a nice cockpit-side option for rich queries).
 Not volume - precision. These few things must be *exactly* right because they determine
 cross-org hash agreement (requirement N6):
 
-1. **Canonical serialization of a foton record** - sorted keys, canonical CBOR/JSON, so
+1. **Canonical serialization of a foton record** - sorted keys, canonical JSON (JCS, RFC 8785), so
    the same foton hashes identically in every implementation.
 2. **Hash agility (multihash)** - easy to add now, painful to change later.
 3. **The action-key definition** - what exactly goes into `hash(canonical(inputs) +
