@@ -162,16 +162,22 @@ A reference to a file. The protocol stores **no bytes**.
 FileRef := {
   hash?:      ContentHash,   # present = BOUND; ABSENT = an unbound slot (6.4), keyed by `path`
   path?:      string,        # RELATIVE path within the foton work tree, e.g. "raw/data.csv"
-  id?:        string,        # OPTIONAL persistent/local identity
+  id?:        string,        # OPTIONAL persistent/local identity      (reserved at 0.1 - see below)
   uri?:       [ string ],    # OPTIONAL location hints (carried, not covered)
-  mediaType?: string,
-  meta?:      object
+  mediaType?: string,        #                                         (reserved at 0.1 - see below)
+  meta?:      object         #                                         (reserved at 0.1 - see below)
 }
 ```
 
 - Identity and integrity derive from `hash`. `uri`, `id`, `mediaType`, and `meta` are **carried, not
   covered**: they are location/description hints and MUST NOT affect any identity computation (foton id
   or action key). A consumer MUST verify fetched bytes against `hash` (5.6).
+- **Wire transport at 0.1.** Of the carried fields, only `uri` is emitted onto the wire (6.6) and
+  round-tripped by a conforming implementation at 0.1. `id`, `mediaType`, and `meta` are **reserved**:
+  defined for forward compatibility but NOT yet emitted or parsed, and a conforming implementation MAY
+  ignore them. (The reference `FileRef` type declares `id`/`mediaType` and omits `meta` accordingly.)
+  Transporting them is a later-revision addition; because they are non-covered, adding them will not
+  change any existing foton id or action key.
 - `path` is **structural** - tools depend on layout - and is part of foton identity and the action key
   (6.3). Absolute paths and the execution sandbox root are incidental and MUST NOT be recorded.
 - A FileRef with no `hash` (path only) is an **unbound slot** (6.4).
