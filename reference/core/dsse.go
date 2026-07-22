@@ -182,11 +182,17 @@ func (st *Statement) ToFoton() (*Foton, error) {
 
 func subjectToRef(s Subject) FileRef {
 	// in-toto subject `name` carries the file's relative path (Bazel/in-toto convention).
-	// Normalize the digest to canonical lowercase (SPEC §5.1) so an uppercase-hex hash does not
-	// split a foton's identity/index from the same digest written in the canonical form.
-	hash := "sha256:" + s.Digest["sha256"]
-	if norm, ok := NormalizeContentHash(hash); ok {
-		hash = norm
+	// A subject MUST carry a sha256 digest (SPEC §5.1). If it does not, leave Hash EMPTY rather than
+	// emitting a malformed "sha256:" with no hex - an empty hash is an honest "no content-address" a
+	// consumer can detect, where "sha256:" would masquerade as a real one.
+	hash := ""
+	if h := s.Digest["sha256"]; h != "" {
+		// Normalize the digest to canonical lowercase so an uppercase-hex hash does not split a
+		// foton's identity/index from the same digest written in the canonical form.
+		hash = "sha256:" + h
+		if norm, ok := NormalizeContentHash(hash); ok {
+			hash = norm
+		}
 	}
 	return FileRef{Hash: hash, Path: s.Name, URI: s.URI}
 }
