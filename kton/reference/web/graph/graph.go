@@ -299,9 +299,15 @@ func BuildGraph(unionJSON, keysJSON, namesJSON string) (string, error) {
 				}
 			}
 			// a located-at claim is a signed retrieval hint (content-hash -> URI), not a step in the
-			// graph: fold it into the locator map so file details can show where the bytes live.
+			// graph: fold it into the locator map so file details can show where the bytes live. Only a
+			// VERIFIED claim may assert where the bytes live: an unverified/planted located-at would
+			// otherwise inject an attacker-chosen "download here" URI for any subject hash (byte-integrity
+			// still holds - fetch re-hashes - but the presented URL is a phishing vector). Gate on `ok`,
+			// consistent with the verified-only reproduction and participant counts.
 			if (pred == "downloadURL" || pred == "located-at") && subj != "" && objURI != "" {
-				g.Locators[subj] = append(g.Locators[subj], objURI)
+				if ok {
+					g.Locators[subj] = append(g.Locators[subj], objURI)
+				}
 				continue
 			}
 			part := names[keyid]
