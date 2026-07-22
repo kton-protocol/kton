@@ -378,7 +378,7 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
-		src, err := registry.Open(peer)
+		src, err := registry.OpenUnion(peer) // READ the peer; never MkdirAll/mutate a source we mirror from
 		if err != nil {
 			return fmt.Errorf("open peer %s: %w", peer, err)
 		}

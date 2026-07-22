@@ -204,7 +204,45 @@ type Registry struct {
 }
 
 // Open loads (or creates) a registry rooted at dir, replaying its append log.
-func Open(dir string) (*Registry, error) {
+func Open(dir string) (*Registry, error) { return openAt(dir, true) }
+
+// OpenUnion opens one or more registries READ-ONLY and returns a registry over their union, deduped by
+// claim id and chain-settled. A single source is simply read (never mkdir'd, so a read-only peer or
+// --source cannot fail the open or be mutated); multiple sources realize SPEC Clause 11's "union of
+// accessible registries" for a reader, with no copy. The result is read-only (no records are persisted).
+func OpenUnion(dirs ...string) (*Registry, error) {
+	if len(dirs) == 0 {
+		return nil, fmt.Errorf("OpenUnion: no sources given")
+	}
+	for _, d := range dirs {
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			return nil, fmt.Errorf("source %q is not an accessible registry (does the directory exist?)", d)
+		}
+	}
+	u, err := openAt(dirs[0], false)
+	if err != nil {
+		return nil, err
+	}
+	if len(dirs) == 1 {
+		return u, nil
+	}
+	var pending []Record
+	for _, d := range dirs[1:] {
+		src, err := openAt(d, false)
+		if err != nil {
+			return nil, err
+		}
+		pending = append(pending, src.RawRecords()...)
+	}
+	u.dropped += u.settle(pending)
+	return u, nil
+}
+
+// openAt loads a registry. create=false is the READ path (a peer being mirrored, or a --source): it
+// never MkdirAll's the store - a read must not MUTATE the source it reads, and a read-only peer would
+// otherwise fail the mkdir with "permission denied". A missing objects dir then reads as an empty
+// registry.
+func openAt(dir string, create bool) (*Registry, error) {
 	r := &Registry{
 		dir:         dir,
 		objectsDir:  filepath.Join(dir, "objects"),
@@ -220,12 +258,17 @@ func Open(dir string) (*Registry, error) {
 		unresolved:  map[string]int{},
 		peers:       map[string]int{},
 	}
-	if err := os.MkdirAll(r.objectsDir, 0o755); err != nil {
-		return nil, err
+	if create {
+		if err := os.MkdirAll(r.objectsDir, 0o755); err != nil {
+			return nil, err
+		}
 	}
 	var paths []string
 	if err := filepath.WalkDir(r.objectsDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil // no objects dir on a read-only source: an empty registry, not an error
+			}
 			return err
 		}
 		if !d.IsDir() && strings.HasSuffix(p, ".json") {
