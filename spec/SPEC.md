@@ -192,9 +192,21 @@ Protocol := {
 
 ### 6.3 Action key and foton id
 
-- **action key** = `sha256(canon({ inputs: {relpath → hash}, protocol: {kind, ref} }))`. It is the
-  identity of the *computation*: inputs and protocol only. Outputs are NOT included. Two fotons with
-  equal action key describe the same computation.
+- **action key** = `sha256(canon({ inputs: {relpath → hash}, protocol: P }))`, the identity of the
+  *computation* (inputs and protocol only; outputs are NOT included). Two fotons with equal action key
+  describe the same computation. The preimage MUST be formed as follows:
+  - **inputs** — the `{relpath → hash}` map. Two inputs sharing a `relpath` with different hashes MUST be
+    rejected: the map cannot hold both, and a silent last-wins would erase an input from the computation
+    identity (letting a 2-input foton falsely reuse a 1-input result).
+  - **protocol `P`** —
+    - when a `descriptor` is present, `P = { kind, ref }` and `ref` MUST be the **effective ref**,
+      `sha256(canon(descriptor))` recomputed from the carried descriptor (6.2) — never a self-declared
+      `ref` that disagrees with it;
+    - when **no** `descriptor` is present (a bare, unverifiable `ref`), `P = { kind, ref, refUnverified: true }`.
+      The `refUnverified: true` marker MUST be present in this case, so a descriptor-less foton can never
+      share an action key with a descriptor-ful foton whose descriptor happens to hash to the same `ref`.
+      (Without it, an attacker's descriptor-less foton asserting `ref = sha256(canon(victim descriptor))`
+      would collide with — and poison the cache of — the victim's verifiable computation.)
 - **foton id** = `sha256(canon(Foton))`. Carried, non-covered FileRef fields (6.1) MUST NOT change it.
 
 ### 6.4 Potentials
