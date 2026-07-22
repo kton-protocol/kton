@@ -10,11 +10,11 @@ import (
 )
 
 // TestTrustedRekorPubRefusesUnpinnedCustom: a custom Rekor endpoint (attacker-controllable
-// PLANKTON_REKOR_URL) with NO pinned key must be refused - otherwise a fabricated entry, signed by the
+// KTON_REKOR_URL) with NO pinned key must be refused - otherwise a fabricated entry, signed by the
 // endpoint's own key and checked against that same self-served key, would "verify". A PINNED key
-// (PLANKTON_REKOR_PUBKEY) is always honored, for any URL.
+// (KTON_REKOR_PUBKEY) is always honored, for any URL.
 func TestTrustedRekorPubRefusesUnpinnedCustom(t *testing.T) {
-	t.Setenv("PLANKTON_REKOR_PUBKEY", "")
+	t.Setenv("KTON_REKOR_PUBKEY", "")
 	if _, err := trustedRekorPub("http://attacker.example"); err == nil {
 		t.Fatal("a custom Rekor endpoint without a pinned key must be refused")
 	}
@@ -26,7 +26,7 @@ func TestTrustedRekorPubRefusesUnpinnedCustom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PLANKTON_REKOR_PUBKEY", string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})))
+	t.Setenv("KTON_REKOR_PUBKEY", string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})))
 	got, err := trustedRekorPub("http://attacker.example")
 	if err != nil || got == nil {
 		t.Fatalf("a pinned key must be accepted even for a custom URL: %v", err)

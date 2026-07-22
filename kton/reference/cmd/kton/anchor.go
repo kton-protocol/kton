@@ -19,23 +19,23 @@ import (
 	"kton.dev/kton/sigstore"
 )
 
-func rekorURL() string { return os.Getenv("PLANKTON_REKOR_URL") } // "" → public Rekor
+func rekorURL() string { return os.Getenv("KTON_REKOR_URL") } // "" → public Rekor
 
 // trustedRekorPub returns the Rekor public key to verify the SET against. It must be a PINNED key -
 // NEVER the key the log endpoint serves for ITSELF, or a fabricated entry from an attacker-controlled
-// PLANKTON_REKOR_URL would self-verify (its own SET, signed by its own key, checked against that same
-// key). So: a pinned key from PLANKTON_REKOR_PUBKEY (a PEM file path or inline PEM) is always used; a
+// KTON_REKOR_URL would self-verify (its own SET, signed by its own key, checked against that same
+// key). So: a pinned key from KTON_REKOR_PUBKEY (a PEM file path or inline PEM) is always used; a
 // CUSTOM endpoint with no pinned key is REFUSED; only the well-known PUBLIC Rekor may fall back to the
 // fetched key, and then only with an explicit "unpinned - trust-on-first-use" caveat.
 func trustedRekorPub(url string) (*ecdsa.PublicKey, error) {
-	if pin := os.Getenv("PLANKTON_REKOR_PUBKEY"); pin != "" {
+	if pin := os.Getenv("KTON_REKOR_PUBKEY"); pin != "" {
 		txt := pin
 		if b, err := os.ReadFile(pin); err == nil {
 			txt = string(b)
 		}
 		blk, _ := pem.Decode([]byte(txt))
 		if blk == nil {
-			return nil, fmt.Errorf("PLANKTON_REKOR_PUBKEY: not a PEM public key")
+			return nil, fmt.Errorf("KTON_REKOR_PUBKEY: not a PEM public key")
 		}
 		pub, err := x509.ParsePKIXPublicKey(blk.Bytes)
 		if err != nil {
@@ -43,15 +43,15 @@ func trustedRekorPub(url string) (*ecdsa.PublicKey, error) {
 		}
 		ec, ok := pub.(*ecdsa.PublicKey)
 		if !ok {
-			return nil, fmt.Errorf("PLANKTON_REKOR_PUBKEY: not an ECDSA key")
+			return nil, fmt.Errorf("KTON_REKOR_PUBKEY: not an ECDSA key")
 		}
 		return ec, nil
 	}
 	if url != "" {
-		return nil, fmt.Errorf("a custom Rekor endpoint (PLANKTON_REKOR_URL=%s) MUST be paired with a pinned public key in PLANKTON_REKOR_PUBKEY; refusing to trust the key the endpoint serves for itself (a fabricated entry would otherwise self-verify)", url)
+		return nil, fmt.Errorf("a custom Rekor endpoint (KTON_REKOR_URL=%s) MUST be paired with a pinned public key in KTON_REKOR_PUBKEY; refusing to trust the key the endpoint serves for itself (a fabricated entry would otherwise self-verify)", url)
 	}
 	// Default PUBLIC Rekor with no pinned key: trust-on-first-use only. Fetch, but say so loudly.
-	fmt.Fprintln(os.Stderr, "warning: verifying against the key the PUBLIC Rekor endpoint serves for itself (UNPINNED, trust-on-first-use); set PLANKTON_REKOR_PUBKEY to a pinned key for a real trust root.")
+	fmt.Fprintln(os.Stderr, "warning: verifying against the key the PUBLIC Rekor endpoint serves for itself (UNPINNED, trust-on-first-use); set KTON_REKOR_PUBKEY to a pinned key for a real trust root.")
 	return sigstore.PublicKey(url)
 }
 
