@@ -7,6 +7,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -136,20 +137,19 @@ func BuildGraph(unionJSON, keysJSON, namesJSON string) (string, error) {
 	}
 	var fotonInputs []finput
 
-	verify := func(env core.Envelope) bool {
-		if len(env.Signatures) == 0 {
-			return false
+	// The trusted public-key set, built once. A record is VERIFIED iff some trusted key verifies its
+	// envelope - checked over ALL keys (via core.VerifiedSignerKeyID), never just Signatures[0]. A
+	// co-signed envelope [foreign, trusted] has a foreign Signatures[0] but a trusted co-signer, and
+	// must still read as verified and be attributed to that trusted signer.
+	var trustedPubs []ed25519.PublicKey
+	for _, ph := range keys {
+		if pub, err := hex.DecodeString(ph); err == nil && len(pub) == ed25519.PublicKeySize {
+			trustedPubs = append(trustedPubs, ed25519.PublicKey(pub))
 		}
-		pubHex, ok := keys[env.Signatures[0].KeyID]
-		if !ok {
-			return false
-		}
-		pub, err := hex.DecodeString(pubHex)
-		if err != nil || len(pub) != 32 {
-			return false
-		}
-		ok2, err := env.Verify(pub)
-		return err == nil && ok2
+	}
+	// verifiedSigner returns the keyid of a trusted key that actually verifies env, or "".
+	verifiedSigner := func(env core.Envelope) string {
+		return core.VerifiedSignerKeyID(env, trustedPubs)
 	}
 
 	for _, r := range recs {
@@ -161,11 +161,15 @@ func BuildGraph(unionJSON, keysJSON, namesJSON string) (string, error) {
 		if json.Unmarshal(payload, &st) != nil {
 			continue
 		}
+		vkeyid := verifiedSigner(r.Envelope)
+		ok := vkeyid != ""
 		keyid := ""
 		if len(r.Envelope.Signatures) > 0 {
-			keyid = r.Envelope.Signatures[0].KeyID
+			keyid = r.Envelope.Signatures[0].KeyID // declared signer, for an unverified node's display
 		}
-		ok := verify(r.Envelope)
+		if ok {
+			keyid = vkeyid // attribute to the VERIFYING key, never the self-declared Signatures[0]
+		}
 
 		if r.FotonID != "" { // a foton
 			// RE-DERIVE the id from the envelope - never trust the declared fotonId in the union (the same
