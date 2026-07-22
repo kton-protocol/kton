@@ -22,5 +22,5 @@ const DefaultFulcioURL = "https://fulcio.sigstore.dev"
 // internal sign-offs. See docs/attestation.md and the Sigstore evaluation notes.
 func KeylessAnchor(_ string) error {
 	return fmt.Errorf("Fulcio keyless signing is scaffolded but not wired yet: it needs an interactive OIDC login. " +
-		"Use the headless Ed25519 + Rekor anchor path for now (plankton anchor)")
+		"Use the headless Ed25519 + Rekor anchor path for now (kton anchor)")
 }
