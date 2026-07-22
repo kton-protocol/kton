@@ -159,7 +159,7 @@ The repo is a Go **workspace** (`go.work`) tying three standard-library-only mod
 dependencies:
 
 ```sh
-git clone https://github.com/kton-protocol/kton && cd plankton
+git clone https://github.com/kton-protocol/kton && cd kton
 ( cd reference        && go build -o ../bin/plankton   ./cmd/plankton )
 ( cd nekton/reference && go build -o ../../bin/nekton   ./cmd/nekton  )
 ( cd kton/reference   && go build -o ../../bin/kton     ./cmd/kton    )

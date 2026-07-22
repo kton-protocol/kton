@@ -1,8 +1,8 @@
 # Contributing
 
-Thanks for your interest. plankton is a small, dependency-free reference implementation of a
-content-addressed provenance substrate. Contributions are welcome; a few invariants are
-non-negotiable because they *are* the design.
+Thanks for your interest. kton is a small, dependency-free reference implementation of a
+content-addressed provenance substrate (the `plankton` + `nekton` kernels and the `kton` cockpit).
+Contributions are welcome; a few invariants are non-negotiable because they *are* the design.
 
 ## The invariants (CI enforces these)
 
@@ -34,6 +34,16 @@ go vet ./...
 ```
 
 ## Proposing changes
+
+**Workflow.**
+
+- **Cleanups** - typos, dead links, stale comments, formatting, doc-consistency fixes - go straight to
+  `main`; no issue needed.
+- **Code changes** and **spec changes** start from a GitHub **issue**, are developed on a **branch named
+  for that issue** (`<issue-number>-<short-slug>`, e.g. `42-verify-all-signers`), and land via a **pull
+  request** that references the issue. Every substantive change stays traceable to a stated rationale.
+
+Beyond that:
 
 - Open an issue first for anything touching the wire form, canonicalization, the action key, or the
   spec - these are the stability contract and change deliberately.
