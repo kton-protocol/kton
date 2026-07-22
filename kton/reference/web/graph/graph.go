@@ -615,14 +615,9 @@ func baseName(name string) string {
 	return name
 }
 
-// partFromBy maps a claim's `by` to a participant handle: "CN=Participant-A" -> "pfed-a".
+// partFromBy derives a participant handle from a claim's `by`: the CN= value of an X.509-style
+// subject if present, else the `by` string as-is.
 func partFromBy(by string) string {
-	u := strings.ToLower(by)
-	for _, x := range []string{"a", "b", "c"} {
-		if strings.Contains(u, "participant-"+x) {
-			return "pfed-" + x
-		}
-	}
 	if i := strings.Index(by, "CN="); i >= 0 {
 		return by[i+3:]
 	}
