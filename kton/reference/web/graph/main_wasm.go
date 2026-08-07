@@ -9,6 +9,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"hash"
 
 	"syscall/js"
@@ -64,11 +65,55 @@ func buildGraph(_ js.Value, args []js.Value) any {
 	return out
 }
 
+// --- sign side (see sign.go) ---------------------------------------------------------------
+// These three expose claim authoring to the page. The private key stays in WebCrypto; Go only
+// ever receives a public key and a finished signature. Each returns {error: "..."} on failure so
+// the caller can surface a real message instead of a silent no-op.
+
+func errObj(err error) any { return map[string]any{"error": err.Error()} }
+
+func buildClaim(_ js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return errObj(errors.New("plktBuildClaim(specJSON) needs the claim spec"))
+	}
+	out, err := BuildClaim(args[0].String())
+	if err != nil {
+		return errObj(err)
+	}
+	return out
+}
+
+func sealClaim(_ js.Value, args []js.Value) any {
+	if len(args) < 3 {
+		return errObj(errors.New("plktSealClaim(payloadB64, sigB64, pubHex) needs three arguments"))
+	}
+	out, err := SealClaim(args[0].String(), args[1].String(), args[2].String())
+	if err != nil {
+		return errObj(err)
+	}
+	return out
+}
+
+func keyIRI(_ js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return errObj(errors.New("plktKeyIRI(pubHex) needs a public key"))
+	}
+	iri, err := KeyIRI(args[0].String())
+	if err != nil {
+		return errObj(err)
+	}
+	return map[string]any{"iri": iri}
+}
+
 func main() {
 	js.Global().Set("plktBuildGraph", js.FuncOf(buildGraph))
 	// streaming sha256 for large-file verify (the lens feeds a fetch stream in chunks)
 	js.Global().Set("plktSha256Init", js.FuncOf(sha256Init))
 	js.Global().Set("plktSha256Update", js.FuncOf(sha256Update))
 	js.Global().Set("plktSha256Final", js.FuncOf(sha256Final))
+	// claim authoring: canonicalize + frame here, sign in WebCrypto, reassemble here
+	js.Global().Set("plktBuildClaim", js.FuncOf(buildClaim))
+	js.Global().Set("plktSealClaim", js.FuncOf(sealClaim))
+	js.Global().Set("plktKeyIRI", js.FuncOf(keyIRI))
 	select {} // keep the module alive so the exported func stays callable
 }
