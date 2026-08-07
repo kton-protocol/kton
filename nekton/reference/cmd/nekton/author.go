@@ -7,11 +7,9 @@ package main
 // tooling applies to both layers.
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -127,130 +125,15 @@ func signingKey(keyPath string) (ed25519.PrivateKey, bool, error) {
 	return priv, true, err
 }
 
-// subjSpec is one subject in a claim spec: a hash and/or a uri, optionally named.
-type subjSpec struct {
-	Name string `json:"name,omitempty"`
-	Hash string `json:"hash,omitempty"`
-	URI  string `json:"uri,omitempty"`
-}
+// The claim-spec types and the spec -> canonical-Statement assembly now live in the `claim`
+// kernel package (claim/spec.go), so the CLI and the browser WASM signer share one
+// implementation and therefore produce identical claim ids. These aliases/shims keep the
+// existing CLI and test call sites unchanged.
+type claimSpec = claim.Spec
+type subjSpec = claim.SubjectSpec
 
-// claimSpec is the small JSON a cockpit hands to `nekton claim`. Two ways to give the body:
-//   - predicateBody: the exact predicate object (byte-precise; used to reproduce vectors), or
-//   - the convenience fields (predicate/object/context/by/when/why/evidence) assembled for you.
-type claimSpec struct {
-	Subject       []subjSpec     `json:"subject"`
-	PredicateType string         `json:"predicateType"` // default nekton claim/v0
-	PredicateBody map[string]any `json:"predicateBody"` // passthrough (exact)
-
-	Predicate string         `json:"predicate"` // relation term IRI (convenience)
-	Object    map[string]any `json:"object,omitempty"`
-	Context   string         `json:"context,omitempty"`
-	By        string         `json:"by,omitempty"`
-	When      string         `json:"when,omitempty"`
-	Why       string         `json:"why,omitempty"`
-	Evidence  []any          `json:"evidence,omitempty"`
-
-	// Structural scope/chain fields (SPEC §7.4): a scoped claim names its scope (a seed's id) and
-	// its prev (the previous claim in the scope, or the seed for the first link). Empty = unscoped.
-	Scope string `json:"scope,omitempty"`
-	Prev  string `json:"prev,omitempty"`
-}
-
-func bareHash(h string) string {
-	if i := strings.IndexByte(h, ':'); i >= 0 {
-		return h[i+1:]
-	}
-	return h
-}
-
-// normHash folds a content hash to canonical lowercase (SPEC §5.1) BEFORE it enters the signed
-// payload, so a claim authored with an uppercase/mixed-case digest gets the SAME claim id as the
-// canonical form - making the §12 conflict-free union dedup and keeping the wire form §5.1-conformant
-// (cold-session finding: normalizing only the index left case-variant claims with distinct ids).
-func normHash(h string) string {
-	if n, ok := core.NormalizeContentHash(h); ok {
-		return n
-	}
-	return h
-}
-
-func subjectsOf(ss []subjSpec) []any {
-	out := make([]any, 0, len(ss))
-	for _, s := range ss {
-		m := map[string]any{}
-		if s.Name != "" {
-			m["name"] = s.Name
-		}
-		if s.Hash != "" {
-			m["digest"] = map[string]any{"sha256": bareHash(normHash(s.Hash))}
-		}
-		if s.URI != "" {
-			m["uri"] = s.URI
-		}
-		out = append(out, m)
-	}
-	return out
-}
-
-// normHashField lowercases a "hash" member of an object/evidence map in place (SPEC §5.1).
-func normHashField(m map[string]any) {
-	if h, ok := m["hash"].(string); ok {
-		m["hash"] = normHash(h)
-	}
-}
-
-// buildPredicate assembles the predicate body from the convenience fields (used when
-// predicateBody is absent). Keys omitted when empty; canonicalization sorts them.
-func (spec claimSpec) buildPredicate() (map[string]any, error) {
-	if spec.PredicateBody != nil {
-		return spec.PredicateBody, nil
-	}
-	if spec.Predicate == "" {
-		return nil, fmt.Errorf("claim spec needs `predicate` (relation IRI) or `predicateBody`")
-	}
-	// TEMPLATE/ALIAS TRUST: what a claim MEANS must not depend on the READER's mutable alias file. A
-	// predicate stored as a full IRI ("https://…") or a prefixed CURIE ("pav:reviewedBy") names its own
-	// vocabulary; a BARE TERM ("reviewedBy") is maximally ambiguous - any reader's term map resolves it
-	// differently, and a MITM'd alias file silently changes its meaning. Refuse to sign a bare term
-	// (annotate has already run the alias file through `resolve` and ECHOES the result). A CURIE's prefix
-	// is still reader-resolved; pin the prefix map / prefer full IRIs for a regulated vocabulary.
-	if !strings.Contains(spec.Predicate, ":") {
-		return nil, fmt.Errorf("predicate %q is a bare term with no vocabulary - refusing to sign an ambiguous relation whose meaning depends on the reader's alias file; use a full IRI or a prefixed CURIE", spec.Predicate)
-	}
-	if spec.By == "" || spec.When == "" {
-		return nil, fmt.Errorf("claim spec needs `by` and `when`")
-	}
-	body := map[string]any{
-		"predicate": map[string]any{"uri": spec.Predicate},
-		"by":        spec.By,
-		"when":      spec.When,
-	}
-	if spec.Object != nil {
-		normHashField(spec.Object)
-		body["object"] = spec.Object
-	}
-	if spec.Context != "" {
-		body["context"] = map[string]any{"uri": spec.Context}
-	}
-	if spec.Why != "" {
-		body["why"] = spec.Why
-	}
-	if len(spec.Evidence) > 0 {
-		for _, e := range spec.Evidence {
-			if m, ok := e.(map[string]any); ok {
-				normHashField(m)
-			}
-		}
-		body["evidence"] = spec.Evidence
-	}
-	if spec.Scope != "" {
-		body["scope"] = spec.Scope
-	}
-	if spec.Prev != "" {
-		body["prev"] = spec.Prev
-	}
-	return body, nil
-}
+func subjectsOf(ss []subjSpec) []any { return claim.SubjectsOf(ss) }
+func bareHash(h string) string       { return claim.BareHash(h) }
 
 // authorClaim builds an in-toto Statement per SPEC §7.3, signs a DSSE envelope, and writes it.
 func authorClaim(specPath, keyPath, outPath string, addFlag bool, regDir string) error {
@@ -258,15 +141,11 @@ func authorClaim(specPath, keyPath, outPath string, addFlag bool, regDir string)
 	if err != nil {
 		return err
 	}
-	var spec claimSpec
-	// UseNumber so a numeric object value keeps its EXACT literal (a json.Number) instead of being
-	// truncated through float64 before signing - otherwise `nekton claim` would sign 9007199254740992
-	// when the author typed ...993, and CanonValue (which now rejects an imprecise integer) never sees
-	// the real value. With json.Number the big int survives to canonicalization and is REJECTED, so the
-	// signer is told rather than silently signing a different number (cold-session sibling-path finding).
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	if err := dec.Decode(&spec); err != nil {
+	// claim.ParseSpec decodes with UseNumber, so a big integer survives to canonicalization and is
+	// REJECTED there rather than being silently truncated through float64 and signed as a different
+	// number (cold-session sibling-path finding).
+	spec, err := claim.ParseSpec(raw)
+	if err != nil {
 		return err
 	}
 	priv, err := loadPriv(keyPath)
@@ -279,38 +158,26 @@ func authorClaim(specPath, keyPath, outPath string, addFlag bool, regDir string)
 // buildClaimEnv canonicalizes a claimSpec into a signed in-toto Statement (SPEC §7.3) and returns the
 // envelope JSON bytes plus the claim id. The one signing path, shared by the file and --add forms.
 func buildClaimEnv(spec claimSpec, priv ed25519.PrivateKey) ([]byte, string, error) {
-	body, err := spec.buildPredicate()
+	env, id, err := claim.SignWith(spec, priv)
 	if err != nil {
 		return nil, "", err
 	}
-	pt := spec.PredicateType
-	if pt == "" {
-		pt = claim.PredicateType
-	}
-	st := map[string]any{
-		"_type":         "https://in-toto.io/Statement/v1",
-		"subject":       subjectsOf(spec.Subject),
-		"predicateType": pt,
-		"predicate":     body,
-	}
-	payload, err := core.CanonValue(st)
-	if err != nil {
-		return nil, "", err
-	}
-	sig := ed25519.Sign(priv, core.PAE(core.PayloadType, payload))
-	env := map[string]any{
-		"payloadType": core.PayloadType,
-		"payload":     base64.StdEncoding.EncodeToString(payload),
+	// Marshalled through a map rather than the core.Envelope struct on purpose: a map marshals its
+	// keys alphabetically, which is the on-disk key order this command has always written. Emitting
+	// the struct instead would reorder the file (payloadType before payload) - harmless to any
+	// verifier, but a gratuitous diff in every committed .dsse.json and example snapshot.
+	out, err := json.MarshalIndent(map[string]any{
+		"payloadType": env.PayloadType,
+		"payload":     env.Payload,
 		"signatures": []any{map[string]any{
-			"keyid": keyidHex(priv.Public().(ed25519.PublicKey)),
-			"sig":   base64.StdEncoding.EncodeToString(sig),
+			"keyid": env.Signatures[0].KeyID,
+			"sig":   env.Signatures[0].Sig,
 		}},
-	}
-	out, err := json.MarshalIndent(env, "", "  ")
+	}, "", "  ")
 	if err != nil {
 		return nil, "", err
 	}
-	return out, claim.ClaimID(payload), nil
+	return out, id, nil
 }
 
 // signClaim builds the claim, writes the envelope to outPath (unless --add was given without an
