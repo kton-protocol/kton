@@ -462,7 +462,10 @@ func run(cmd string, args []string) error {
 		for _, h := range heads {
 			fmt.Printf("head:    %s\n", h)
 		}
-		fmt.Printf("         a linear chain has one head; multiple heads mean claims share a prev. Seal each, or re-chain to a single tip.\n")
+		// What a seal over a branched scope covers is NOT the kernel's to say: SPEC 7.4 leaves sealing
+		// rules to consumers/aggregators, alongside `responsible` and parent->child registration. Report
+		// the structure and the mechanical consequence of it; prescribe no remedy.
+		fmt.Printf("         a linear chain has one head; multiple heads mean claims share a prev. Each head commits only to the claims on its own branch.\n")
 		truncationWarning()
 		return nil
 
