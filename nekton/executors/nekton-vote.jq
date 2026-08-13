@@ -50,10 +50,37 @@ extract() { # $1 claim dsse file -> declared<TAB>kind<TAB>subject<TAB>object<TAB
       .predicate.when ] | @tsv'
 }
 
+# ---- normalise a public key file to PEM: BOTH the hex form and PEM are accepted ----------
+# `nekton keygen` writes <name>.pub as the 32-byte Ed25519 public key in HEX, while this executor's
+# own key material is openssl PEM (README: --sign key.pem). Both name the same key and derive the
+# same keyid, so a roster is portable between the two worlds - but openssl reads only the PEM. The
+# Ed25519 SPKI header is a fixed 12-byte prefix, so wrapping raw hex into a PEM is a byte concat.
+# The binary never crosses a command substitution (a public key may contain 0x00, which would be
+# stripped); only the \x escape TEXT does.
+PEMDIR="$(mktemp -d)"; trap 'rm -rf "$PEMDIR"' EXIT
+to_pem() { # $1 pubkey file (PEM or 64-hex) -> path to a PEM on stdout; non-zero if neither
+  local f="$1" hex out
+  if grep -q -- '-----BEGIN PUBLIC KEY-----' "$f" 2>/dev/null; then printf '%s' "$f"; return 0; fi
+  hex="$(tr -d '[:space:]' < "$f")"
+  [[ "$hex" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  out="$PEMDIR/$(basename "$f").pem"
+  { printf -- '-----BEGIN PUBLIC KEY-----\n'
+    printf '%b' "$(printf '302a300506032b6570032100%s' "$hex" | sed 's/../\\x&/g')" | base64 -w0 | fold -w64
+    printf -- '\n-----END PUBLIC KEY-----\n'; } > "$out"
+  printf '%s' "$out"
+}
+
 # ---- keyid of a PEM public key: sha256(raw 32-byte Ed25519 pubkey), first 16 hex ---------
 # SAME derivation the signing path below uses (openssl pkey -pubout DER | tail -c 32 = the raw key),
-# so a voter's roster id (a keyid) matches the key that will verify their ballot.
-keyid_of_pub() { openssl pkey -pubin -in "$1" -pubout -outform DER 2>/dev/null | tail -c 32 | sha256sum | cut -c1-16; }
+# so a voter's roster id (a keyid) matches the key that will verify their ballot. An unreadable key
+# is reported as such: without the DER guard, openssl's empty output would hash to the sha256 of the
+# EMPTY STRING and every bad key would collide on one plausible-looking keyid.
+keyid_of_pub() { # $1 PEM public key -> 16-hex keyid on stdout; non-zero if openssl cannot read it
+  local der
+  der="$(openssl pkey -pubin -in "$1" -pubout -outform DER 2>/dev/null | base64 -w0)" || return 1
+  [[ -n "$der" ]] || return 1
+  printf '%s' "$der" | base64 -d | tail -c 32 | sha256sum | cut -c1-16
+}
 
 # ---- verify a ballot's DSSE Ed25519 signature against one pubkey (openssl, no Python) -----
 # Reconstructs the DSSE PAE exactly as the signer built it (DSSEv1 <tlen> <ptype> <plen> <payload>)
@@ -70,11 +97,18 @@ verify_ballot() { # $1 ballot dsse file, $2 pubkey PEM
 }
 
 # ---- map each eligible voter's keyid -> its public key file (roster is keyed BY keyid) ----
+# A key this loop cannot read is FATAL, not skipped: silently dropping it would drop every ballot it
+# would have verified, and a tally that quietly loses a voter is worse than one that refuses to run.
 declare -A PUBFILE
 for pf in "$KEYS"/*.pub; do
   [[ -e "$pf" ]] || continue
-  kid="$(keyid_of_pub "$pf")"; [[ -n "$kid" ]] && PUBFILE["$kid"]="$pf"
+  pem="$(to_pem "$pf")" || { echo "nekton-vote: $pf is neither a PEM public key nor 64 hex chars" >&2; exit 2; }
+  kid="$(keyid_of_pub "$pem")" || { echo "nekton-vote: openssl cannot read the public key $pf" >&2; exit 2; }
+  PUBFILE["$kid"]="$pem"
 done
+# `${PUBFILE[*]:-}` and not `${#PUBFILE[@]}`: an empty associative array is an unbound variable
+# under `set -u`, which would abort here with a bash diagnostic instead of this explanation.
+[[ -n "${PUBFILE[*]:-}" ]] || { echo "nekton-vote: --keys $KEYS holds no *.pub public key; every ballot would be dropped" >&2; exit 2; }
 
 # ---- read the sealed ballot box: one SIGNATURE-VERIFIED claim -> one counted vote --------
 declare -A VOTE VOTE_KEY DELEG DELEG_KEY
