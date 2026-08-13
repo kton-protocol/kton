@@ -2,24 +2,33 @@
 # nekton-vote (hardened) - bash EXECUTOR for the vote, ZERO Python.
 #
 # Dependencies: bash, sha256sum, base64, openssl, and jq (jq used ONLY to parse signed claim
-# payloads). Everything else - hashing, deterministic emission, DSSE Ed25519 signing - is
-# coreutils + openssl. No Python.
+# payloads). Everything else - hashing, deterministic emission, DSSE Ed25519 signing AND
+# VERIFICATION - is coreutils + openssl. No Python.
 #
 # Boundary unchanged: nekton records claims; THIS tool runs the count; output is a plankton
 # foton Statement that `plankton record` ingests.
+#
+# SECURITY (round-2 C1): a ballot is COUNTED by its VERIFIED signing keyid, never the self-declared
+# `by` label. --keys is the directory of the eligible voters' Ed25519 PEM public keys; the roster's
+# voter ids ARE keyids. Each ballot's DSSE signature is verified with openssl against the eligible
+# pubkeys and counted under the VERIFYING keyid; a ballot that verifies against no eligible key
+# (forged, ineligible, or unsigned) is dropped. `by` is display-only and never confers a vote.
+# (Sibling of the canonical `nekton-vote` fix; the .jq build verifies inline with openssl, no Python.)
 #
 # Determinism: input files hashed as RAW bytes (plankton spec §1); result.json & the foton
 # Statement emitted in a FIXED byte layout (sorted voters/choices/inputs); DSSE signs the
 # literal statement bytes. Re-run -> identical bytes -> identical hash. No wall-clock, no random.
 set -euo pipefail
 
-MOTION= ROSTER= BALLOTS= METHOD="liquid-democracy@0.1" KEY= OUT="result.json"
+MOTION= ROSTER= BALLOTS= METHOD="liquid-democracy@0.1" KEY= OUT="result.json" KEYS=
 while [[ $# -gt 0 ]]; do case "$1" in
   --motion) MOTION="$2"; shift 2;; --roster) ROSTER="$2"; shift 2;;
   --ballots) BALLOTS="$2"; shift 2;; --method) METHOD="$2"; shift 2;;
+  --keys) KEYS="$2"; shift 2;;
   --sign) KEY="$2"; shift 2;; -o) OUT="$2"; shift 2;;
   *) echo "unknown arg $1" >&2; exit 2;; esac; done
-: "${MOTION:?--motion}" "${ROSTER:?--roster}" "${BALLOTS:?--ballots}" "${KEY:?--sign}"
+: "${MOTION:?--motion}" "${ROSTER:?--roster}" "${BALLOTS:?--ballots}" "${KEY:?--sign}" \
+  "${KEYS:?--keys DIR of the eligible voters .pub keys is required to verify ballots}"
 
 filehash() { printf 'sha256:%s' "$(sha256sum "$1" | cut -d' ' -f1)"; }
 
@@ -31,7 +40,7 @@ declare -A WEIGHT
 while IFS=$'\t' read -r vid w; do WEIGHT["$vid"]="$w"; done < <(jq -r '.voters[] | [.id,.weight] | @tsv' "$ROSTER")
 
 # ---- the ONE jq use that matters: extract fields from a signed claim payload -------------
-extract() { # $1 claim dsse file -> signer<TAB>kind<TAB>subject<TAB>object<TAB>context<TAB>when
+extract() { # $1 claim dsse file -> declared<TAB>kind<TAB>subject<TAB>object<TAB>context<TAB>when
   jq -r '.payload' "$1" | base64 -d | jq -r '
     [ .predicate.by,
       (.predicate.predicate.uri | split("/") | last),
@@ -41,13 +50,47 @@ extract() { # $1 claim dsse file -> signer<TAB>kind<TAB>subject<TAB>object<TAB>c
       .predicate.when ] | @tsv'
 }
 
-# ---- read the sealed ballot box ---------------------------------------------------------
+# ---- keyid of a PEM public key: sha256(raw 32-byte Ed25519 pubkey), first 16 hex ---------
+# SAME derivation the signing path below uses (openssl pkey -pubout DER | tail -c 32 = the raw key),
+# so a voter's roster id (a keyid) matches the key that will verify their ballot.
+keyid_of_pub() { openssl pkey -pubin -in "$1" -pubout -outform DER 2>/dev/null | tail -c 32 | sha256sum | cut -c1-16; }
+
+# ---- verify a ballot's DSSE Ed25519 signature against one pubkey (openssl, no Python) -----
+# Reconstructs the DSSE PAE exactly as the signer built it (DSSEv1 <tlen> <ptype> <plen> <payload>)
+# and one-shot-verifies with openssl -rawin. Exit 0 iff the signature is valid for this key.
+verify_ballot() { # $1 ballot dsse file, $2 pubkey PEM
+  local f="$1" pub="$2" pt pl sig tmp sigf rc
+  pt="$(jq -r '.payloadType' "$f")"
+  pl="$(jq -r '.payload' "$f" | base64 -d)"          # raw payload bytes (the literal statement)
+  tmp="$(mktemp)"; sigf="$(mktemp)"
+  { printf 'DSSEv1 %s %s %s ' "${#pt}" "$pt" "$(printf '%s' "$pl" | wc -c)"; printf '%s' "$pl"; } > "$tmp"
+  jq -r '.signatures[0].sig' "$f" | base64 -d > "$sigf"
+  openssl pkeyutl -verify -pubin -inkey "$pub" -rawin -in "$tmp" -sigfile "$sigf" >/dev/null 2>&1; rc=$?
+  rm -f "$tmp" "$sigf"; return $rc
+}
+
+# ---- map each eligible voter's keyid -> its public key file (roster is keyed BY keyid) ----
+declare -A PUBFILE
+for pf in "$KEYS"/*.pub; do
+  [[ -e "$pf" ]] || continue
+  kid="$(keyid_of_pub "$pf")"; [[ -n "$kid" ]] && PUBFILE["$kid"]="$pf"
+done
+
+# ---- read the sealed ballot box: one SIGNATURE-VERIFIED claim -> one counted vote --------
 declare -A VOTE VOTE_KEY DELEG DELEG_KEY
 declare -a INPUT_LINES                       # "name<TAB>sha256:hex"
 for f in "$BALLOTS"/*.json; do
   h="$(filehash "$f")"; INPUT_LINES+=("ballots/$(basename "$f")"$'\t'"$h")
-  IFS=$'\t' read -r signer kind subject object context when < <(extract "$f")
-  [[ -n "${WEIGHT[$signer]:-}" ]] || continue
+  IFS=$'\t' read -r declared kind subject object context when < <(extract "$f")
+  # SECURITY (round-2 C1): identity is the VERIFIED signing keyid, never the self-declared `by`. Find
+  # the eligible voter whose PUBLIC KEY actually verifies this ballot's DSSE signature; drop any ballot
+  # that verifies against no eligible key (forged / ineligible / unsigned). `declared` is diagnostics only.
+  signer=""
+  for kid in "${!WEIGHT[@]}"; do
+    [[ -n "${PUBFILE[$kid]:-}" ]] || continue
+    if verify_ballot "$f" "${PUBFILE[$kid]}"; then signer="$kid"; break; fi
+  done
+  [[ -n "$signer" ]] || continue
   key="${when}|${h}"
   if [[ "$kind" == "vote" && "$subject" == "$MOTION_ID" ]]; then
     if [[ -z "${VOTE_KEY[$signer]:-}" || "$key" > "${VOTE_KEY[$signer]}" ]]; then
@@ -87,7 +130,7 @@ ROSTER_H="$(filehash "$ROSTER")"; MOTION_H="$(filehash "$MOTION")"
 {
   printf '{\n'
   printf '  "abstentions": ['
-  first=1; for v in $(printf '%s\n' "${ABSTAIN[@]:-}" | grep -v '^$' | sort); do
+  first=1; for v in $(printf '%s\n' "${ABSTAIN[@]:-}" | { grep -v '^$' || true; } | sort); do
     [[ $first == 1 ]] && first=0 || printf ', '; printf '"%s"' "$v"; done; printf '],\n'
   printf '  "input_set": {\n    "ballots": ['
   first=1; for h in $(printf '%s\n' "${INPUT_LINES[@]}" | cut -f2 | sort); do
