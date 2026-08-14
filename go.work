@@ -1,7 +1,8 @@
 // Go workspace tying the three reference modules together so nekton can reuse
 // plankton's shared `core` (canonicalization, hashing, DSSE) while staying its own module.
 // Dependency direction is one-way: nekton -> plankton (never the reverse). See
-// docs/M1-cutlist.md and DECISIONS §2. A post-v1 step promotes `core` to a neutral module.
+// docs/decisions.md §2, enforced by scripts/check-import-direction.sh in CI. A post-v1 step
+// promotes `core` to a neutral module.
 go 1.22
 
 use (

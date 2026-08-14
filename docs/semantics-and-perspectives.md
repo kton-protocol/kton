@@ -60,4 +60,5 @@ part of plankton**:
 
 A PROV/RO-Crate exporter is a **separate perspective-layer artifact** - distinct from `export.go`
 (display) and from the foton wire form (in-toto Statement). None of ProbOnto/PROV/RO-Crate is a
-kernel component; the kernel's standards footprint stays the minimal four (see `FINDINGS.md`).
+kernel component; the kernel's standards footprint stays the four in SPEC 2: RFC 8785 (JCS),
+in-toto Attestation v1, DSSE, and SHA-256/multihash.

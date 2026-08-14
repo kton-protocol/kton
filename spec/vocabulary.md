@@ -1,6 +1,6 @@
 # kton vocabulary - reuse and native terms
 
-*Informative annex to [`SPEC.md`](SPEC.md). Vocabulary policy per DECISIONS §20: reuse a published
+*Informative annex to [`SPEC.md`](SPEC.md). Vocabulary policy per [decisions](../docs/decisions.md) §20: reuse a published
 ontology wherever one fits; mint a kton-native IRI only for a concept no standard covers; keep the
 regulated terms reserved. The **protocol** defines a small owned set; specific **predicates** used by
 examples are application vocabulary, not the protocol.*
@@ -56,4 +56,4 @@ never requires them. They live in aliases/templates, not the spec.
   (Clause 9); logical identity is `owl:sameAs`. There is no separate native term.
 - **`nk:actsAs`** → alias of **`sec:controller`** (W3C Security Vocabulary). Key-to-principal control
   reuses the published DID / Verifiable-Credential vocabulary; `actsAs` is kept only as an alias
-  resolving to `sec:controller`. See DECISIONS §21.
+  resolving to `sec:controller`. See [decisions](../docs/decisions.md) §21.
