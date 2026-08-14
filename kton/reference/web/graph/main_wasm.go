@@ -65,6 +65,21 @@ func buildGraph(_ js.Value, args []js.Value) any {
 	return out
 }
 
+// --- scope side (see scope.go) --------------------------------------------------------------
+// The §7.4 chain read: order, heads, gaps, grammar verdict. Returns a JSON string like buildGraph
+// (the view nests, and js.ValueOf handles only flat maps/slices of primitives).
+
+func buildScope(_ js.Value, args []js.Value) any {
+	if len(args) < 2 {
+		return errObj(errors.New("plktBuildScope(unionJSON, scopeId) needs both arguments"))
+	}
+	out, err := BuildScope(args[0].String(), args[1].String())
+	if err != nil {
+		return errObj(err)
+	}
+	return out
+}
+
 // --- sign side (see sign.go) ---------------------------------------------------------------
 // These three expose claim authoring to the page. The private key stays in WebCrypto; Go only
 // ever receives a public key and a finished signature. Each returns {error: "..."} on failure so
@@ -107,6 +122,8 @@ func keyIRI(_ js.Value, args []js.Value) any {
 
 func main() {
 	js.Global().Set("plktBuildGraph", js.FuncOf(buildGraph))
+	// the 7.4 chain read: a browser cockpit reads scopes without reimplementing the walk
+	js.Global().Set("plktBuildScope", js.FuncOf(buildScope))
 	// streaming sha256 for large-file verify (the lens feeds a fetch stream in chunks)
 	js.Global().Set("plktSha256Init", js.FuncOf(sha256Init))
 	js.Global().Set("plktSha256Update", js.FuncOf(sha256Update))
