@@ -27,7 +27,7 @@ import (
 
 // LocatedAtTerm is the predicate IRI kton recognizes as "this content hash is retrievable at
 // this URI" - the published DCAT term dcat:downloadURL, reused rather than minting our own
-// (DECISIONS §20). It is a CONVENTION the cockpit knows; the kernels never interpret it.
+// (docs/decisions.md §20). It is a CONVENTION the cockpit knows; the kernels never interpret it.
 const LocatedAtTerm = "http://www.w3.org/ns/dcat#downloadURL"
 
 // fetch resolves a content hash to its bytes via signed located-at claims, verifies, and pins.

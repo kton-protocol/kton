@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI guard for the layered architecture (DECISIONS §2, issue #2):
+# CI guard for the layered architecture (docs/decisions.md §2, issue #2):
 #
 #   kton -> {plankton, nekton}      (cockpit conducts both)
 #   nekton -> plankton              (commitments about reproducible results)

@@ -37,7 +37,7 @@ const PayloadType = "application/vnd.in-toto+json"
 // PredicateFoton is the in-toto predicateType the kernel records: a reproducible result
 // (spec §6.6). Attestations ABOUT results (qualification verdicts, environment-qualification,
 // reviews, votes) are signed claims in the nekton layer - not plankton. See ../../nekton and
-// DECISIONS §1–§5 (the reproducible/attestable cut).
+// docs/decisions.md §1-§5 (the reproducible/attestable cut).
 const PredicateFoton = "https://kton.dev/foton/v0"
 
 // SpecVersion is the exact spec revision an authoring tool stamps into a foton's predicate

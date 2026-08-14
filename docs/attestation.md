@@ -1,7 +1,7 @@
 # Attestation - who brought in a ray, who confirmed it
 
 > **This is the nekton layer.** Attestations were extracted from plankton into a separate
-> protocol, **nekton** (DECISIONS §1–§5). The dividing invariant: a machine can *verify* a
+> protocol, **nekton** ([decisions](decisions.md) §1-§5). The dividing invariant: a machine can *verify* a
 > reproducible result (re-run / hash) → **plankton**; a person can only *vouch for* a statement
 > (a signature) → **nekton**. Dependency is one-way: **nekton → plankton**, never the reverse.
 > plankton records only fotons; the claims below (authored, confirmed, identity-equivalent,
