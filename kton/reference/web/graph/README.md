@@ -47,13 +47,14 @@ The release ships the matching pair, so a consumer downloading both is never mis
 
 ## What it exports
 
-Eight globals on `window`, set by `main()` in `main_wasm.go`. Each returns `{error: "..."}` on
+Nine globals on `window`, set by `main()` in `main_wasm.go`. Each returns `{error: "..."}` on
 failure rather than failing silently.
 
 | global | signature | purpose |
 |---|---|---|
 | `plktBuildGraph` | `(unionJSON, keysJSON?, namesJSON?) -> graphJSON` | verified provenance/review graph from a content-addressed union |
 | `plktBuildScope` | `(unionJSON, scopeId) -> scopeJSON` | the §7.4 chain: order, head(s), gaps, grammar verdict |
+| `plktVerify` | `(envelopeJSON, pubHex) -> verifyJSON` | check one record against one key before taking it in |
 | `plktSha256Init` | `() -> null` | begin a streaming hash (resets the one hasher) |
 | `plktSha256Update` | `(Uint8Array) -> bool` | feed a chunk |
 | `plktSha256Final` | `() -> hex` | finish and return the digest |
@@ -89,6 +90,23 @@ same union through `plktBuildGraph` with a key map.
 
 Natively, the same read is `go run ./web/graph -scope <scope-id> union.json`, which is how it is
 diffed against `nekton head`.
+
+### Verifying one record
+
+`plktVerify` is the check before taking in a foreign entry: `{ok, keyid, declaredKeyid,
+keyidMismatch, kind, claimId|fotonId, statement}`.
+
+- **`keyid` is the key that actually verified.** The envelope's own keyid is not covered by the
+  signature and can be forged, so it is returned separately as `declaredKeyid` and a disagreement
+  is flagged as `keyidMismatch` (SPEC §8). Never present a declared keyid as an identity.
+- **Every signature is tried**, not just the first: a co-signed envelope `[foreign, ours]` verifies
+  for us and is attributed to our key.
+- **The id is re-derived** from the payload, under the rule that governs the payload - `claimId` for
+  a claim or seed, `fotonId` for a foton (a hash of the covered projection, not of the payload). Only
+  the applicable field is set, so a caller cannot key on the wrong one.
+- **A failed verify is a verdict, not an error.** `ok:false` means this key did not sign it; an error
+  return means the input is not a record at all. `claimId` is still reported on `ok:false` so a
+  caller knows *which* record failed.
 
 ## Verifying what you downloaded
 
