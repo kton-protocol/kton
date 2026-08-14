@@ -80,6 +80,20 @@ func buildScope(_ js.Value, args []js.Value) any {
 	return out
 }
 
+// --- verify side (see verify.go) ------------------------------------------------------------
+// One record, one key: the check a cockpit runs before taking in a foreign entry.
+
+func verify(_ js.Value, args []js.Value) any {
+	if len(args) < 2 {
+		return errObj(errors.New("plktVerify(envelopeJSON, pubHex) needs both arguments"))
+	}
+	out, err := Verify(args[0].String(), args[1].String())
+	if err != nil {
+		return errObj(err)
+	}
+	return out
+}
+
 // --- sign side (see sign.go) ---------------------------------------------------------------
 // These three expose claim authoring to the page. The private key stays in WebCrypto; Go only
 // ever receives a public key and a finished signature. Each returns {error: "..."} on failure so
@@ -124,6 +138,8 @@ func main() {
 	js.Global().Set("plktBuildGraph", js.FuncOf(buildGraph))
 	// the 7.4 chain read: a browser cockpit reads scopes without reimplementing the walk
 	js.Global().Set("plktBuildScope", js.FuncOf(buildScope))
+	// one record, one key: the check before taking in a foreign entry
+	js.Global().Set("plktVerify", js.FuncOf(verify))
 	// streaming sha256 for large-file verify (the lens feeds a fetch stream in chunks)
 	js.Global().Set("plktSha256Init", js.FuncOf(sha256Init))
 	js.Global().Set("plktSha256Update", js.FuncOf(sha256Update))
