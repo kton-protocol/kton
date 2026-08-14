@@ -47,12 +47,13 @@ The release ships the matching pair, so a consumer downloading both is never mis
 
 ## What it exports
 
-Seven globals on `window`, set by `main()` in `main_wasm.go`. Each returns `{error: "..."}` on
+Eight globals on `window`, set by `main()` in `main_wasm.go`. Each returns `{error: "..."}` on
 failure rather than failing silently.
 
 | global | signature | purpose |
 |---|---|---|
 | `plktBuildGraph` | `(unionJSON, keysJSON?, namesJSON?) -> graphJSON` | verified provenance/review graph from a content-addressed union |
+| `plktBuildScope` | `(unionJSON, scopeId) -> scopeJSON` | the §7.4 chain: order, head(s), gaps, grammar verdict |
 | `plktSha256Init` | `() -> null` | begin a streaming hash (resets the one hasher) |
 | `plktSha256Update` | `(Uint8Array) -> bool` | feed a chunk |
 | `plktSha256Final` | `() -> hex` | finish and return the digest |
@@ -67,6 +68,27 @@ at a time, and `Init` resets it - so do not interleave two streams through it.
 
 The signing split is deliberate: the private key stays in WebCrypto and never enters Go. The module
 only ever receives a public key and a finished signature.
+
+### Reading a scope
+
+`plktBuildScope` returns the chain of one scope: `members` in chain order, `heads` (each with the
+ordered `path` it commits to), `defects`, and a `verdict`. Two distinctions in that output are load-
+bearing and must not be collapsed in the UI:
+
+- **`gap` vs `defect`.** A head's `gap` names a `prev` these records do not resolve. Ingest is
+  monotone (§7.4, Clause 11), so the missing link may simply live in another source - present it as
+  *incomplete*, never as invalid. A `defect` is a grammar violation intrinsic to the claim; no
+  further source repairs it.
+- **`verdict.branched` is not a failure.** Several heads is a legal state, and a branched scope can
+  still be `sealable`. What a seal over a branched scope *means* is consumer policy that §7.4
+  deliberately leaves open; the module reports structure and prescribes no remedy.
+
+Membership here is structural. A record is read into the scope because it says it belongs and its
+id derives from its own envelope - not because anyone verified who signed it. For that, pass the
+same union through `plktBuildGraph` with a key map.
+
+Natively, the same read is `go run ./web/graph -scope <scope-id> union.json`, which is how it is
+diffed against `nekton head`.
 
 ## Verifying what you downloaded
 
