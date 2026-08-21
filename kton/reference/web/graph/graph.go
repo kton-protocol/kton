@@ -8,6 +8,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -29,11 +30,12 @@ type node struct {
 	Type        string `json:"type"` // "foton" | "claim"
 	Signer      string `json:"signer"`
 	By          string `json:"by,omitempty"`
-	Participant string `json:"participant"` // human owner (from keyid map / the claim's `by`)
-	Role        string `json:"role"`        // foton: what step; claim: the predicate; source: filename
-	Kind        string `json:"kind,omitempty"` // source nodes: "dataset" | "code"
-	Headline    string `json:"headline"`    // claim: short human summary
-	Text        string `json:"text"`        // claim: the full signed statement
+	Participant string `json:"participant"`       // human owner (from keyid map / the claim's `by`)
+	Role        string `json:"role"`              // foton: what step; claim: the predicate; source: filename
+	Kind        string `json:"kind,omitempty"`    // source nodes: "dataset" | "code"
+	URI         string `json:"uri,omitempty"`     // entity nodes: the full IRI a claim named
+	Headline    string `json:"headline"`          // claim: short human summary
+	Text        string `json:"text"`              // claim: the full signed statement
 	Inputs      []fref `json:"inputs,omitempty"`  // foton: the input files (hash + name)
 	Outputs     []fref `json:"outputs,omitempty"` // foton: the output files (hash + name)
 	Verified    bool   `json:"verified"`
@@ -57,7 +59,7 @@ type graph struct {
 	Edges    []edge              `json:"edges"`
 	Locators map[string][]string `json:"locators"` // content-hash -> URIs, from signed located-at claims
 	Summary  summary             `json:"summary"`
-	Stats   struct {
+	Stats    struct {
 		Fotons     int `json:"fotons"`
 		Claims     int `json:"claims"`
 		Verified   int `json:"verified"`
@@ -130,6 +132,7 @@ func BuildGraph(unionJSON, keysJSON, namesJSON string) (string, error) {
 	g.Locators = map[string][]string{}
 	producedBy := map[string][]string{} // output hash (short) -> ALL foton node ids that produced it
 	claimNodes := map[string]bool{}     // short claim id -> true, so a foton input that IS a claim edges to it
+	entities := entitySet{}             // node id -> the IRI it stands for (people, roles, processes, periods, …)
 	type inref struct{ h, name string }
 	type finput struct {
 		nodeID, participant string
@@ -248,7 +251,7 @@ func BuildGraph(unionJSON, keysJSON, namesJSON string) (string, error) {
 			}
 			nid := short(cid)
 			claimNodes[nid] = true // a foton that CONSUMES this claim (input hash == claim id) edges to it
-			pred, by, subj, text, objURI := "", "", "", "", ""
+			pred, by, subj, subjEnt, text, objURI := "", "", "", "", "", ""
 			if body, _ := st["predicate"].(map[string]any); body != nil {
 				if p, _ := body["predicate"].(map[string]any); p != nil {
 					if u, _ := p["uri"].(string); u != "" {
@@ -295,10 +298,21 @@ func BuildGraph(unionJSON, keysJSON, namesJSON string) (string, error) {
 					}
 				}
 			}
+			// A subject is a hash OR a URI: nekton indexes both (`bySubject` is keyed "hash/uri",
+			// and `nekton about` takes either), so a claim about a person, a role, a process or a
+			// period must reach its referent here too. Reading only the digest drops every such
+			// claim to an unconnected node - which is the whole non-file half of a real graph.
+			// `subj` stays the CONTENT-hash subject; `subjEnt` is the IRI referent, kept apart so
+			// the locator fold below remains a content-hash-only path.
 			for _, s := range asList(st["subject"]) {
 				if dg, _ := s["digest"].(map[string]any); dg != nil {
 					if h, _ := dg["sha256"].(string); h != "" {
 						subj = short(h)
+					}
+				}
+				if subjEnt == "" {
+					if u, _ := s["uri"].(string); isIRI(u) {
+						subjEnt = entities.add(u)
 					}
 				}
 			}
@@ -320,6 +334,9 @@ func BuildGraph(unionJSON, keysJSON, namesJSON string) (string, error) {
 			}
 			g.Nodes = append(g.Nodes, node{ID: nid, Label: pred, Type: "claim", Signer: keyid, By: by,
 				Participant: part, Role: pred, Headline: firstClause(text), Text: text, Verified: ok})
+			if subj == "" {
+				subj = subjEnt
+			}
 			if subj != "" {
 				g.Edges = append(g.Edges, edge{From: nid, To: subj, Kind: "about"})
 			}
@@ -333,6 +350,14 @@ func BuildGraph(unionJSON, keysJSON, namesJSON string) (string, error) {
 						if rh := refHash(v); rh != "" {
 							g.Edges = append(g.Edges, edge{From: nid, To: short(rh), Kind: k})
 						}
+					}
+					// The object may BE the referent rather than contain one: `{"id": "…/roles/qa"}`
+					// is the claim's object, not a named member of it (the kernel's own
+					// claim.ObjOrLit.Key() reads hash/uri/id exactly this way). Such an edge is
+					// labelled with the RELATION, because that is what the claim asserts - while any
+					// literal beside it (`level`, `validUntil`, …) stays an attribute on the node.
+					if iri := objectIRI(obj); iri != "" {
+						g.Edges = append(g.Edges, edge{From: nid, To: entities.add(iri), Kind: pred})
 					}
 				}
 			}
@@ -433,6 +458,16 @@ func BuildGraph(unionJSON, keysJSON, namesJSON string) (string, error) {
 		}
 	}
 
+	// Referents named by IRI (a person, a role, a process, a period) become ENTITY nodes. They are
+	// deliberately not REF nodes: a ref is a dangling hash whose record we simply do not hold,
+	// whereas an entity is exactly what the claim is about and is a legitimate place to navigate
+	// to. It carries the full IRI plus a short readable label; the id stays opaque and short so no
+	// consumer has to cope with ':' and '/' inside a node id.
+	for _, id := range entities.ids() {
+		g.Nodes = append(g.Nodes, node{ID: id, Type: "entity", Role: lastSeg(entities[id]),
+			Label: lastSeg(entities[id]), URI: entities[id]})
+	}
+
 	// Dangling edge endpoints (e.g. an env-spectrum a claim `qualifies-as`, or a file a claim
 	// references) become lightweight REF nodes so every directional relation renders. Label from a
 	// located-at filename when we have one, else the short hash.
@@ -464,8 +499,8 @@ func BuildGraph(unionJSON, keysJSON, namesJSON string) (string, error) {
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
 		nodePart[n.ID] = n.Participant
-		if n.Type == "source" || n.Type == "ref" {
-			continue // external inputs / bare references aren't a participant's signed records
+		if n.Type == "source" || n.Type == "ref" || n.Type == "entity" {
+			continue // external inputs / bare references / named referents aren't signed records
 		}
 		ps := agg[n.Participant]
 		if ps == nil {
@@ -572,6 +607,59 @@ func firstClause(t string) string {
 		return strings.TrimSpace(t[:64]) + "…"
 	}
 	return t
+}
+
+// entitySet collects the IRI referents a graph names, keyed by their opaque node id.
+type entitySet map[string]string
+
+// add registers an IRI and returns the node id that stands for it.
+func (e entitySet) add(iri string) string {
+	id := entityID(iri)
+	e[id] = iri
+	return id
+}
+
+// ids returns the collected node ids in a stable order, so a graph built twice from the same
+// union is byte-identical.
+func (e entitySet) ids() []string {
+	out := make([]string, 0, len(e))
+	for id := range e {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// entityID maps an IRI to an opaque node id of the same shape as every other id in the graph
+// (a short hex string), so nothing downstream has to quote ':' or '/' in an id, and two claims
+// naming the same referent land on the same node.
+func entityID(iri string) string {
+	h := sha256.Sum256([]byte(iri))
+	return "iri:" + hex.EncodeToString(h[:])[:shortLen]
+}
+
+// isIRI reports whether s names a referent rather than being a literal or a content hash. A
+// content hash is already a first-class node, so it is explicitly not an entity.
+func isIRI(s string) bool {
+	if s == "" {
+		return false
+	}
+	if _, ok := core.NormalizeContentHash(s); ok {
+		return false
+	}
+	i := strings.IndexByte(s, ':')
+	return i > 0 && i < len(s)-1
+}
+
+// objectIRI returns the IRI an object IS (as opposed to one it contains), following the same
+// hash/uri/id precedence the kernel's own claim.ObjOrLit.Key() uses.
+func objectIRI(obj map[string]any) string {
+	for _, k := range []string{"uri", "id"} {
+		if s, _ := obj[k].(string); isIRI(s) {
+			return s
+		}
+	}
+	return ""
 }
 
 // refHash extracts a content hash from an object-field value: a bare "sha256:…" string, a
