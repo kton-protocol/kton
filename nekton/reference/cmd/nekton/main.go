@@ -260,25 +260,67 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "add":
-		regDir, envPath := "", ""
+		// Accepts MORE THAN ONE path on purpose: registry.Open replays the whole log to rebuild its
+		// indexes, so a shell loop over N files costs N replays - quadratic, and measurably unusable
+		// on a real corpus (2.2 s per record at 1k already stored). Bulk arrival is the normal case
+		// for this substrate, not an edge case: federation hands you a set, an executor publishes a
+		// batch of runs, a consumer imports a corpus someone handed over. Open once, then ingest.
+		regDir := ""
+		var paths []string
 		for i := 0; i < len(args); i++ {
 			if args[i] == "--registry" && i+1 < len(args) {
 				i++
 				regDir = args[i]
-			} else if envPath == "" {
-				envPath = args[i]
 			} else {
-				return fmt.Errorf("usage: nekton add <envelope.dsse.json> [--registry <dir>]")
+				paths = append(paths, args[i])
 			}
 		}
-		if envPath == "" {
-			return fmt.Errorf("usage: nekton add <envelope.dsse.json> [--registry <dir>]")
+		if len(paths) == 0 {
+			return fmt.Errorf("usage: nekton add <envelope.dsse.json>... [--registry <dir>]")
 		}
-		env, err := readEnvelope(envPath)
+		r, err := registry.Open(regOrDefault(regDir))
 		if err != nil {
 			return err
 		}
-		r, err := registry.Open(regOrDefault(regDir))
+		if len(paths) > 1 {
+			// A record rejected ON ITS MERITS does not wedge the import: it is named, counted, and
+			// the rest still lands - the same call federation's Mirror already makes. A LOCAL
+			// persistence failure is different (transient, and skipping it would silently drop a
+			// valid record), so that aborts. Either way the exit is non-zero when anything was
+			// refused: a partial import that reports success is how a corpus quietly loses records.
+			added, present := 0, 0
+			var refused []string
+			for _, p := range paths {
+				env, err := readEnvelope(p)
+				if err != nil {
+					refused = append(refused, fmt.Sprintf("%s: %v", p, err))
+					continue
+				}
+				_, isNew, err := r.Add(env)
+				if err != nil {
+					// nekton's registry draws no transient/merit line the way plankton's ErrPersist
+					// does, so every failure is reported by name and the exit is non-zero - the
+					// caller decides what to do, rather than the import deciding silently.
+					refused = append(refused, fmt.Sprintf("%s: %v", p, err))
+					continue
+				}
+				if isNew {
+					added++
+				} else {
+					present++
+				}
+			}
+			for _, m := range refused {
+				fmt.Fprintln(os.Stderr, "refused: "+m)
+			}
+			fmt.Printf("indexed %d claims, %d already present, %d refused  (registry now holds %d)\n",
+				added, present, len(refused), r.Len())
+			if len(refused) > 0 {
+				return fmt.Errorf("%d of %d record(s) refused", len(refused), len(paths))
+			}
+			return nil
+		}
+		env, err := readEnvelope(paths[0])
 		if err != nil {
 			return err
 		}

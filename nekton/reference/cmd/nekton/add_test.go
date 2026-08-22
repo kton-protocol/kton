@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -124,5 +126,59 @@ func TestCoSignerTwinUnion(t *testing.T) {
 	}
 	if string(objBytes[0]) != string(objBytes[1]) {
 		t.Errorf("stored object is NOT order-independent:\n A-first: %s\n B-first: %s", objBytes[0], objBytes[1])
+	}
+}
+
+// TestBulkAddOpensTheRegistryOnce: `add` takes many envelopes in one call. A shell loop cost one
+// full registry replay PER RECORD - quadratic, and measured at 2.2 s per record once a thousand
+// were stored, which is an hour for a real corpus. Bulk arrival is the normal case here
+// (federation hands you a set; an executor publishes a batch; a consumer imports a handed-over
+// corpus), so this asserts the many-path form ingests every record and reports refusals by name
+// without letting one bad record wedge the rest.
+func TestBulkAddOpensTheRegistryOnce(t *testing.T) {
+	dir := t.TempDir()
+	reg := filepath.Join(dir, "reg")
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var paths []string
+	for i, when := range []string{"2026-07-15T00:00:00Z", "2026-07-16T00:00:00Z", "DRAFTT00:00:00Z"} {
+		spec := claimSpec{
+			Subject:   []subjSpec{{URI: fmt.Sprintf("urn:example:thing-%d", i)}},
+			Predicate: "pav:reviewedBy",
+			Object:    map[string]any{"value": "ok"},
+			By:        "CN=Tester",
+			When:      when,
+		}
+		p := filepath.Join(dir, fmt.Sprintf("c%d.dsse.json", i))
+		// the malformed one cannot be signed through signClaim (it validates), so write the
+		// envelope directly - which is exactly how a corpus ends up holding one.
+		if err := signClaim(spec, priv, p, false, ""); err != nil {
+			if i != 2 {
+				t.Fatalf("sign %d: %v", i, err)
+			}
+			raw, rerr := os.ReadFile(paths[0])
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			if werr := os.WriteFile(p, bytes.ReplaceAll(raw, []byte("payload"), []byte("payloa_")), 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+		}
+		paths = append(paths, p)
+	}
+
+	err = run("add", append(paths, "--registry", reg))
+	if err == nil {
+		t.Error("a refused record must make the call fail: a partial import reporting success is how a corpus quietly loses records")
+	}
+	r, oerr := registry.Open(reg)
+	if oerr != nil {
+		t.Fatalf("open: %v", oerr)
+	}
+	if r.Len() != 2 {
+		t.Errorf("registry holds %d claims, want 2 (the good ones must land even though one was refused)", r.Len())
 	}
 }
