@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -181,4 +183,80 @@ func TestBulkAddOpensTheRegistryOnce(t *testing.T) {
 	if r.Len() != 2 {
 		t.Errorf("registry holds %d claims, want 2 (the good ones must land even though one was refused)", r.Len())
 	}
+}
+
+// TestReadJSONEmitsRecordsVerbatim: `about --json` and `by --json` return {claimId, envelope} - the
+// shape the registry stores and `add` accepts - so a consumer can decode the payload itself. The
+// prose form answers "which records, roughly"; it does not carry the object, and the object is what
+// a claim relates to. A consumer that had to parse the line would be parsing a sentence that does
+// not contain the answer.
+func TestReadJSONEmitsRecordsVerbatim(t *testing.T) {
+	dir := t.TempDir()
+	reg := filepath.Join(dir, "reg")
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := claimSpec{
+		Subject:   []subjSpec{{URI: "urn:example:doc"}},
+		Predicate: "pav:reviewedBy",
+		Object:    map[string]any{"id": "urn:example:person"},
+		By:        "CN=Tester",
+		When:      "2026-07-15T00:00:00Z",
+	}
+	if err := signClaim(spec, priv, "", true, reg); err != nil {
+		t.Fatalf("claim --add: %v", err)
+	}
+	// `about` resolves its registry from the environment, not from an argument
+	t.Setenv("NEKTON_DIR", reg)
+
+	out := captureStdout(t, func() {
+		if err := run("about", []string{"urn:example:doc", "--json"}); err != nil {
+			t.Fatalf("about --json: %v", err)
+		}
+	})
+	var recs []struct {
+		ClaimID  string `json:"claimId"`
+		Envelope struct {
+			Payload string `json:"payload"`
+		} `json:"envelope"`
+	}
+	if err := json.Unmarshal([]byte(out), &recs); err != nil {
+		t.Fatalf("about --json did not emit JSON: %v\n%s", err, out)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1", len(recs))
+	}
+	raw, err := base64.StdEncoding.DecodeString(recs[0].Envelope.Payload)
+	if err != nil {
+		t.Fatalf("payload not base64: %v", err)
+	}
+	// the object must survive: it is absent from the prose form, and it is the destination
+	if !bytes.Contains(raw, []byte("urn:example:person")) {
+		t.Error("the claim's object did not survive into --json output")
+	}
+	if recs[0].ClaimID == "" {
+		t.Error("record carries no claimId")
+	}
+}
+
+// captureStdout runs fn with os.Stdout redirected and returns what it printed.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = buf.ReadFrom(r)
+		done <- buf.String()
+	}()
+	fn()
+	_ = w.Close()
+	os.Stdout = old
+	return <-done
 }

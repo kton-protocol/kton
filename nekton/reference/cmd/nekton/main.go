@@ -136,6 +136,41 @@ func printClaims(recs []registry.Record) {
 	}
 }
 
+// printClaimsJSON emits the records VERBATIM - {claimId, envelope}, the same shape the registry
+// stores and `add` accepts. Nothing is projected, ranked or interpreted: the caller decodes the
+// payload exactly as the kernel does. The prose form above answers "which records, roughly"; a
+// consumer of the claim axis needs the body, because a claim's meaning IS its body - the object it
+// relates to does not appear in the rendered line at all.
+func printClaimsJSON(recs []registry.Record) error {
+	type rec struct {
+		ClaimID  string        `json:"claimId"`
+		Envelope core.Envelope `json:"envelope"`
+	}
+	out := make([]rec, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, rec{ClaimID: r.ClaimID, Envelope: r.Envelope})
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
+}
+
+// takeJSON pulls a --json flag out of the argument list, returning the rest.
+func takeJSON(args []string) ([]string, bool) {
+	rest, asJSON := make([]string, 0, len(args)), false
+	for _, a := range args {
+		if a == "--json" {
+			asJSON = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return rest, asJSON
+}
+
 func run(cmd string, args []string) error {
 	switch cmd { // help/version in COMMAND position (not just as a flag) should not be "unknown command"
 	case "--help", "-h", "help":
@@ -336,34 +371,44 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "about":
+		args, asJSON := takeJSON(args)
 		if len(args) != 1 {
-			return fmt.Errorf("usage: nekton about <subject>  (hash \"sha256:...\" or uri)")
+			return fmt.Errorf("usage: nekton about <subject> [--json]  (hash \"sha256:...\" or uri)")
 		}
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
+		}
+		if asJSON {
+			return printClaimsJSON(r.About(args[0]))
 		}
 		printClaims(r.About(args[0]))
 		return nil
 
 	case "by":
+		args, asJSON := takeJSON(args)
 		if len(args) != 2 {
-			return fmt.Errorf("usage: nekton by <signer|predicate|object> <value>")
+			return fmt.Errorf("usage: nekton by <signer|predicate|object> <value> [--json]")
 		}
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
 		}
+		var recs []registry.Record
 		switch args[0] {
 		case "signer":
-			printClaims(r.BySigner(keyidFromArg(args[1])))
+			recs = r.BySigner(keyidFromArg(args[1]))
 		case "predicate":
-			printClaims(r.ByPredicate(resolvePredicateArg(args[1])))
+			recs = r.ByPredicate(resolvePredicateArg(args[1]))
 		case "object":
-			printClaims(r.ByObject(args[1]))
+			recs = r.ByObject(args[1])
 		default:
 			return fmt.Errorf("by <signer|predicate|object> <value>")
 		}
+		if asJSON {
+			return printClaimsJSON(recs)
+		}
+		printClaims(recs)
 		return nil
 
 	case "nanopublish":
