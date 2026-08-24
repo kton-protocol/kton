@@ -7,8 +7,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"kton.dev/nekton/registry"
@@ -120,7 +122,7 @@ func TestCoSignerTwinUnion(t *testing.T) {
 		if ok, _ := rec.Envelope.Verify(pubB); !ok {
 			t.Errorf("order %d: signer B does not verify against the unioned envelope", i)
 		}
-		b, err := os.ReadFile(filepath.Join(dir, "reg", order[0]+"-first", "objects", "sha256", id[len("sha256:"):]+".json"))
+		b, err := storedRecord(filepath.Join(dir, "reg", order[0]+"-first"), id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,6 +131,37 @@ func TestCoSignerTwinUnion(t *testing.T) {
 	if string(objBytes[0]) != string(objBytes[1]) {
 		t.Errorf("stored object is NOT order-independent:\n A-first: %s\n B-first: %s", objBytes[0], objBytes[1])
 	}
+}
+
+// storedRecord returns the raw stored bytes for a claim id, wherever the store filed it: a claim
+// lives as one line in its nekton file (objects/scope/<scope_id>.nekton.jsonl, or
+// objects/unscoped.nekton.jsonl). Scanning for the id keeps this assertion about the RECORD being
+// order-independent, not about which file form the store happens to use.
+func storedRecord(regDir, id string) ([]byte, error) {
+	var found []byte
+	err := filepath.WalkDir(filepath.Join(regDir, "objects"), func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".nekton.jsonl") {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.Contains(line, id) {
+				found = []byte(strings.TrimSpace(line))
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if found == nil {
+		return nil, fmt.Errorf("claim %s is not stored anywhere under %s", id, regDir)
+	}
+	return found, nil
 }
 
 // TestBulkAddOpensTheRegistryOnce: `add` takes many envelopes in one call. A shell loop cost one
