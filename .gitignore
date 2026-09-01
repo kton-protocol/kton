@@ -13,3 +13,6 @@
 /dist/
 /target/
 __pycache__/
+
+# native harness build of the wasm graph logic (go run ./web/graph)
+/kton/reference/web/graph/graph
