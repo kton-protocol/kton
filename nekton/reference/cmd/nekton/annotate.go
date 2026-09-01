@@ -394,9 +394,24 @@ func listTemplates(args []string) error {
 			i++
 			showName = arg(args, i)
 		default:
-			if !strings.HasPrefix(args[i], "--") {
-				showName = args[i]
+			if strings.HasPrefix(args[i], "--") {
+				return fmt.Errorf("unknown flag %q", args[i])
 			}
+			// `templates` has NO subcommands. This used to take any positional as a template name and
+			// let the LAST one win, which produced three bad outcomes at once: `templates ls` reported
+			// `no template "ls"`, reading as a misspelled name rather than an unknown verb; the
+			// documented `templates show <name>` appeared to work only because <name> overwrote
+			// `show`, so any word would have done; and `templates HUHU <name>` behaved identically.
+			// Anyone spot-checking docs/cli.md against the binary therefore had it CONFIRMED (#46).
+			switch args[i] {
+			case "ls", "list", "show", "search", "pull", "push", "add", "rm", "remove":
+				return fmt.Errorf("`nekton templates` has no subcommand %q - it lists templates, or shows one with --show <name>.\n"+
+					"`nekton man` is the command surface this build actually has", args[i])
+			}
+			if showName != "" {
+				return fmt.Errorf("`nekton templates` takes at most one template name, got %q and %q", showName, args[i])
+			}
+			showName = args[i]
 		}
 	}
 	aliases := loadAliases(aliasesPath)
