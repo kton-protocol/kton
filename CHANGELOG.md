@@ -56,6 +56,14 @@ build reading a format it does not know refuses loudly instead of reporting an e
   ids. A non-RFC-3339 value is refused before signing, not at ingest: a timestamp caught after
   signing has already been signed.
 
+- **`keygen --seed <64-hex>` and `pubkey <key.key|hex>`**, both kernels (#44). The sibling of #42 for
+  the other half of a record's identity: the public key sits inside every signed payload, so a random
+  key per run moved every record id no matter how fixed `when` was. A hand-written seed was already
+  accepted as a `.key`; what was missing was the way back to the `.pub` hex that `verify`,
+  `--trust-keys` and the viewer key directories read. With both, two runs of the same corpus produce
+  a byte-identical store. A seeded key is only as strong as its seed — for fixtures, not for an
+  identity anyone must trust.
+
 - `plankton add` no longer needs one process per record for bulk ingest (#37).
 - `nekton about` / `nekton by` emit structured JSON with `--json`, so a consumer can read the claim
   axis without parsing prose (#39).

@@ -20,6 +20,10 @@ const usage = `nekton - signed-claim commitment substrate (reference)
 
 usage:
   nekton keygen <name>                                generate a signing identity (<name>.key/.pub)
+      --seed <64-hex>                                 derive it from a seed, not the entropy pool, so a corpus or
+                                                      snapshot rebuilds to the same record ids (fixtures only:
+                                                      the key is only as strong as its seed)
+  nekton pubkey <key.key|hex>                         print the public key hex (what verify/--trust-keys read)
   nekton keyid <key.pub|key.key|hex>                  print the keyid shown as by=key:<id> (map key -> signer)
   nekton seed <scope-name> --sign key.key [--add] [--registry D]  open a (sub)nekton scope; prints its scope id
       --when <RFC3339>   pin the genesis timestamp. The scope id COVERS it, so this is what makes
@@ -194,10 +198,16 @@ func run(cmd string, args []string) error {
 		fmt.Print(manPage)
 		return nil
 	case "keygen":
+		return keygen(args)
+
+	case "pubkey":
+		// Recover the .pub hex from a private key. Needed because an identity can be written by hand
+		// (a bare 32-byte seed is a valid .key), and verify / --trust-keys / the viewer key dirs all
+		// read the public half.
 		if len(args) != 1 {
-			return fmt.Errorf("usage: nekton keygen <name>")
+			return fmt.Errorf("usage: nekton pubkey <key.key|hex>")
 		}
-		return keygen(args[0])
+		return pubkey(args[0])
 
 	case "keyid":
 		// Map a key file/hex to the keyid shown as `by=key:<id>` on claims, so you can tell WHICH signer

@@ -56,11 +56,52 @@ func keyidOf(s string) (string, error) {
 }
 
 // keygen writes <name>.key (hex Ed25519 seed) and <name>.pub (hex public key).
-func keygen(name string) error {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return err
+// keygen writes <name>.key (the 32-byte seed, hex) and <name>.pub (the public key, hex).
+//
+// --seed makes the identity a function of its input instead of the entropy pool. That matters for
+// the same reason --when does (#42): the public key is inside every signed payload - example 07
+// even mints an identity IRI from sha256(pub) - so a random key per run moves every record id, and
+// a corpus or a snapshot can never be rebuilt to the same bytes. A hand-written seed was already
+// accepted as a .key; what was missing was any way back to the .pub hex that verify, --trust-keys
+// and the viewer key directories need.
+//
+// A --seed key is exactly as strong as the seed behind it. Use it for fixtures and reproducible
+// corpora, not for an identity that signs anything anyone must trust.
+func keygen(args []string) error {
+	var name, seedHex string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--seed":
+			i++
+			seedHex = arg(args, i)
+		default:
+			if strings.HasPrefix(args[i], "--") {
+				return fmt.Errorf("unknown flag %q", args[i])
+			}
+			name = args[i]
+		}
 	}
+	if name == "" {
+		return fmt.Errorf("usage: %s keygen <name> [--seed <64-hex>]", "plankton")
+	}
+
+	var pub ed25519.PublicKey
+	var priv ed25519.PrivateKey
+	if seedHex == "" {
+		var err error
+		if pub, priv, err = ed25519.GenerateKey(rand.Reader); err != nil {
+			return err
+		}
+	} else {
+		seed, err := hex.DecodeString(strings.TrimSpace(seedHex))
+		if err != nil || len(seed) != ed25519.SeedSize {
+			return fmt.Errorf("--seed must be %d hex-encoded bytes (%d hex chars), got %q",
+				ed25519.SeedSize, ed25519.SeedSize*2, seedHex)
+		}
+		priv = ed25519.NewKeyFromSeed(seed)
+		pub = priv.Public().(ed25519.PublicKey)
+	}
+
 	if err := os.WriteFile(name+".key", []byte(hex.EncodeToString(priv.Seed())), 0o600); err != nil {
 		return err
 	}
@@ -68,6 +109,22 @@ func keygen(name string) error {
 		return err
 	}
 	fmt.Printf("keypair %s  keyid=%s\n", name, keyidHex(pub))
+	return nil
+}
+
+// pubkey prints the public key hex for a private key, so an identity written by hand (or carried as
+// a bare seed) can still produce the .pub that verify and --trust-keys read.
+func pubkey(arg string) error {
+	txt := arg
+	if b, err := os.ReadFile(arg); err == nil {
+		txt = string(b)
+	}
+	seed, err := hex.DecodeString(strings.TrimSpace(txt))
+	if err != nil || len(seed) != ed25519.SeedSize {
+		return fmt.Errorf("not a %d-byte hex seed (a .key file or the hex itself): %q", ed25519.SeedSize, arg)
+	}
+	pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	fmt.Println(hex.EncodeToString(pub))
 	return nil
 }
 
