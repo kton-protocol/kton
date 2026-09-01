@@ -1,7 +1,26 @@
 # CLI design - `plankton` & `nekton` as bash tools
 
-> **Status:** design sketch (both repos are scaffolds). This is the intended command surface,
-> consistent with the kernels in `spec/SPEC.md`. Output shown is illustrative.
+> **Status: DESIGN SKETCH, and the implementation has overtaken it.** This is the command surface
+> that was *intended*, not the one that ships. As of 0.2, four of the fourteen verbs below exist —
+> `annotate`, `claim`, `show`, `templates` — and these ten do not: `claims`, `confirm`, `delegate`,
+> `equiv`, `qualify-env`, `review`, `risk-accept`, `serve`, `supersede`, `vote`. They exit 1 with the
+> usage banner, so a script fails loudly. Conversely this document never mentions `about`, `add`,
+> `by`, `export`, `head`, `keygen`, `mirror`, `seed` or `verify`, which do exist.
+>
+> Two specifics worth naming, because they mislead rather than merely omit:
+>
+> - The `templates` section documents `ls | show <name> | search <kw>` and `pull | push | add`.
+>   None are subcommands. The real surface is `nekton templates [--show <name>]`. Until #45 the
+>   binary read any positional as a template *name*, so `templates ls` answered `no template "ls"`
+>   and `templates show <name>` appeared to work — which meant spot-checking this document against
+>   the binary confirmed it.
+> - The `gxp/*` templates shown with source `bundled` are not bundled. No `gxp` string is compiled
+>   into any binary and there is no `nekton/templates/` in this repository. Regulated vocabulary
+>   ships as aliases and templates in the example repo, never as the protocol ontology.
+>
+> **For what this build actually has, run `nekton man`.** Its command list was checked against the
+> dispatch in `cmd/nekton/main.go`: identical, no phantoms. Read the document below as a design
+> record — output shown is illustrative and in places does not match the binary.
 
 ## The hard invariant - read first
 
