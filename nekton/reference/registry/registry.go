@@ -70,11 +70,10 @@ func (r *Registry) withWriteLock(fn func() error) error {
 	return fmt.Errorf("could not acquire the object write lock (%s)", lp)
 }
 
-// readObjectEnvelope reads the CURRENT on-disk envelope for a claim id (the source of truth under the
-// write lock), so a co-signature merge unions against what another process may have just written, not a
-// stale in-memory copy.
-func (r *Registry) readObjectEnvelope(id string) (core.Envelope, bool) {
-	b, err := os.ReadFile(objectPath(r.objectsDir, id))
+// readLegacyObject reads a record an older build left at the flat objects/<algo>/<hash>.json path,
+// so a co-signature union and the migrate-on-touch in persistClaim can still find it.
+func (r *Registry) readLegacyObject(id string) (core.Envelope, bool) {
+	b, err := os.ReadFile(legacyObjectPath(r.objectsDir, id))
 	if err != nil {
 		return core.Envelope{}, false
 	}
@@ -85,19 +84,38 @@ func (r *Registry) readObjectEnvelope(id string) (core.Envelope, bool) {
 	return of.Envelope, true
 }
 
-// persistClaim writes a claim object as a LOCKED on-disk read-modify-write: under the write lock it
-// unions the incoming signatures with whatever is already on disk (possibly just written by another
-// process), then atomic-writes. This makes ALL persists of a claim id safe - whether or not this
-// process had yet SEEN the claim - so N processes co-signing the same statement concurrently never
-// clobber each other (every co-signature survives). Returns the merged envelope actually stored.
-func (r *Registry) persistClaim(id string, env core.Envelope) (core.Envelope, error) {
+// persistClaim files a claim into its subnekton as a LOCKED on-disk read-modify-write: under the
+// write lock it unions the incoming signatures with whatever that subnekton already holds (possibly
+// just written by another process), then appends a new record or rewrites the file in place. This
+// makes ALL persists of a claim id safe - whether or not this process had yet SEEN the claim - so N
+// processes co-signing the same statement concurrently never clobber each other (every co-signature
+// survives). Returns the merged envelope actually stored.
+func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envelope, error) {
 	merged := env
 	err := r.withWriteLock(func() error {
-		if disk, ok := r.readObjectEnvelope(id); ok {
+		path := subnektonPath(r.objectsDir, scope)
+		recs := readSubnekton(path)
+		for i, of := range recs {
+			if of.ClaimID != id {
+				continue
+			}
+			m, _ := unionSignatures(of.Envelope, env)
+			merged, recs[i].Envelope = m, m
+			return rewriteSubnekton(path, recs) // an existing entry changed: rewrite the file
+		}
+		// Not in the subnekton yet. A record an older build left at the flat path is the same claim:
+		// union with it and migrate it in, so no co-signature is lost crossing the layouts.
+		if disk, ok := r.readLegacyObject(id); ok {
 			m, _ := unionSignatures(disk, env)
 			merged = m
 		}
-		return r.writeObject(id, Record{ClaimID: id, Envelope: merged})
+		if err := appendSubnekton(path, objectFile{ClaimID: id, Envelope: merged}); err != nil {
+			return err
+		}
+		if lp := legacyObjectPath(r.objectsDir, id); lp != "" {
+			os.Remove(lp) // no-op unless this was a migration
+		}
+		return nil
 	})
 	return merged, err
 }
@@ -263,37 +281,9 @@ func openAt(dir string, create bool) (*Registry, error) {
 			return nil, err
 		}
 	}
-	var paths []string
-	if err := filepath.WalkDir(r.objectsDir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil // no objects dir on a read-only source: an empty registry, not an error
-			}
-			return err
-		}
-		if !d.IsDir() && strings.HasSuffix(p, ".json") {
-			paths = append(paths, p)
-		}
-		return nil
-	}); err != nil {
+	pending, err := readStore(r.objectsDir)
+	if err != nil {
 		return nil, err
-	}
-	sort.Strings(paths)
-	var pending []Record
-	for _, p := range paths {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return nil, err
-		}
-		var of objectFile
-		if err := json.Unmarshal(b, &of); err != nil {
-			// A single corrupt/truncated object MUST NOT disable reads over every other (good)
-			// record - one bad byte would otherwise be a registry-wide DoS. Skip it, name it on
-			// stderr, keep going.
-			fmt.Fprintf(os.Stderr, "warning: skipping unreadable record %s: %v\n", p, err)
-			continue
-		}
-		pending = append(pending, Record{ClaimID: of.ClaimID, Envelope: of.Envelope})
 	}
 	// Objects on disk are sorted by content hash, NOT chain order, and a git-merged/planted object
 	// could be an orphan. So replay is chain-VALIDATING: index records whose §7.4 chain resolves
@@ -461,7 +451,7 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 		if old, ok := r.claimByID[id]; ok {
 			// A same-payload TWIN: persist the co-signature union under the lock (re-reading the current
 			// on-disk envelope), then refresh this process's in-memory view + signer index.
-			merged, err := r.persistClaim(id, env)
+			merged, err := r.persistClaim(id, scopeOf(st, id), env)
 			if err != nil {
 				return "", false, err
 			}
@@ -497,7 +487,7 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	}
 	// Persist through the locked union-write too: a DIFFERENT process may already have created this
 	// object (this process just had not SEEN it), so a plain clobber here would drop its co-signature.
-	merged, err := r.persistClaim(id, env)
+	merged, err := r.persistClaim(id, scopeOf(st, id), env)
 	if err != nil {
 		return "", false, err
 	}
@@ -510,6 +500,26 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	}
 	r.index(rec)
 	return id, true, nil
+}
+
+// scopeOf reports which subnekton a claim belongs to: a seed opens - and belongs to - its own scope
+// (scope_id = its claim id, §7.4), a scoped claim names one, an unscoped claim belongs to the
+// unscoped nekton. This is read from the SIGNED payload, so it is available even when the claim
+// cannot yet be indexed: a claim whose seed or prev has not arrived is still filed in the right
+// nekton while it waits (SPEC §11: incomplete, not invalid). A malformed predicate files as
+// unscoped; Add rejects it a moment later on its own merits.
+func scopeOf(st *claim.Statement, id string) string {
+	if st == nil {
+		return ""
+	}
+	if st.IsSeed() {
+		return id
+	}
+	p, err := st.ParsePredicate()
+	if err != nil || p == nil {
+		return ""
+	}
+	return p.Scope
 }
 
 // checkChain enforces the §7.4 structural grammar on ingest: a seed opens a scope; a scoped
@@ -571,24 +581,112 @@ type objectFile struct {
 	Envelope core.Envelope `json:"envelope"`
 }
 
-func objectPath(objectsDir, claimID string) string {
-	algo, h := "sha256", claimID
-	if i := strings.IndexByte(claimID, ':'); i >= 0 {
-		algo, h = claimID[:i], claimID[i+1:]
+// splitID separates "sha256:<hex>" into its algorithm and bare hex, defaulting to sha256.
+func splitID(id string) (algo, hex string) {
+	algo, hex = "sha256", id
+	if i := strings.IndexByte(id, ':'); i >= 0 {
+		algo, hex = id[:i], id[i+1:]
 	}
+	return algo, hex
+}
+
+// subnektonPath is where a claim lives: ONE FILE PER SUBNEKTON, named by the scope id (the seed's
+// own hash, SPEC §7.4), plus one file for the unscoped nekton.
+//
+//	objects/scope/<scope_id>.nekton.jsonl    a subnekton - its seed and every claim chained under it
+//	objects/unscoped.nekton.jsonl            the unscoped nekton
+//
+// A scope is a bounded, federatable sub-registry (seed.go), and this gives it one artifact: a thing
+// that can be chmod'd, sparse-checked-out, copied, or handed over whole - none of which a flat pile
+// of per-claim hashes can be. The file is a BAG, not a sequence: order stays the chain's alone
+// (`prev`), so the file never becomes a second, unsigned representation of order that could drift
+// from the signed one. JSONL so a new claim is an append, not a rewrite of the subnekton.
+func subnektonPath(objectsDir, scope string) string {
+	if scope == "" {
+		return filepath.Join(objectsDir, "unscoped.nekton.jsonl")
+	}
+	_, s := splitID(scope)
+	return filepath.Join(objectsDir, "scope", s+".nekton.jsonl")
+}
+
+// legacyObjectPath is the per-claim path every record had before the store gained subnekton files.
+// Reads still resolve it (openAt walks both forms), and persistClaim migrates a record in the first
+// time a write touches it.
+func legacyObjectPath(objectsDir, claimID string) string {
+	algo, h := splitID(claimID)
 	return filepath.Join(objectsDir, algo, h+".json")
 }
 
-func (r *Registry) writeObject(claimID string, rec Record) error {
-	p := objectPath(r.objectsDir, claimID)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+// readSubnekton parses a subnekton file into its records. It is deliberately TOLERANT: one corrupt
+// or half-written line must not disable reads over every other record in the scope, so a bad line is
+// named on stderr and skipped. A missing file is an empty subnekton, not an error.
+func readSubnekton(path string) []objectFile {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var out []objectFile
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var of objectFile
+		if err := json.Unmarshal([]byte(line), &of); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping unreadable record in %s: %v\n", path, err)
+			continue
+		}
+		out = append(out, of)
+	}
+	return out
+}
+
+// marshalRecord renders one record as a single JSONL line.
+func marshalRecord(of objectFile) ([]byte, error) {
+	b, err := json.Marshal(of)
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}
+
+// appendSubnekton adds a record to its subnekton. An append (not a rewrite) so filing the Nth claim
+// costs one line, never N. A crash mid-append leaves a torn final line, which readSubnekton skips -
+// the record is then simply absent, exactly as if it had never been filed.
+func appendSubnekton(path string, of objectFile) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(objectFile{ClaimID: rec.ClaimID, Envelope: rec.Envelope}, "", "  ")
+	line, err := marshalRecord(of)
 	if err != nil {
 		return err
 	}
-	return atomicWrite(p, b)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(line); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// rewriteSubnekton replaces a subnekton file atomically - the path taken when an EXISTING entry
+// changes (a co-signature union), which an append cannot express.
+func rewriteSubnekton(path string, recs []objectFile) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	var buf []byte
+	for _, of := range recs {
+		line, err := marshalRecord(of)
+		if err != nil {
+			return err
+		}
+		buf = append(buf, line...)
+	}
+	return atomicWrite(path, buf)
 }
 
 // normKey canonicalizes a hash lookup argument to lowercase (SPEC §5.1) so a query resolves under
@@ -677,22 +775,58 @@ func (r *Registry) Dropped() int { return r.dropped }
 // federation: the RECEIVER decides validity against its OWN union (like Add), not the sender's, so a
 // peer's orphan whose parent the receiver already holds still transfers.
 func (r *Registry) RawRecords() []Record {
-	var out []Record
-	_ = filepath.WalkDir(r.objectsDir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".json") {
-			return nil
+	out, _ := readStore(r.objectsDir)
+	return out
+}
+
+// readStore reads EVERY record a store holds, in both forms: the nekton files
+// (objects/**/*.nekton.jsonl, one record per line) and the legacy per-claim objects
+// (objects/<algo>/<hash>.json) an older build wrote. It is the ONE place that knows the on-disk
+// form - openAt and RawRecords both go through it, so a caller can never drift from the layout and
+// silently read half a store. Order is stable (sorted paths, then file order); it carries no
+// meaning, since a scope's order is its `prev` chain.
+func readStore(objectsDir string) (recs []Record, hardErr error) {
+	var nektons, legacy []string
+	if err := filepath.WalkDir(objectsDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil // no objects dir on a read-only source: an empty store, not an error
+			}
+			return err
 		}
-		b, e := os.ReadFile(p)
-		if e != nil {
-			return nil
-		}
-		var of objectFile
-		if json.Unmarshal(b, &of) == nil {
-			out = append(out, Record{ClaimID: of.ClaimID, Envelope: of.Envelope})
+		switch {
+		case d.IsDir():
+		case strings.HasSuffix(p, ".nekton.jsonl"):
+			nektons = append(nektons, p)
+		case strings.HasSuffix(p, ".json"):
+			legacy = append(legacy, p)
 		}
 		return nil
-	})
-	return out
+	}); err != nil {
+		return nil, err
+	}
+	sort.Strings(nektons)
+	sort.Strings(legacy)
+	for _, p := range nektons {
+		for _, of := range readSubnekton(p) {
+			recs = append(recs, Record{ClaimID: of.ClaimID, Envelope: of.Envelope})
+		}
+	}
+	for _, p := range legacy {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var of objectFile
+		if err := json.Unmarshal(b, &of); err != nil {
+			// A single corrupt object MUST NOT disable reads over every other (good) record - one
+			// bad byte would otherwise be a store-wide DoS. Skip it, name it on stderr, keep going.
+			fmt.Fprintf(os.Stderr, "warning: skipping unreadable record %s: %v\n", p, err)
+			continue
+		}
+		recs = append(recs, Record{ClaimID: of.ClaimID, Envelope: of.Envelope})
+	}
+	return recs, nil
 }
 
 func (r *Registry) Records(since int) []Record {
