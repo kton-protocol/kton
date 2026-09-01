@@ -99,16 +99,21 @@ func TestASubnektonIsOneFile(t *testing.T) {
 	sub := filepath.Join(dir, "objects", "scope", bare(scopeID)+".nekton.jsonl")
 	unscoped := filepath.Join(dir, "objects", "unscoped.nekton.jsonl")
 
-	// The whole store is exactly two files: one subnekton, one unscoped nekton.
+	// The whole store is exactly two RECORD files: one subnekton, one unscoped nekton. The
+	// .format marker is store metadata, not a record, and is excluded on purpose - if it ever
+	// starts carrying records this assertion must fail.
 	var files []string
 	filepath.Walk(filepath.Join(dir, "objects"), func(p string, fi os.FileInfo, err error) error {
-		if err == nil && !fi.IsDir() {
+		if err == nil && !fi.IsDir() && filepath.Base(p) != ".format" {
 			files = append(files, p)
 		}
 		return nil
 	})
 	if len(files) != 2 {
-		t.Errorf("store holds %d files, want 2 (one subnekton + the unscoped nekton): %v", len(files), files)
+		t.Errorf("store holds %d record files, want 2 (one subnekton + the unscoped nekton): %v", len(files), files)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "objects", ".format")); err != nil || string(b) != "nekton-store 2\n" {
+		t.Errorf("store format marker = %q, %v; want %q", string(b), err, "nekton-store 2\n")
 	}
 	if n := lines(t, sub); n != 4 {
 		t.Errorf("subnekton holds %d records, want 4 (seed + 3 chained)", n)
@@ -262,5 +267,59 @@ func TestLegacyPerClaimStoreLoadsAndMigrates(t *testing.T) {
 	}
 	if !found {
 		t.Error("the touched record did not migrate into its subnekton")
+	}
+}
+
+// A store written by a NEWER build must fail loudly rather than read as empty. This is the whole
+// point of the marker: the 0.1 -> 0.2 step showed that an unreadable store and an empty one are
+// indistinguishable to a caller, and "nothing is recorded" is the one answer a verification tool
+// must never give when it simply cannot read.
+func TestANewerStoreIsRefusedRatherThanReadAsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	objects := filepath.Join(dir, "objects")
+	if err := os.MkdirAll(objects, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(objects, ".format"), []byte("nekton-store 99\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Open(dir)
+	if err == nil {
+		t.Fatalf("opened a format-99 store with %d records; want a refusal", len(r.claimByID))
+	}
+	if !strings.Contains(err.Error(), "format 99") {
+		t.Errorf("error does not name the offending format: %v", err)
+	}
+
+	// A store this build DID write stays readable, and an unmarked (format 1) store still opens -
+	// refusing those would strand every registry written before the marker existed.
+	for _, marker := range []string{"nekton-store 2\n", ""} {
+		d2 := t.TempDir()
+		o2 := filepath.Join(d2, "objects")
+		if err := os.MkdirAll(o2, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if marker != "" {
+			if err := os.WriteFile(filepath.Join(o2, ".format"), []byte(marker), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := Open(d2); err != nil {
+			t.Errorf("marker %q: %v", marker, err)
+		}
+	}
+
+	// A garbled marker is refused too - guessing the layout is how a store gets misread.
+	d3 := t.TempDir()
+	o3 := filepath.Join(d3, "objects")
+	if err := os.MkdirAll(o3, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(o3, ".format"), []byte("who knows\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(d3); err == nil {
+		t.Error("opened a store with an unreadable marker; want a refusal")
 	}
 }

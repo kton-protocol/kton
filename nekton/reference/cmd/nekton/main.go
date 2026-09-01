@@ -177,7 +177,7 @@ func run(cmd string, args []string) error {
 		fmt.Print(usage)
 		return nil
 	case "--version", "-v", "version":
-		fmt.Println("nekton 0.1 (reference)")
+		fmt.Println("nekton 0.2 (reference)")
 		return nil
 	}
 	for _, a := range args {

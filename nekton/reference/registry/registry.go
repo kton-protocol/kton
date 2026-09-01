@@ -281,6 +281,20 @@ func openAt(dir string, create bool) (*Registry, error) {
 			return nil, err
 		}
 	}
+	format, err := readStoreFormat(r.objectsDir)
+	if err != nil {
+		return nil, err
+	}
+	if format > StoreFormat {
+		return nil, fmt.Errorf("nekton store at %s is layout format %d, this build reads format %d.\n"+
+			"Upgrade nekton instead of reading it with this build: an unreadable store must not be\n"+
+			"mistaken for an empty one.", dir, format, StoreFormat)
+	}
+	if create {
+		if err := writeStoreFormat(r.objectsDir); err != nil {
+			return nil, err
+		}
+	}
 	pending, err := readStore(r.objectsDir)
 	if err != nil {
 		return nil, err
@@ -588,6 +602,50 @@ func splitID(id string) (algo, hex string) {
 		algo, hex = id[:i], id[i+1:]
 	}
 	return algo, hex
+}
+
+// StoreFormat is the on-disk layout revision of a nekton store, recorded in objects/.format.
+//
+//	1  one JSON file per claim (objects/<algo>/<hex>.json)
+//	2  one JSONL file per subnekton (#41), plus the format marker
+//
+// The marker exists so that a store written by a NEWER build fails loudly on an older one instead
+// of reading as empty. It cannot rescue the 1 -> 2 step itself: a 0.1 binary looks for
+// objects/**/*.json, finds none, and reports an empty registry with exit 0 - a verification tool
+// answering "nothing recorded" where the truthful answer is "I cannot read this store". That is
+// unfixable in retrospect, and is the reason the subnekton layout ships as 0.2 rather than a patch.
+// From format 2 on, a store says what it is.
+const StoreFormat = 2
+
+const formatMarker = ".format"
+
+// readStoreFormat returns the recorded format, or 0 when the store carries no marker (a format-1
+// store, an empty directory, or one written by a 0.2 build from before the marker existed).
+func readStoreFormat(objectsDir string) (int, error) {
+	b, err := os.ReadFile(filepath.Join(objectsDir, formatMarker))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	var name string
+	var v int
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(b)), "%s %d", &name, &v); err != nil || name != "nekton-store" || v < 1 {
+		return 0, fmt.Errorf("nekton store marker %s is not readable (%q); refusing to guess the layout",
+			filepath.Join(objectsDir, formatMarker), strings.TrimSpace(string(b)))
+	}
+	return v, nil
+}
+
+// writeStoreFormat records the marker. Write path only - a read must never mutate its source.
+func writeStoreFormat(objectsDir string) error {
+	have, err := readStoreFormat(objectsDir)
+	if err != nil || have == StoreFormat {
+		return err
+	}
+	return os.WriteFile(filepath.Join(objectsDir, formatMarker),
+		[]byte(fmt.Sprintf("nekton-store %d\n", StoreFormat)), 0o644)
 }
 
 // subnektonPath is where a claim lives: ONE FILE PER SUBNEKTON, named by the scope id (the seed's
