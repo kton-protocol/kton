@@ -372,7 +372,18 @@ func annotate(args []string) error {
 		}
 		fmt.Printf("annotate: prev      %s\n", prevShown)
 	}
-	return signClaim(spec, priv, out, addFlag, regDir)
+	if err := signClaim(spec, priv, out, addFlag, regDir); err != nil {
+		// The bare-term refusal (claim/spec.go) is right, but the case that actually triggers it is
+		// almost always a MISSING alias file: the template resolved through an empty alias map and
+		// came out as its own short name. The message describes the symptom and points at the
+		// template, so that is where people go looking - one reader nearly filed it as a kernel
+		// finding. The kernel deliberately does not know the path; the CLI does, so say it here.
+		if strings.Contains(err.Error(), "bare term with no vocabulary") {
+			return fmt.Errorf("%w\n(aliases resolved from %q - set NEKTON_ALIASES or --aliases if that is not your alias file)", err, aliasesPath)
+		}
+		return err
+	}
+	return nil
 }
 
 // listTemplates prints every template in the templates dir with its predicate and any aliases.
