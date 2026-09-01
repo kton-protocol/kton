@@ -16,10 +16,27 @@ import (
 	"kton.dev/nekton/claim"
 )
 
+// whenOr returns an explicit --when, or the wall clock when none was given. `when` is COVERED by
+// the claim id, so on a seed it is an input to a permanent identifier: seeding the same scope with
+// the same key from the same inputs twice used to open two different scopes (#42). An explicit
+// --when is what makes a corpus rebuildable to the same ids.
+//
+// It is validated here rather than only at ingest: a bad timestamp that is caught after signing has
+// already been signed, and the signature is over the garbage.
+func whenOr(when string) (string, error) {
+	if when == "" {
+		return time.Now().UTC().Format(time.RFC3339), nil
+	}
+	if _, err := time.Parse(time.RFC3339, when); err != nil {
+		return "", fmt.Errorf("--when %q is not RFC 3339 (want e.g. 2026-07-16T00:00:00Z): %v", when, err)
+	}
+	return when, nil
+}
+
 // seed creates + signs a scope-genesis statement and prints the scope id (its claim id), which
 // scoped claims then reference via --scope. A seed carries genesis:true and no prev (SPEC §7.4).
 func seed(args []string) error {
-	var name, by, parent, keyPath, out, regDir string
+	var name, by, parent, keyPath, out, regDir, when string
 	addFlag := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -34,6 +51,9 @@ func seed(args []string) error {
 		case "--parent":
 			i++
 			parent = arg(args, i)
+		case "--when":
+			i++
+			when = arg(args, i)
 		case "--sign":
 			i++
 			keyPath = arg(args, i)
@@ -57,11 +77,15 @@ func seed(args []string) error {
 	if by == "" {
 		by = "key:" + keyidHex(priv.Public().(ed25519.PublicKey))
 	}
+	stamp, err := whenOr(when)
+	if err != nil {
+		return err
+	}
 	body := map[string]any{
 		"scope":   name,
 		"genesis": true,
 		"by":      by,
-		"when":    time.Now().UTC().Format(time.RFC3339),
+		"when":    stamp,
 	}
 	if parent != "" {
 		if strings.HasPrefix(parent, "sha256:") {

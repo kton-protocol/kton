@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"kton.dev/plankton/core"
 )
@@ -140,7 +139,7 @@ func envOr(key, def string) string {
 
 // annotate parses the CLI, resolves the template + aliases, builds a claimSpec, and signs it.
 func annotate(args []string) error {
-	var subject, foton, tmplName, out, by, keyPath, scope, prev, regDir string
+	var subject, foton, tmplName, out, by, keyPath, scope, prev, regDir, when string
 	addFlag := false
 	tdir := envOr("NEKTON_TEMPLATES", "./templates")
 	aliasesPath := envOr("NEKTON_ALIASES", "./aliases.json")
@@ -161,6 +160,9 @@ func annotate(args []string) error {
 		case "--prev":
 			i++
 			prev = arg(args, i)
+		case "--when":
+			i++
+			when = arg(args, i)
 		case "--template":
 			i++
 			tmplName = arg(args, i)
@@ -322,11 +324,15 @@ func annotate(args []string) error {
 		fmt.Printf("annotate: signer    keyid=%s (ephemeral - unlinkable; use --sign for attribution)\n", keyidHex(priv.Public().(ed25519.PublicKey)))
 	}
 
+	stamp, err := whenOr(when)
+	if err != nil {
+		return err
+	}
 	spec := claimSpec{
 		Subject:   []subjSpec{subj},
 		Predicate: aliases.resolve(t.Predicate),
 		By:        by,
-		When:      time.Now().UTC().Format(time.RFC3339),
+		When:      stamp,
 		Scope:     scope, // optional: place this claim in a (sub)nekton scope
 		Prev:      prev,  // the previous claim id in the scope (or the seed id for the first link)
 	}

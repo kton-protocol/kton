@@ -49,6 +49,13 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 ### Fixed
 
+- **`nekton seed --when` / `nekton annotate --when`** (#42). `when` is covered by the claim id, and a
+  scope id *is* its seed's claim id — so a wall-clock timestamp made the identity a function of when
+  you ran the command. A 2243-claim corpus rebuilt three times produced three different root ids,
+  and every child scope and claim moved with it. Pin the timestamp and a rebuild lands on the same
+  ids. A non-RFC-3339 value is refused before signing, not at ingest: a timestamp caught after
+  signing has already been signed.
+
 - `plankton add` no longer needs one process per record for bulk ingest (#37).
 - `nekton about` / `nekton by` emit structured JSON with `--json`, so a consumer can read the claim
   axis without parsing prose (#39).

@@ -22,9 +22,12 @@ usage:
   nekton keygen <name>                                generate a signing identity (<name>.key/.pub)
   nekton keyid <key.pub|key.key|hex>                  print the keyid shown as by=key:<id> (map key -> signer)
   nekton seed <scope-name> --sign key.key [--add] [--registry D]  open a (sub)nekton scope; prints its scope id
+      --when <RFC3339>   pin the genesis timestamp. The scope id COVERS it, so this is what makes
+                         a rebuilt corpus land on the same scope ids (default: now)
         [--by ID] [--parent <parentSeedId>] [-o out]      (scoped claims chain under it via --scope/--prev)
   nekton claim <spec.json> <key.key> [<out.dsse>] [--add] [--registry D]  author + sign a claim; --add ingests directly
   nekton annotate <subj|--foton F> --template <name> [--add] [--registry D]  author + sign a claim from a TEMPLATE
+      --when <RFC3339>   pin the claim timestamp; the claim id covers it (default: now)
         --set k=v ... --sign key.key [--by ID] [-o out]   (aliases + auto timestamp; no jq/openssl)
   nekton templates [--show <name>]                    list templates + aliases; --show prints a template's fields
   nekton show <claim.dsse.json|sha256:id>             print a claim: subject, predicate, statement, signer
