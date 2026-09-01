@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+SD="$(cd "$(dirname "$0")" && pwd)"; . "$SD/_records.sh"
 # REGRESSION TEST / EXPLOIT for the "env-qualified" release condition (release.rq lines 22-26).
 #
 # CLAIM UNDER TEST (README + 10-tool-spectrum): backing a qualifies-as with a re-derivable
@@ -62,7 +63,7 @@ echo "qualifies-as claim authored: image -> ENV, fulfilment -> the 2/3 foton (wh
 # --- export the merged graph and run the SHIPPED gate ------------------------------------
 plankton export --rdf > submission.ttl 2>/dev/null
 : > attestations.trig
-for f in "$NEKTON_DIR"/objects/sha256/*.json; do nekton export --nanopub "$f" >> attestations.trig 2>/dev/null; echo >> attestations.trig; done
+nekton_record_files "$NEKTON_DIR" .recs | while IFS= read -r f; do nekton export --nanopub "$f" >> attestations.trig 2>/dev/null; echo >> attestations.trig; done
 
 echo; echo "--- SHIPPED release.py over this graph (fit declares ENV; the cited fulfilment is 2/3) ---"
 HEAD="sha256:$(printf 0 | plankton hash /dev/stdin 2>/dev/null | sed 's/sha256://' || echo 0)"

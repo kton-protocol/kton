@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+SD="$(cd "$(dirname "$0")" && pwd)"; . "$SD/_records.sh"
 # FOCUSED TEST: author-exclusion in the two-independent-reviews branch reads
 # `?fit prov:wasAttributedTo ?rauthor` from the merged default graph. If an EXTRA
 # attribution edge (a plain nekton claim, signed by any key) names a decoy author,
@@ -54,7 +55,7 @@ fi
 # --- export merged graph + run the SHIPPED gate ---
 plankton export --rdf --trust-keys keys > "$F/submission.ttl" 2>/dev/null
 : > "$F/attestations.trig"
-for f in "$NEKTON_DIR"/objects/sha256/*.json; do nekton export --nanopub --trust-keys keys "$f" >> "$F/attestations.trig" 2>/dev/null; echo >> "$F/attestations.trig"; done
+nekton_record_files "$NEKTON_DIR" "$F/.recs" | while IFS= read -r f; do nekton export --nanopub --trust-keys keys "$f" >> "$F/attestations.trig" 2>/dev/null; echo >> "$F/attestations.trig"; done
 HEAD="0000000000000000000000000000000000000000000000000000000000000000"
 echo; echo "=== SHIPPED release.py (only two-independent-reviews matters here) ==="
 python3 "$EX/release.py" "$F/submission.ttl" "$F/attestations.trig" "$EX/release.rq" \
