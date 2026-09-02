@@ -56,6 +56,9 @@ type Registry struct {
 
 	fotonByID map[string]Record // fotonID -> record
 	foton     map[string]*core.Foton
+	// Verification material (SPEC §8.1), indexed by the subject it is about. Deliberately NOT part
+	// of a Record: presence, absence or invalidity must not touch validity or resolvability (§11).
+	material map[string][]VerificationMaterial
 	byOutput  map[string][]string // output hash -> []fotonID
 	byInput   map[string][]string // input hash  -> []fotonID
 	byAction  map[string][]string // action key  -> []fotonID
@@ -77,6 +80,7 @@ func openAt(dir string, create bool) (*Registry, error) {
 		keyIdx:    map[string]int{},
 		fotonByID: map[string]Record{},
 		foton:     map[string]*core.Foton{},
+		material:  map[string][]VerificationMaterial{},
 		byOutput:  map[string][]string{},
 		byInput:   map[string][]string{},
 		byAction:  map[string][]string{},
@@ -122,6 +126,9 @@ func openAt(dir string, create bool) (*Registry, error) {
 		}
 		r.apply(Record{Seq: r.maxSeq + 1, FotonID: of.FotonID, Envelope: of.Envelope})
 	}
+	// Verification material is read AFTER the records and never feeds into them: §8.1 requires that
+	// its presence, absence or invalidity leave validity and resolvability untouched.
+	r.material = readMaterial(r.objectsDir)
 	if b, err := os.ReadFile(r.peersPath); err == nil {
 		_ = json.Unmarshal(b, &r.peers)
 	}
@@ -152,6 +159,7 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 		keyIdx:    map[string]int{},
 		fotonByID: map[string]Record{},
 		foton:     map[string]*core.Foton{},
+		material:  map[string][]VerificationMaterial{},
 		byOutput:  map[string][]string{},
 		byInput:   map[string][]string{},
 		byAction:  map[string][]string{},
