@@ -25,6 +25,9 @@ jobs:
       - name: architecture guard (documents-never-executes, one-way deps, WASM-clean kernels)
         run: bash scripts/check-import-direction.sh
 
+      - name: scope guard (the two scope statements must not diverge)
+        run: bash scripts/check-scope-drift.sh
+
       # The guard above reads imports; this one COMPILES for the browser target. WASM-cleanliness that
       # is only grepped is cleanliness only until something breaks that grep cannot see, and the
       # release job is the wrong place to find out - it runs on a tag, after the version is cut.

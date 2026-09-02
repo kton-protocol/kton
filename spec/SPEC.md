@@ -40,26 +40,35 @@ executes**.
 This specification defines:
 
 - the **canonicalization** and **content-addressing** rules by which record identity is computed
-  (Clause 5);
+  (Clause 5); <!-- scope:in canonicalization -->
 - the **plankton** result format - `FileRef`, `Foton`, action key, potentials, optional environment -
-  and its wire form (Clause 6);
+  and its wire form (Clause 6); <!-- scope:in plankton-format -->
 - the **nekton** attestation format - `Ref`, `TermRef`, `Claim`, and the scope/seed/chain grammar -
-  and its wire form (Clause 7);
+  and its wire form (Clause 7); <!-- scope:in nekton-format -->
 - the shared **signature and identity** model (Clause 8), including where external verification
   material - identity and time evidence produced by other schemes - attaches (Clause 8.1);
+  <!-- scope:in signing-model --> <!-- scope:in verification-material -->
 - **reproduction and normalization** semantics (Clause 9) and **tool/environment qualification**
-  (Clause 10);
+  (Clause 10); <!-- scope:in reproduction --> <!-- scope:in tool-qualification -->
 - **registry resolution** and the completeness/validity distinction (Clause 11), **federation and
   aggregation** (Clause 12), and **conformance** (Clause 15).
+  <!-- scope:in registry-resolution --> <!-- scope:in federation -->
 
 The following are **out of scope** (implementation choices; no patent commitment attaches):
-specific transports and hosting (git, GitHub, HTTP, object stores); specific signing backends
-(Sigstore, RSA/nanopublication, a particular transparency log, an eIDAS trust service) and the
-evaluation of any evidence they produce; **document-rendered signature forms** such as signed PDFs,
-which sign a rendering rather than the record and are therefore projections (Clause 14, and 8.1);
-specific tools, executors, and cockpits; and the reference source code (licensed separately,
-Apache-2.0). See
-`../community-specification/02-scope.md`.
+specific transports and hosting (git, GitHub, HTTP, object stores) <!-- scope:out transports -->;
+specific signing backends (Sigstore, RSA/nanopublication, a particular transparency log, an eIDAS
+trust service) <!-- scope:out signing-backends --> and the evaluation of any evidence they produce
+<!-- scope:out evidence-evaluation -->; **document-rendered signature forms** such as signed PDFs,
+which sign a rendering rather than the record and are therefore projections (Clause 14, and 8.1)
+<!-- scope:out document-rendered -->; specific tools, executors, and cockpits
+<!-- scope:out tools-and-cockpits -->; and the reference source code (licensed separately,
+Apache-2.0) <!-- scope:out reference-code -->.
+
+The **patent** Scope of this Working Group - what the Community Specification License commits - is
+defined by `../community-specification/02-scope.md`, not by this clause. The two are deliberately
+kept in step and `scripts/check-scope-drift.sh` fails CI if they diverge, but they answer different
+questions: this clause says what *this document* specifies, that file says what the commitment
+covers.
 
 A conforming implementation MUST NOT require any particular cockpit, executor, transport, or hosting
 provider, and MUST NOT execute the protocols, normalizers, or tools that records describe.
