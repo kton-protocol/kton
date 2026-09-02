@@ -40,6 +40,10 @@ usage:
   nekton templates [--show <name>]                    list templates + aliases; --show prints a template's fields
   nekton show <claim.dsse.json|sha256:id> [--json]             print a claim: subject, predicate, statement, signer
   nekton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
+  nekton attach <sha256:id> --scheme S --file F [--media M]   bind external evidence to a record (SPEC §8.1):
+                                                      a Sigstore bundle, a Rekor entry, an RFC 3161 token, an
+                                                      X.509/CAdES or eIDAS signature. Stored, NEVER evaluated.
+  nekton material <sha256:id> [--json]                what evidence is attached to a record
                                                       registry id; pubkey: a .pub file or the hex)
   nekton add <envelope.dsse.json> [--registry D]      ingest a signed claim (D or NEKTON_DIR)
   nekton about <subject>                              claims about a subject (hash "sha256:..." or uri)
@@ -265,6 +269,13 @@ func run(cmd string, args []string) error {
 
 	case "show":
 		return showClaim(args)
+
+	case "attach":
+		// SPEC §8.1: bind external evidence to a record by its CONTENT ADDRESS, never by filename.
+		return attachMaterial(args)
+
+	case "material":
+		return listMaterial(args)
 
 	case "verify":
 		if len(args) != 2 {

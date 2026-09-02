@@ -5,6 +5,7 @@
 package registry
 
 import (
+	"bufio"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -191,6 +192,20 @@ type Record struct {
 	Envelope core.Envelope `json:"envelope"`
 }
 
+// VerificationMaterial is external evidence ABOUT a record - who signed it, or that it existed by a
+// given time - bound to the record by its content address (SPEC §8.1).
+//
+// The kernel NEVER interprets Material. It is opaque bytes produced by some other scheme (a Sigstore
+// bundle, a Rekor entry, an RFC 3161 token, an X.509 detached signature, a qualified eIDAS
+// signature), and deciding which issuers count is a consumer concern - the same split as trust
+// policy, for the same reason: whose word counts is not a property of the record.
+type VerificationMaterial struct {
+	Subject   string `json:"subject"`   // the record's content address - claim id or foton id
+	Scheme    string `json:"scheme"`    // what produced Material; an UNKNOWN scheme is carried, never rejected
+	MediaType string `json:"mediaType"` // how to read Material
+	Material  string `json:"material"`  // base64 of the scheme's own artifact
+}
+
 // Registry indexes an append-log of claim envelopes rooted at a directory (SPEC §11).
 type Registry struct {
 	dir        string
@@ -211,6 +226,10 @@ type Registry struct {
 	// Scope/seed/chain bookkeeping (SPEC §7.4).
 	seeds   map[string]bool            // scope_id -> seed present
 	inScope map[string]map[string]bool // scope_id -> set of in-scope claim ids
+
+	// Verification material (SPEC §8.1), indexed by the subject it is about. Deliberately NOT part of
+	// Record: its presence, absence or invalidity must not touch a record's validity or resolvability.
+	material map[string][]VerificationMaterial
 
 	// unresolved: scope_id -> count of PERSISTED claims that name this scope but do not resolve (their
 	// prev/seed is missing). A non-zero count means the scope may be TRUNCATED - a withheld middle claim
@@ -274,6 +293,7 @@ func openAt(dir string, create bool) (*Registry, error) {
 		seeds:       map[string]bool{},
 		inScope:     map[string]map[string]bool{},
 		unresolved:  map[string]int{},
+		material:    map[string][]VerificationMaterial{},
 		peers:       map[string]int{},
 	}
 	if create {
@@ -304,6 +324,9 @@ func openAt(dir string, create bool) (*Registry, error) {
 	// against the state so far, settling repeatedly (a child waits for its seed/prev), then DROP
 	// whatever never resolves - a tampered or reordered object cannot be silently trusted on load.
 	r.dropped = r.settle(pending)
+	// Verification material is read AFTER settling and never feeds into it: §8.1 requires that its
+	// presence, absence or invalidity leave a record's validity and resolvability untouched.
+	r.material = readAllMaterial(r.objectsDir)
 	if b, err := os.ReadFile(r.peersPath); err == nil {
 		_ = json.Unmarshal(b, &r.peers)
 	}
@@ -652,7 +675,9 @@ func writeStoreFormat(objectsDir string) error {
 // own hash, SPEC §7.4), plus one file for the unscoped nekton.
 //
 //	objects/scope/<scope_id>.nekton.jsonl    a subnekton - its seed and every claim chained under it
+//	objects/scope/<scope_id>.material.jsonl  verification material about its claims (SPEC §8.1)
 //	objects/unscoped.nekton.jsonl            the unscoped nekton
+//	objects/unscoped.material.jsonl          verification material about unscoped claims
 //
 // A scope is a bounded, federatable sub-registry (seed.go), and this gives it one artifact: a thing
 // that can be chmod'd, sparse-checked-out, copied, or handed over whole - none of which a flat pile
@@ -914,4 +939,122 @@ func (r *Registry) SetPeerCursor(url string, seq int) error {
 		return err
 	}
 	return os.WriteFile(r.peersPath, b, 0o644)
+}
+
+// materialPath is where evidence about a subnekton's claims lives: one JSONL file BESIDE the
+// subnekton, never inside it (SPEC §8.1, #62).
+//
+//	objects/scope/<scope_id>.nekton.jsonl      the subnekton
+//	objects/scope/<scope_id>.material.jsonl    verification material about its claims
+//
+// Beside, for three reasons that only a separate file satisfies together. A material file that
+// cannot be read cannot break a record read, which is what §8.1 requires. `cp objects/scope/<id>.*`
+// still hands a scope over whole, which is what #41 is for. And ".material.jsonl" matches neither
+// ".nekton.jsonl" nor ".json", so a build that does not know about it ignores the file entirely
+// rather than parsing records and dropping fields.
+//
+// That last one decided it. persistClaim rewrites the WHOLE subnekton file through
+// objectFile{ClaimID, Envelope} on every co-signature merge, so material carried as a field on that
+// struct would be erased for every record in the file by any older build that co-signed one claim -
+// silently, reporting success. That is the failure mode 0.2 exists to document.
+func materialPath(objectsDir, scope string) string {
+	if scope == "" {
+		return filepath.Join(objectsDir, "unscoped.material.jsonl")
+	}
+	_, s := splitID(scope)
+	return filepath.Join(objectsDir, "scope", s+".material.jsonl")
+}
+
+// readMaterialFile parses one material file. Tolerant in the same way readSubnekton is: one corrupt
+// line must not hide the rest, and must never affect the records the file is about.
+func readMaterialFile(path string) []VerificationMaterial {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var out []VerificationMaterial
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var vm VerificationMaterial
+		if err := json.Unmarshal([]byte(line), &vm); err != nil || vm.Subject == "" {
+			fmt.Fprintf(os.Stderr, "warning: skipping unreadable verification material in %s\n", path)
+			continue
+		}
+		out = append(out, vm)
+	}
+	return out
+}
+
+// readAllMaterial indexes every material file under objectsDir by the subject it is about.
+func readAllMaterial(objectsDir string) map[string][]VerificationMaterial {
+	out := map[string][]VerificationMaterial{}
+	var paths []string
+	_ = filepath.WalkDir(objectsDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // a missing objects dir reads as no material, never as an error
+		}
+		if !d.IsDir() && strings.HasSuffix(p, ".material.jsonl") {
+			paths = append(paths, p)
+		}
+		return nil
+	})
+	sort.Strings(paths)
+	for _, p := range paths {
+		for _, vm := range readMaterialFile(p) {
+			out[vm.Subject] = append(out[vm.Subject], vm)
+		}
+	}
+	return out
+}
+
+// Material returns the verification material recorded about a subject, in the order it was
+// attached. The kernel does not evaluate any of it (SPEC §8.1, §15).
+func (r *Registry) Material(subject string) []VerificationMaterial { return r.material[subject] }
+
+// AttachMaterial records evidence about a claim already in this registry. It is stored beside the
+// claim's own subnekton, so handing over a scope hands over its evidence too.
+//
+// It deliberately does NOT verify Material, and does not care whether Scheme is one it has heard of:
+// refusing unknown evidence would make the set of schemes a protocol version, which is precisely
+// what §8.1 exists to avoid.
+func (r *Registry) AttachMaterial(vm VerificationMaterial) error {
+	if vm.Subject == "" || vm.Scheme == "" || vm.Material == "" {
+		return fmt.Errorf("verification material needs subject, scheme and material")
+	}
+	rec, ok := r.claimByID[vm.Subject]
+	if !ok {
+		return fmt.Errorf("no claim %s in this registry - material binds to a record's content address, not to a file", vm.Subject)
+	}
+	st, _, err := claim.ParseEnvelope(rec.Envelope)
+	if err != nil {
+		return err
+	}
+	path := materialPath(r.objectsDir, scopeOf(st, vm.Subject))
+	err = r.withWriteLock(func() error {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		b, err := json.Marshal(vm)
+		if err != nil {
+			return err
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = f.Write(append(b, '\n'))
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	r.material[vm.Subject] = append(r.material[vm.Subject], vm)
+	return nil
 }
