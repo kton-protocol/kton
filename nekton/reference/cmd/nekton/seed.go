@@ -37,11 +37,13 @@ func whenOr(when string) (string, error) {
 // scoped claims then reference via --scope. A seed carries genesis:true and no prev (SPEC §7.4).
 func seed(args []string) error {
 	var name, by, parent, keyPath, out, regDir, when string
-	addFlag := false
+	addFlag, printID := false, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--add":
 			addFlag = true
+		case "--print-id":
+			printID = true
 		case "--registry":
 			i++
 			regDir = arg(args, i)
@@ -102,17 +104,19 @@ func seed(args []string) error {
 	if out == "" && !addFlag {
 		out = "seed." + strings.ReplaceAll(name, "/", "-") + ".dsse.json"
 	}
-	fmt.Printf("seed scope %q", name)
+	msg := humanOut(printID)
+	msg("seed scope %q", name)
 	if parent != "" {
-		fmt.Printf(" (parent %s)", parent)
+		msg(" (parent %s)", parent)
 	}
-	fmt.Println()
-	// signClaim prints "claim <id> ..." - that <id> IS the scope id to pass as --scope.
-	if err := signClaim(spec, priv, out, addFlag, regDir); err != nil {
+	msg("\n")
+	// signClaim prints "claim <id> ..." - that <id> IS the scope id to pass as --scope. Under
+	// --print-id it is the only thing on stdout, so `SCOPE=$(nekton seed x --sign k --print-id)`.
+	if err := signClaim(spec, priv, out, addFlag, regDir, printID); err != nil {
 		return err
 	}
-	fmt.Println("  ^ this claim id is the SCOPE id.")
-	fmt.Println("    --scope <thisId> on EVERY claim in the scope (it never changes).")
-	fmt.Println("    --prev  = this id for the FIRST claim, then the PREVIOUS claim's id for each next one.")
+	msg("  ^ this claim id is the SCOPE id.\n")
+	msg("    --scope <thisId> on EVERY claim in the scope (it never changes).\n")
+	msg("    --prev  = this id for the FIRST claim, then the PREVIOUS claim's id for each next one.\n")
 	return nil
 }

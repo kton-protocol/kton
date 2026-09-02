@@ -193,7 +193,7 @@ func subjectsOf(ss []subjSpec) []any { return claim.SubjectsOf(ss) }
 func bareHash(h string) string       { return claim.BareHash(h) }
 
 // authorClaim builds an in-toto Statement per SPEC §7.3, signs a DSSE envelope, and writes it.
-func authorClaim(specPath, keyPath, outPath string, addFlag bool, regDir string) error {
+func authorClaim(specPath, keyPath, outPath string, addFlag bool, regDir string, printID bool) error {
 	raw, err := os.ReadFile(specPath)
 	if err != nil {
 		return err
@@ -209,7 +209,7 @@ func authorClaim(specPath, keyPath, outPath string, addFlag bool, regDir string)
 	if err != nil {
 		return err
 	}
-	return signClaim(spec, priv, outPath, addFlag, regDir)
+	return signClaim(spec, priv, outPath, addFlag, regDir, printID)
 }
 
 // buildClaimEnv canonicalizes a claimSpec into a signed in-toto Statement (SPEC §7.3) and returns the
@@ -238,9 +238,14 @@ func buildClaimEnv(spec claimSpec, priv ed25519.PrivateKey) ([]byte, string, err
 }
 
 // signClaim builds the claim, writes the envelope to outPath (unless --add was given without an
-// explicit -o), and optionally ingests it into a registry. Shared by `nekton claim` and `nekton
-// annotate`.
-func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag bool, regDir string) error {
+// explicit -o), and optionally ingests it into a registry. Shared by `nekton claim`, `nekton
+// annotate` and `nekton seed`.
+//
+// printID follows `plankton author --print-id` exactly (main.go:33): the ONLY thing on stdout is the
+// bare claim id, every human line goes to stderr. Without it a caller has to parse an identifier out
+// of prose - the cockpit was anchoring on the "indexed claim" line, a dependency on output
+// formatting that nothing guaranteed and no test protected (#56).
+func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag bool, regDir string, printID bool) error {
 	b, id, err := buildClaimEnv(spec, priv)
 	if err != nil {
 		return err
@@ -258,7 +263,8 @@ func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag 
 	if !writeFile {
 		dest = "(no -o file written; ingested via --add below)"
 	}
-	fmt.Printf("claim %s  keyid=%s  %s\n", id, keyidHex(priv.Public().(ed25519.PublicKey)), dest)
+	msg := humanOut(printID)
+	msg("claim %s  keyid=%s  %s\n", id, keyidHex(priv.Public().(ed25519.PublicKey)), dest)
 	if addFlag {
 		var env core.Envelope
 		if err := json.Unmarshal(b, &env); err != nil {
@@ -273,10 +279,23 @@ func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag 
 			return err
 		}
 		if isNew {
-			fmt.Printf("indexed claim %s  (registry now holds %d claims)\n", rid, r.Len())
+			msg("indexed claim %s  (registry now holds %d claims)\n", rid, r.Len())
 		} else {
-			fmt.Printf("already present: claim %s\n", rid)
+			msg("already present: claim %s\n", rid)
 		}
 	}
+	if printID {
+		fmt.Println(id)
+	}
 	return nil
+}
+
+// humanOut returns the writer for human-readable lines: stderr when the caller asked for a bare id
+// on stdout, stdout otherwise. One helper so `claim`, `annotate` and `seed` cannot drift apart on
+// which stream a line lands in - a flag that behaves differently on sibling commands is its own trap.
+func humanOut(printID bool) func(string, ...any) {
+	if printID {
+		return func(format string, a ...any) { fmt.Fprintf(os.Stderr, format, a...) }
+	}
+	return func(format string, a ...any) { fmt.Printf(format, a...) }
 }
