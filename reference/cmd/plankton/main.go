@@ -39,6 +39,9 @@ usage:
         --add ingests it directly (one step, no file); --registry D picks the store.
   plankton author <spec.json> <key.hex> <out.dsse>    author + sign a foton from a spec file
   plankton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
+  plankton attach <sha256:id> --scheme S --file F [--media M]  bind external evidence to a foton
+                                                      (SPEC §8.1). Stored, NEVER evaluated.
+  plankton material <sha256:id> [--json]              what evidence is attached to a foton
                                                       registry id; pubkey: a .pub file or the hex)
   plankton add <envelope.dsse.json> [--registry D]    ingest a signed foton into the registry (D or PLANKTON_DIR)
   plankton show <foton.dsse.json|sha256:id> [--json]  print a foton: command, environment, inputs, outputs
@@ -233,6 +236,13 @@ func run(cmd string, args []string) error {
 		}
 		fmt.Println(id)
 		return nil
+
+	case "attach":
+		// SPEC §8.1: bind external evidence to a record by its CONTENT ADDRESS, never by filename.
+		return attachMaterial(args)
+
+	case "material":
+		return listMaterial(args)
 
 	case "reproductions":
 		// Headless ↻N: how many INDEPENDENT signers produced this exact output? A signer counts only if
