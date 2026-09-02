@@ -5,8 +5,10 @@ package main
 // Accepts a foton envelope file OR a foton id (looked up in the registry).
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"kton.dev/plankton/core"
@@ -22,10 +24,19 @@ func locators(uris []string) string {
 }
 
 func show(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: plankton show <foton.dsse.json | sha256:fotonId>")
+	asJSON := false
+	var pos []string
+	for _, a := range args {
+		if a == "--json" {
+			asJSON = true
+			continue
+		}
+		pos = append(pos, a)
 	}
-	arg := args[0]
+	if len(pos) != 1 {
+		return fmt.Errorf("usage: plankton show <foton.dsse.json | sha256:fotonId> [--json]")
+	}
+	arg := pos[0]
 	var env core.Envelope
 	if _, err := os.Stat(arg); err == nil {
 		env, err = readEnvelope(arg)
@@ -47,7 +58,9 @@ func show(args []string) error {
 			// arg may be an OUTPUT hash rather than a foton id - resolve it to its producer foton
 			// (cycle-2 finding: sessions naturally reach for the output hash they just computed).
 			if prod := r.Producer(arg); len(prod) > 0 {
-				fmt.Printf("(output %s -> produced by foton %s)\n", arg, prod[0])
+				if !asJSON {
+					fmt.Printf("(output %s -> produced by foton %s)\n", arg, prod[0])
+				}
 				e, ok = r.Envelope(prod[0])
 			}
 		}
@@ -65,12 +78,44 @@ func show(args []string) error {
 		return fmt.Errorf("%q is not a foton (%w)", arg, err)
 	}
 	id, _ := f.FotonID()
+
+	if asJSON {
+		return showJSON(id, f, env)
+	}
+	return showHuman(id, f, env)
+}
+
+// showHuman renders one foton for a person. Split out from show() so both renderings are
+// testable and neither can quietly drift from the other.
+func showHuman(id string, f *core.Foton, env core.Envelope) error {
+
 	fmt.Printf("foton:   %s\n", id)
 	fmt.Printf("kind:    %s\n", f.Protocol.Kind)
 	if cmd, ok := f.Protocol.Descriptor["cmd"]; ok {
 		fmt.Printf("command: %v   (RECORDED, never run by plankton)\n", cmd)
-	} else if len(f.Protocol.Descriptor) > 0 {
-		fmt.Printf("protocol: %v\n", f.Protocol.Descriptor)
+	}
+	// Everything else in the descriptor, environment first. These are COVERED fields (SPEC §6.5):
+	// --environment and --env-ref change the foton id, so two fotons over the same inputs, outputs
+	// and cmd but different environments are different fotons. This used to print nothing at all -
+	// the branch that would have shown the rest of the descriptor sat behind `else if`, and author
+	// always sets a cmd, so it was unreachable. A peer therefore could not see what a reproduction
+	// commits to (#54). Print by name, then whatever else is there, so nothing stays invisible.
+	for _, k := range []string{"environment", "envRef"} {
+		if v, ok := f.Protocol.Descriptor[k]; ok {
+			fmt.Printf("%-12s %v   (COVERED - part of this foton's identity)\n", k+":", v)
+		}
+	}
+	var rest []string
+	for k := range f.Protocol.Descriptor {
+		switch k {
+		case "cmd", "environment", "envRef":
+		default:
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	for _, k := range rest {
+		fmt.Printf("%-12s %v\n", k+":", f.Protocol.Descriptor[k])
 	}
 	fmt.Printf("inputs:\n")
 	for _, in := range f.Inputs {
@@ -83,5 +128,40 @@ func show(args []string) error {
 	if len(env.Signatures) > 0 {
 		fmt.Printf("declared keyid: %s (unverified envelope field - run `plankton verify` with the signer's key)\n", env.Signatures[0].KeyID)
 	}
+	return nil
+}
+
+// showJSON emits the same foton structurally, so a consumer does not have to parse the prose above
+// (the argument #39 made for `nekton about`/`by`). The descriptor is emitted whole - that is the
+// point of #54: no field of it can be invisible here, because none of them are named.
+func showJSON(id string, f *core.Foton, env core.Envelope) error {
+	type ref struct {
+		Path string   `json:"path,omitempty"`
+		Hash string   `json:"hash,omitempty"`
+		URI  []string `json:"uri,omitempty"`
+	}
+	refs := func(in []core.FileRef) []ref {
+		out := make([]ref, 0, len(in))
+		for _, r := range in {
+			out = append(out, ref{Path: r.Path, Hash: r.Hash, URI: r.URI})
+		}
+		return out
+	}
+	keyids := make([]string, 0, len(env.Signatures))
+	for _, sg := range env.Signatures {
+		keyids = append(keyids, sg.KeyID)
+	}
+	b, err := json.MarshalIndent(map[string]any{
+		"fotonId":  id,
+		"protocol": f.Protocol,
+		"inputs":   refs(f.Inputs),
+		"outputs":  refs(f.Outputs),
+		// DECLARED, not verified - the envelope says so; `plankton verify` is what checks it.
+		"declaredKeyids": keyids,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
 	return nil
 }

@@ -41,7 +41,7 @@ usage:
   plankton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
                                                       registry id; pubkey: a .pub file or the hex)
   plankton add <envelope.dsse.json> [--registry D]    ingest a signed foton into the registry (D or PLANKTON_DIR)
-  plankton show <foton.dsse.json|sha256:id>           print a foton: command, inputs, outputs
+  plankton show <foton.dsse.json|sha256:id> [--json]  print a foton: command, environment, inputs, outputs
   plankton producer [--source D ...] <sha256:...>     who produced this file (who OUTPUT it; lineage join)
   plankton reproductions [--trust-keys D] <sha256:h>  ↻N: distinct VERIFIED independent signers that produced these
                                                       bytes. WITHOUT --trust-keys the count is self-declared and
