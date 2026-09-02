@@ -11,13 +11,13 @@ In addition, we recommend using the key words "MUST", "MUST NOT", "REQUIRED", "S
  
 ## kton - a content-addressed provenance protocol
 ### Version 0.1
-### Status: Pre-draft
+### Status: 0.1 (draft)
 
  
 © 2026 Michael Hackl
 
 > **This template is instantiated by the kton specification at
-> [`../spec/SPEC.md`](../spec/SPEC.md)** (v0.1, Pre-draft), which is written following the ISO-style
+> [`../spec/SPEC.md`](../spec/SPEC.md)** (v0.1, draft), which is written following the ISO-style
 > structure below. The remainder of this file is the reference template.
 
 This specification is subject to the Community Specification License 1.0, available at [https://github.com/CommunitySpecification/1.0](https://github.com/CommunitySpecification/1.0).
