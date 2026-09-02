@@ -45,7 +45,8 @@ This specification defines:
   and its wire form (Clause 6);
 - the **nekton** attestation format - `Ref`, `TermRef`, `Claim`, and the scope/seed/chain grammar -
   and its wire form (Clause 7);
-- the shared **signature and identity** model (Clause 8);
+- the shared **signature and identity** model (Clause 8), including where external verification
+  material - identity and time evidence produced by other schemes - attaches (Clause 8.1);
 - **reproduction and normalization** semantics (Clause 9) and **tool/environment qualification**
   (Clause 10);
 - **registry resolution** and the completeness/validity distinction (Clause 11), **federation and
@@ -53,8 +54,11 @@ This specification defines:
 
 The following are **out of scope** (implementation choices; no patent commitment attaches):
 specific transports and hosting (git, GitHub, HTTP, object stores); specific signing backends
-(Sigstore, RSA/nanopublication, a particular transparency log); specific tools, executors, and
-cockpits; and the reference source code (licensed separately, Apache-2.0). See
+(Sigstore, RSA/nanopublication, a particular transparency log, an eIDAS trust service) and the
+evaluation of any evidence they produce; **document-rendered signature forms** such as signed PDFs,
+which sign a rendering rather than the record and are therefore projections (Clause 14, and 8.1);
+specific tools, executors, and cockpits; and the reference source code (licensed separately,
+Apache-2.0). See
 `../community-specification/02-scope.md`.
 
 A conforming implementation MUST NOT require any particular cockpit, executor, transport, or hosting
@@ -84,6 +88,8 @@ provider, and MUST NOT execute the protocols, normalizers, or tools that records
 - **spectrum** - the object that defines a tool or environment by a reference foton set (Clause 10).
 - **reproduction level** - L0 byte-identical / L1 canonical-identical / L2 within-tolerance (Clause 9).
 - **aggregator** - a discovery index over records; not a store and not a trust anchor (Clause 12).
+- **verification material** - external evidence *about* a record - who signed it, or that it existed
+  by a given time - bound to the record by its content address and opaque to the kernel (Clause 8.1).
 
 ## 4 Conventions
 
@@ -361,6 +367,56 @@ PAE = "DSSEv1 " + len(payloadType) + " " + payloadType + " " + len(payload) + " 
 - **Trust policy** - *which* keys/identities count, for which predicates/contexts - is OUT of the
   kernel (a cockpit/consumer concern).
 
+### 8.1 Attached verification material *(0.1 - new)*
+
+The DSSE signature proves that *some key* signed the payload. It does not carry what a reader needs to
+decide **whose key that was**, nor that the record existed at a given time. A short-lived Sigstore
+certificate, a transparency-log inclusion proof, an X.509 chain from an organisation's PKI, a
+qualified certificate under eIDAS, an RFC 3161 timestamp token - §8 and §13 both call for these, and
+none of them has anywhere to live. This clause gives them one.
+
+```
+VerificationMaterial := { subject:   "sha256:<hex>",
+                          scheme:    <token>,
+                          mediaType: <media type>,
+                          material:  base64(<the scheme's own artifact>) }
+```
+
+- **`subject` MUST be the record's content address** - a foton id or a claim id. Because a claim id is
+  `sha256(canon(Statement))` and the envelope's `payload` *is* those canonical bytes, a scheme that
+  signs bytes MUST sign the canonical Statement bytes. The binding is then **structural**: the digest
+  the external scheme committed to *is* the record's identity. It MUST NOT rest on a filename, on a
+  particular serialization of the envelope, or on co-location.
+- **The kernel MUST NOT interpret or verify `material`.** This is the §8 posture exactly: stored is not
+  verified. A kernel carries verification material as opaque bytes; evaluating it - and deciding which
+  issuers, trust lists or identities count - is a consumer concern, like trust policy.
+- **Presence, absence, or invalidity MUST NOT affect the record's validity or resolvability** (§11).
+  Verification material is evidence *about* a record, never a precondition of it. A registry that
+  cannot read a material MUST still resolve the record.
+- **Several are permitted per record**, and they answer different questions: an identity witness
+  (*who stands behind this*), a time witness (*that it existed by then*), and a legally qualified
+  signature are independent and MAY coexist.
+- **An unrecognised `scheme` MUST be carried, not rejected.** Refusing unknown evidence would make the
+  set of schemes a protocol version, which is precisely what this clause exists to avoid.
+
+Initial scheme tokens (the list is open; registration is out of scope for 0.1):
+
+| `scheme` | typical `mediaType` | answers |
+|---|---|---|
+| `sigstore-bundle` | `application/vnd.dev.sigstore.bundle.v1+json` | who (OIDC identity via Fulcio) |
+| `rekor-entry` | `application/json` | when (transparency-log inclusion, §13) |
+| `rfc3161` | `application/timestamp-reply` | when (qualified timestamp) |
+| `cms-detached` | `application/pkcs7-signature` | who (X.509: organisation PKI, smartcard, detached CAdES) |
+| `jades` | `application/jose+json` | who (the eIDAS JSON signature form) |
+| `pgp-detached` | `application/pgp-signature` | who |
+
+**Document-rendered signature forms (e.g. PAdES / signed PDFs) are OUT of scope.** They sign a
+*rendered* representation of a record, and the relationship between that rendering and the canonical
+bytes is not content-addressed - a second representation free to drift from the first. §14 already
+draws this line for publication projections and requires an explicit provenance reference rather than
+assumed hash equality. A signed document is therefore a §14 projection, and its signature stands over
+the projection, not over the record.
+
 ## 9 Reproduction and normalization
 
 A reproduction is expressed as a `compare` foton (6.6) over `(reference, candidate, criteria)` inputs,
@@ -470,16 +526,21 @@ Records are immutable and content-addressed, so replication is a conflict-free s
 - Minimum federation surface (binding MAY vary; HTTP(S) is the reference): plankton
   `producer?hash=`, `uses?hash=`, `sync?since=`, optional `blob?hash=`; nekton `claims?subject=`,
   `claims?object=`, `claims?signer=`, `claims?predicate=`, `claim?id=`, `sync?since=`.
+- Verification material (8.1) is OPTIONAL to produce and OPTIONAL to carry. An implementation that
+  carries it MUST NOT reject an unrecognised `scheme`, MUST NOT treat its absence or invalidity as
+  affecting a record's validity or resolvability, and MUST NOT report a record as verified on the
+  strength of material it did not itself evaluate.
 
 ## 13 Long-term verifiability  *(0.1 - subject to change)*
 
 For a record to remain verifiable long after signing, it should carry what durable verification needs.
 When a short-lived signing certificate is used (e.g. Sigstore-Fulcio), the transparency-log inclusion
 proof (e.g. Rekor) SHOULD be carried **inside the record**, so that verification a year later does not
-depend on the certificate still being valid or an external service still answering. *(Scenario 3. The
-reference `kton anchor` currently prints the Rekor inclusion proof to stdout but does not yet embed it
-in the record, and there is no offline re-verification of a saved proof; the on-record encoding is
-being specified and is expected to change before v1.)*
+depend on the certificate still being valid or an external service still answering. The on-record encoding is
+§8.1: an inclusion proof is verification material with `scheme: "rekor-entry"`, bound to the record by
+its content address like any other. *(Scenario 3. The reference `kton anchor` currently verifies the
+proof and prints it to stdout without storing it, and there is no offline re-verification of a saved
+proof; both are open.)*
 
 ## 14 Publication projections  *(informative)*
 
