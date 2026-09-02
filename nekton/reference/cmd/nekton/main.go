@@ -26,11 +26,15 @@ usage:
   nekton pubkey <key.key|hex>                         print the public key hex (what verify/--trust-keys read)
   nekton keyid <key.pub|key.key|hex>                  print the keyid shown as by=key:<id> (map key -> signer)
   nekton seed <scope-name> --sign key.key [--add] [--registry D]  open a (sub)nekton scope; prints its scope id
+      --print-id         print ONLY the bare id on stdout, human lines to stderr
+                         (same contract as plankton author --print-id): ID=$(nekton seed … --print-id)
       --when <RFC3339>   pin the genesis timestamp. The scope id COVERS it, so this is what makes
                          a rebuilt corpus land on the same scope ids (default: now)
         [--by ID] [--parent <parentSeedId>] [-o out]      (scoped claims chain under it via --scope/--prev)
   nekton claim <spec.json> <key.key> [<out.dsse>] [--add] [--registry D]  author + sign a claim; --add ingests directly
   nekton annotate <subj|--foton F> --template <name> [--add] [--registry D]  author + sign a claim from a TEMPLATE
+      --print-id         print ONLY the bare id on stdout, human lines to stderr
+                         (same contract as plankton author --print-id): ID=$(nekton annotate … --print-id)
       --when <RFC3339>   pin the claim timestamp; the claim id covers it (default: now)
         --set k=v ... --sign key.key [--by ID] [-o out]   (aliases + auto timestamp; no jq/openssl)
   nekton templates [--show <name>]                    list templates + aliases; --show prints a template's fields
@@ -224,11 +228,13 @@ func run(cmd string, args []string) error {
 
 	case "claim":
 		var pos []string
-		addFlag, regDir := false, ""
+		addFlag, regDir, printID := false, "", false
 		for i := 0; i < len(args); i++ {
 			switch args[i] {
 			case "--add":
 				addFlag = true
+			case "--print-id":
+				printID = true
 			case "--registry":
 				i++
 				if i < len(args) {
@@ -240,13 +246,13 @@ func run(cmd string, args []string) error {
 		}
 		// out is optional when --add is given (ingest directly, no file)
 		if len(pos) < 2 || (len(pos) < 3 && !addFlag) {
-			return fmt.Errorf("usage: nekton claim <spec.json> <key.key> [<out.dsse.json>] [--add] [--registry <dir>]")
+			return fmt.Errorf("usage: nekton claim <spec.json> <key.key> [<out.dsse.json>] [--add] [--registry <dir>] [--print-id]")
 		}
 		out := ""
 		if len(pos) >= 3 {
 			out = pos[2]
 		}
-		return authorClaim(pos[0], pos[1], out, addFlag, regDir)
+		return authorClaim(pos[0], pos[1], out, addFlag, regDir, printID)
 
 	case "seed":
 		return seed(args)

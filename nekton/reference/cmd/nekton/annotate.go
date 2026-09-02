@@ -140,7 +140,7 @@ func envOr(key, def string) string {
 // annotate parses the CLI, resolves the template + aliases, builds a claimSpec, and signs it.
 func annotate(args []string) error {
 	var subject, foton, tmplName, out, by, keyPath, scope, prev, regDir, when string
-	addFlag := false
+	addFlag, printID := false, false
 	tdir := envOr("NEKTON_TEMPLATES", "./templates")
 	aliasesPath := envOr("NEKTON_ALIASES", "./aliases.json")
 	set := map[string]string{}
@@ -148,6 +148,8 @@ func annotate(args []string) error {
 		switch args[i] {
 		case "--add":
 			addFlag = true
+		case "--print-id":
+			printID = true
 		case "--registry":
 			i++
 			regDir = arg(args, i)
@@ -321,7 +323,7 @@ func annotate(args []string) error {
 		by = "key:" + keyidHex(priv.Public().(ed25519.PublicKey))
 	}
 	if ephemeral {
-		fmt.Printf("annotate: signer    keyid=%s (ephemeral - unlinkable; use --sign for attribution)\n", keyidHex(priv.Public().(ed25519.PublicKey)))
+		humanOut(printID)("annotate: signer    keyid=%s (ephemeral - unlinkable; use --sign for attribution)\n", keyidHex(priv.Public().(ed25519.PublicKey)))
 	}
 
 	stamp, err := whenOr(when)
@@ -359,20 +361,21 @@ func annotate(args []string) error {
 		out = "claim." + strings.ReplaceAll(tmplName, "/", "-") + ".dsse.json"
 	}
 
-	fmt.Printf("annotate: template %s  predicate %s\n", tmplName, spec.Predicate)
+	msg := humanOut(printID)
+	msg("annotate: template %s  predicate %s\n", tmplName, spec.Predicate)
 	if spec.Context != "" {
-		fmt.Printf("annotate: context   %s\n", spec.Context)
+		msg("annotate: context   %s\n", spec.Context)
 	}
-	fmt.Printf("annotate: subject   %s\n", subject)
+	msg("annotate: subject   %s\n", subject)
 	if spec.Scope != "" {
-		fmt.Printf("annotate: scope     %s\n", spec.Scope)
+		msg("annotate: scope     %s\n", spec.Scope)
 		prevShown := spec.Prev
 		if prevShown == "" {
 			prevShown = "(none)"
 		}
-		fmt.Printf("annotate: prev      %s\n", prevShown)
+		msg("annotate: prev      %s\n", prevShown)
 	}
-	if err := signClaim(spec, priv, out, addFlag, regDir); err != nil {
+	if err := signClaim(spec, priv, out, addFlag, regDir, printID); err != nil {
 		// The bare-term refusal (claim/spec.go) is right, but the case that actually triggers it is
 		// almost always a MISSING alias file: the template resolved through an empty alias map and
 		// came out as its own short name. The message describes the symptom and points at the

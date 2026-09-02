@@ -31,7 +31,7 @@ func TestClaimAddIngests(t *testing.T) {
 		By:        "CN=Tester",
 		When:      "2026-07-15T00:00:00Z",
 	}
-	if err := signClaim(spec, priv, "", true /* add */, reg); err != nil {
+	if err := signClaim(spec, priv, "", true /* add */, reg, false); err != nil {
 		t.Fatalf("claim --add: %v", err)
 	}
 	r, err := registry.Open(reg)
@@ -67,10 +67,10 @@ func TestCoSignerTwinUnion(t *testing.T) {
 	dir := t.TempDir()
 	envAPath := filepath.Join(dir, "a.dsse.json")
 	envBPath := filepath.Join(dir, "b.dsse.json")
-	if err := signClaim(spec, privA, envAPath, false, ""); err != nil {
+	if err := signClaim(spec, privA, envAPath, false, "", false); err != nil {
 		t.Fatalf("sign A: %v", err)
 	}
-	if err := signClaim(spec, privB, envBPath, false, ""); err != nil {
+	if err := signClaim(spec, privB, envBPath, false, "", false); err != nil {
 		t.Fatalf("sign B: %v", err)
 	}
 	envA, err := readEnvelope(envAPath)
@@ -190,7 +190,7 @@ func TestBulkAddOpensTheRegistryOnce(t *testing.T) {
 		p := filepath.Join(dir, fmt.Sprintf("c%d.dsse.json", i))
 		// the malformed one cannot be signed through signClaim (it validates), so write the
 		// envelope directly - which is exactly how a corpus ends up holding one.
-		if err := signClaim(spec, priv, p, false, ""); err != nil {
+		if err := signClaim(spec, priv, p, false, "", false); err != nil {
 			if i != 2 {
 				t.Fatalf("sign %d: %v", i, err)
 			}
@@ -237,7 +237,7 @@ func TestReadJSONEmitsRecordsVerbatim(t *testing.T) {
 		By:        "CN=Tester",
 		When:      "2026-07-15T00:00:00Z",
 	}
-	if err := signClaim(spec, priv, "", true, reg); err != nil {
+	if err := signClaim(spec, priv, "", true, reg, false); err != nil {
 		t.Fatalf("claim --add: %v", err)
 	}
 	// `about` resolves its registry from the environment, not from an argument
