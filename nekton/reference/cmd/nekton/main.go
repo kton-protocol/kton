@@ -38,7 +38,7 @@ usage:
       --when <RFC3339>   pin the claim timestamp; the claim id covers it (default: now)
         --set k=v ... --sign key.key [--by ID] [-o out]   (aliases + auto timestamp; no jq/openssl)
   nekton templates [--show <name>]                    list templates + aliases; --show prints a template's fields
-  nekton show <claim.dsse.json|sha256:id>             print a claim: subject, predicate, statement, signer
+  nekton show <claim.dsse.json|sha256:id> [--json]             print a claim: subject, predicate, statement, signer
   nekton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
                                                       registry id; pubkey: a .pub file or the hex)
   nekton add <envelope.dsse.json> [--registry D]      ingest a signed claim (D or NEKTON_DIR)

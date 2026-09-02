@@ -165,3 +165,14 @@ func showJSON(id string, f *core.Foton, env core.Envelope) error {
 	fmt.Println(string(b))
 	return nil
 }
+
+// printJSON is the one JSON writer for plankton's read surface, so `show`, `producer`/`uses`/
+// `lineage` and `reproductions` cannot drift on formatting.
+func printJSON(v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
+}

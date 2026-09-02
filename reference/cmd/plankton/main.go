@@ -42,14 +42,16 @@ usage:
                                                       registry id; pubkey: a .pub file or the hex)
   plankton add <envelope.dsse.json> [--registry D]    ingest a signed foton into the registry (D or PLANKTON_DIR)
   plankton show <foton.dsse.json|sha256:id> [--json]  print a foton: command, environment, inputs, outputs
-  plankton producer [--source D ...] <sha256:...>     who produced this file (who OUTPUT it; lineage join)
-  plankton reproductions [--trust-keys D] <sha256:h>  ↻N: distinct VERIFIED independent signers that produced these
+      --json on show/producer/uses/lineage/reproductions: the machine form. A record's id is a
+      NAMED field there, so a consumer never has to assume it is the first hash on a line.
+  plankton producer [--source D] [--json] <sha256:…>  who produced this file (who OUTPUT it; lineage join)
+  plankton reproductions [--trust-keys D] [--json] <sha256:h>  ↻N: distinct VERIFIED independent signers that produced these
                                                       bytes. WITHOUT --trust-keys the count is self-declared and
                                                       FORGEABLE (a relabeled keyid inflates it); over PLANKTON_DIR
                                                       only - the federated ↻N is the aggregator's.
-  plankton uses [--source D ...] <sha256:...>         what CONSUMED this file (downstream; the shared-input join)
+  plankton uses [--source D] [--json] <sha256:…>      what CONSUMED this file (downstream; the shared-input join)
   plankton reuse <foton.statement.json>               action key + cache-hit check
-  plankton lineage [--source D ...] <sha256:...>      walk producers backwards (union of --source registries, no copy;
+  plankton lineage [--source D] [--json] <sha256:…>   walk producers backwards (union of --source registries, no copy;
                                                       a missing --source is an error, not a silently-dropped source)
         [--sources-file F] a newline-delimited list of sources (escapes ARG_MAX; empty list is an error, not a fallback);
         [--strict] refuse (exit non-zero) if the read is incomplete (any record skipped) OR any record is unsigned;
@@ -241,8 +243,11 @@ func run(cmd string, args []string) error {
 		// nekton attestation layer - `nekton about <producer-foton>`.)
 		var trusted []ed25519.PublicKey
 		var rest []string
+		asJSON := false
 		for i := 0; i < len(args); i++ {
-			if args[i] == "--trust-keys" {
+			if args[i] == "--json" {
+				asJSON = true
+			} else if args[i] == "--trust-keys" {
 				if i+1 >= len(args) {
 					return fmt.Errorf("--trust-keys expects a directory of *.pub keys")
 				}
@@ -257,7 +262,7 @@ func run(cmd string, args []string) error {
 			}
 		}
 		if len(rest) != 1 {
-			return fmt.Errorf("usage: plankton reproductions [--trust-keys <dir>] <sha256:output-hash>\n" +
+			return fmt.Errorf("usage: plankton reproductions [--trust-keys <dir>] [--json] <sha256:output-hash>\n" +
 				"  distinct INDEPENDENT producers of these bytes. With --trust-keys only signers whose signature\n" +
 				"  VERIFIES are counted (the trustworthy ↻N); without it the count is self-declared and forgeable.\n" +
 				"  Counted over PLANKTON_DIR only; the federated ↻N is the aggregator's.")
@@ -272,7 +277,13 @@ func run(cmd string, args []string) error {
 		}
 		prods := r.Producer(h)
 		if len(prods) == 0 {
-			fmt.Printf("reproductions: 0 - no foton in %s produced %s\n", dir(), h)
+			// Still emit a parseable answer before the non-zero exit: a consumer must be able to read
+			// "zero producers" as a RESULT, not have to infer it from an exit code and empty stdout.
+			if asJSON {
+				_ = printJSON(map[string]any{"output": h, "distinctSigners": 0, "producerFotons": 0, "producers": []any{}})
+			} else {
+				fmt.Printf("reproductions: 0 - no foton in %s produced %s\n", dir(), h)
+			}
 			os.Exit(1)
 		}
 		type prodInfo struct {
@@ -312,10 +323,30 @@ func run(cmd string, args []string) error {
 		if len(trusted) > 0 {
 			kind = "verified"
 		}
-		fmt.Printf("reproductions: %d distinct %s signer(s) produced %s  (↻%d; %d producer foton(s))\n",
-			len(signers), kind, h, len(signers), len(prods))
-		for _, in := range infos {
-			fmt.Printf("  %s  by key:%s (%s)\n", in.id, in.signer, kind)
+		if asJSON {
+			ps := make([]map[string]any, 0, len(infos))
+			for _, in := range infos {
+				// `verified` per record rather than one word for the whole answer: without --trust-keys
+				// the count is forgeable, and a machine reader must see that on the record it acts on,
+				// not only in a stderr warning it may never read.
+				ps = append(ps, map[string]any{"fotonId": in.id, "keyid": in.signer, "verified": in.verified})
+			}
+			out := map[string]any{
+				"output": h, "distinctSigners": len(signers), "producerFotons": len(prods),
+				"trust": kind, "producers": ps,
+			}
+			if excluded > 0 {
+				out["excludedUntrusted"] = excluded
+			}
+			if err := printJSON(out); err != nil {
+				return err
+			}
+		} else {
+			fmt.Printf("reproductions: %d distinct %s signer(s) produced %s  (↻%d; %d producer foton(s))\n",
+				len(signers), kind, h, len(signers), len(prods))
+			for _, in := range infos {
+				fmt.Printf("  %s  by key:%s (%s)\n", in.id, in.signer, kind)
+			}
 		}
 		if len(trusted) == 0 {
 			fmt.Fprintln(os.Stderr, "warning: this ↻N is over SELF-DECLARED keyids and is FORGEABLE (a relabeled keyid inflates it and mis-attributes); pass --trust-keys <dir> to count only authenticated signers")
@@ -596,8 +627,11 @@ func run(cmd string, args []string) error {
 		var sources []string
 		q := ""
 		strict := false
+		asJSON := false
 		for i := 0; i < len(args); i++ {
 			switch {
+			case args[i] == "--json":
+				asJSON = true
 			case args[i] == "--source" && i+1 < len(args):
 				i++
 				sources = append(sources, args[i])
@@ -625,7 +659,7 @@ func run(cmd string, args []string) error {
 			}
 		}
 		if q == "" {
-			return fmt.Errorf("usage: plankton %s [--source D ...] [--sources-file F] [--strict] <sha256:...>", cmd)
+			return fmt.Errorf("usage: plankton %s [--source D ...] [--sources-file F] [--strict] [--json] <sha256:...>", cmd)
 		}
 		var r *registry.Registry
 		var err error
@@ -669,6 +703,31 @@ func run(cmd string, args []string) error {
 			ids = r.Uses(q)
 		case "lineage":
 			ids = r.Lineage(q)
+		}
+		// --json exists to REPLACE line scraping, not to pretty-print it. A consumer that regexes
+		// ids out of the prose above has to assume a record's own id is the first hash on its line;
+		// that holds today, is guaranteed nowhere, and no test protects it (#57). Here the id is a
+		// named field, so a reordered output line cannot silently mislabel a record.
+		if asJSON {
+			recs := make([]map[string]any, 0, len(ids))
+			for _, id := range ids {
+				f, _ := r.Foton(id)
+				recs = append(recs, map[string]any{
+					"fotonId": id, "kind": f.Protocol.Kind,
+					"inputs": len(f.Inputs), "outputs": len(f.Outputs),
+				})
+			}
+			out := map[string]any{"relation": cmd, "query": q, "records": recs}
+			if len(sources) > 0 {
+				out["sources"] = sources
+			}
+			// A degraded read is INCOMPLETE, and that must survive into the machine form - a consumer
+			// that cannot see it would treat a partial provenance answer as a whole one.
+			if n := r.Degraded(); n > 0 {
+				out["incomplete"] = true
+				out["skippedRecords"] = n
+			}
+			return printJSON(out)
 		}
 		if len(ids) == 0 {
 			where := "this registry"
