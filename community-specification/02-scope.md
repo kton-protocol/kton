@@ -35,6 +35,10 @@ The specification defines, and the patent commitments of contributors and licens
 7. **The aggregation / discovery model** - the semantics by which an aggregator indexes and unions
    records. An aggregator is an **index, not a store and not a trust anchor**: every record it surfaces
    remains independently verifiable by hash and signature.
+8. **The attachment point for external verification material** - the shape by which evidence produced
+   by another scheme (an identity witness, a time witness) binds to a record by its content address,
+   and the boundaries that keep it evidence rather than a precondition. The *evaluation* of any such
+   evidence is out of scope (below).
 
 ## Out of scope
 
@@ -43,8 +47,14 @@ commitment under this Scope:
 
 - **Specific transports and hosting** - git, GitHub, HTTP, object stores, or any particular network
   protocol. kton records are transport-neutral.
-- **Specific signing backends** - e.g. Sigstore/keyless, RSA/nanopublication projection, or a
-  particular transparency log. These are concrete realizations of the in-scope signing *model*.
+- **Specific signing backends** - e.g. Sigstore/keyless, RSA/nanopublication projection, a particular
+  transparency log, or an eIDAS trust service. These are concrete realizations of the in-scope signing
+  *model*, and **the evaluation of any evidence they produce** - which issuers, trust lists or
+  identities count - is likewise out of scope: that is a consumer's trust policy, not a property of a
+  record.
+- **Document-rendered signature forms** - e.g. signed PDFs (PAdES). These sign a *rendering* of a
+  record, whose relationship to the record's canonical bytes is not content-addressed; such a
+  rendering is a publication projection, and a signature over it stands over the projection.
 - **Specific tools, executors, and cockpits** - the programs that produce or render records. kton
   *documents*; it does not execute or render.
 - **Reference source code** - the plankton/nekton/kton implementations are licensed separately (Apache
