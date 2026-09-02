@@ -92,4 +92,19 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 ### Removed
 
+- **`kton/reference/web/graph/`** (#72) - ~2500 lines of browser-facing code, and with it the
+  `graph.wasm` release artifact, its `wasm_exec.js`, their checksums and the `graph.wasm.buildinfo`
+  recipe. Nothing in Go imported it; it was a leaf `package main` whose own harness described it as
+  validating "the exact logic that the wasm build serves to the browser". kton-web already built it,
+  copying `graph.go` and `sign.go` out of a pinned kernel checkout, and already superseded
+  `main_wasm.go` with its own export groups. It belongs there.
+
+  The reproducibility check moves rather than dies - two builds from different directories with
+  `-trimpath`, required to be byte-identical - because reproducibility of a browser artifact is
+  kton-web's concern. What stayed here is the kernels' own obligation to compile for
+  `GOOS=js GOARCH=wasm` (`CONTRIBUTING.md:13`), which CI now proves by compiling rather than by
+  grepping imports.
+
+  Consumers of the `graph.wasm` release asset must take it from kton-web from 0.2 on.
+
 - The 3.7 MB unstripped native harness binary that `web/graph` had committed into the tree.
