@@ -28,20 +28,16 @@ jobs:
       - name: scope guard (the two scope statements must not diverge)
         run: bash scripts/check-scope-drift.sh
 
-      # The guard above reads imports; this one COMPILES for the browser target. WASM-cleanliness that
-      # is only grepped is cleanliness only until something breaks that grep cannot see, and the
-      # release job is the wrong place to find out - it runs on a tag, after the version is cut.
-      # Reproducibility is checked here too: two builds from different directories must agree, which
-      # is exactly what `-trimpath` buys and what the published sha256 attests to.
-      - name: graph.wasm builds for js/wasm, and builds reproducibly
+      # The guard above reads IMPORTS; this one COMPILES for the browser target. WASM-cleanliness
+      # that is only grepped is cleanliness only until something breaks that grep cannot see, and a
+      # tag build is the wrong place to find out - it runs after the version is cut. The kernels are
+      # the invariant (CONTRIBUTING.md:13); the browser PACKAGE that used to be checked here moved
+      # to kton-web with its reproducibility check, but the kernels' obligation stayed behind.
+      - name: the kernels still compile for js/wasm
         run: |
-          set -euo pipefail
-          ( cd kton/reference && GOOS=js GOARCH=wasm go build -trimpath -o "$RUNNER_TEMP/graph-1.wasm" ./web/graph )
-          cp -r . "$RUNNER_TEMP/elsewhere"
-          ( cd "$RUNNER_TEMP/elsewhere/kton/reference" && GOOS=js GOARCH=wasm go build -trimpath -o "$RUNNER_TEMP/graph-2.wasm" ./web/graph )
-          cmp "$RUNNER_TEMP/graph-1.wasm" "$RUNNER_TEMP/graph-2.wasm" \
-            || { echo "::error::graph.wasm is not reproducible - same source, two paths, different bytes"; exit 1; }
-          sha256sum "$RUNNER_TEMP/graph-1.wasm"
+          set -e
+          ( cd reference        && GOOS=js GOARCH=wasm go build ./... )
+          ( cd nekton/reference && GOOS=js GOARCH=wasm go build ./... )
 
       - name: conformance vectors are frozen (regenerate → expect no diff)
         run: |
