@@ -359,8 +359,40 @@ func nektonServer(d string) http.Handler {
 			recs = r.BySigner(q.Get("signer"))
 		case q.Get("predicate") != "":
 			recs = r.ByPredicate(q.Get("predicate"))
+		default:
+			// Refuse rather than answer emptily. Without this, a misspelled parameter fell through
+			// and returned {"records":[]} - indistinguishable from "that subject has no claims", so
+			// a caller got a SUCCESSFUL wrong answer. The failure shape this project keeps finding.
+			http.Error(w, "usage: /claims?subject= | ?object= | ?signer= | ?predicate= (one of); /claim?id= for a single record", http.StatusBadRequest)
+			return
 		}
 		writeJSON(w, map[string]any{"records": envsOf(recs)})
+	})
+
+	// /claim?id= - fetch ONE record by its claim id. Part of the minimum federation surface (SPEC
+	// §12): a peer holding an id from a chain's `prev` must be able to ask for exactly that record
+	// rather than pulling an index it would have to filter.
+	mux.HandleFunc("/claim", func(w http.ResponseWriter, req *http.Request) {
+		r, ok := open(w)
+		if !ok {
+			return
+		}
+		id := req.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "usage: /claim?id=sha256:<claimId>", http.StatusBadRequest)
+			return
+		}
+		if n, ok := core.NormalizeContentHash(id); ok {
+			id = n // SPEC §5.1: a bare or uppercase digest must resolve under the stored key
+		}
+		rec, found := r.Claim(id)
+		if !found {
+			// 404, not an empty list: "this registry does not hold it" and "it holds nothing about
+			// it" are different answers, and a federated reader acts differently on each.
+			http.Error(w, "no such claim in this registry", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, map[string]any{"records": envsOf([]nreg.Record{rec})})
 	})
 	mux.HandleFunc("/sync", func(w http.ResponseWriter, req *http.Request) {
 		r, ok := open(w)
