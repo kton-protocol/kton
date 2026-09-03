@@ -1058,3 +1058,15 @@ func (r *Registry) AttachMaterial(vm VerificationMaterial) error {
 	r.material[vm.Subject] = append(r.material[vm.Subject], vm)
 	return nil
 }
+
+// ClaimIDs returns every claim id this registry holds, in a stable order. Used by the material pull
+// (kton mirror --with-material), which asks the peer about every record held rather than about the
+// last sync batch - material is attached out of band and after the fact, so a batch would miss it.
+func (r *Registry) ClaimIDs() []string {
+	out := make([]string, 0, len(r.claimByID))
+	for id := range r.claimByID {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}

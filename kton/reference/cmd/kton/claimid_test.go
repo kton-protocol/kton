@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -102,4 +103,67 @@ func seedOneClaim(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	return id
+}
+
+// SPEC §8.1 material crosses a federation ON DEMAND, by subject - never in the /sync batch. A
+// record synced at seq 5 can be given its bundle a week later, when the peer's cursor is long past
+// it, so a flag carried in the sync response would look like it worked and silently miss every
+// later attachment (#62). This endpoint has no cursor to be behind.
+func TestMaterialEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("NEKTON_DIR", dir)
+	id := seedOneClaim(t, dir)
+
+	r, err := nreg.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.AttachMaterial(nreg.VerificationMaterial{
+		Subject: id, Scheme: "rekor-entry", MediaType: "application/json",
+		Material: base64.StdEncoding.EncodeToString([]byte(`{"logIndex":1}`)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(nektonServer(dir))
+	defer srv.Close()
+
+	var body struct {
+		Subject  string `json:"subject"`
+		Material []struct {
+			Scheme   string `json:"scheme"`
+			Material string `json:"material"`
+		} `json:"material"`
+	}
+	resp, err := http.Get(srv.URL + "/material?subject=" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Material) != 1 || body.Material[0].Scheme != "rekor-entry" {
+		t.Errorf("material = %+v; want the one attached", body.Material)
+	}
+
+	// A subject with no material is an empty list, not a 404: "we hold the record and nothing is
+	// attached" is a real answer, and §8.1 makes absence unremarkable.
+	resp2, err := http.Get(srv.URL + "/material?subject=sha256:" + strings.Repeat("d", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("absent subject: status %d, want 200 with an empty list", resp2.StatusCode)
+	}
+	// No subject at all IS an error - answering emptily is the shape this repo keeps finding.
+	resp3, err := http.Get(srv.URL + "/material")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusBadRequest {
+		t.Errorf("no subject: status %d, want 400", resp3.StatusCode)
+	}
 }
