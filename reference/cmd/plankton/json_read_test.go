@@ -244,3 +244,93 @@ func TestRecordsRoundTripsThroughAdd(t *testing.T) {
 		t.Errorf("--since 1 returned %d record(s), max %d; want none and the cursor unchanged", len(got2.Records), got2.Max)
 	}
 }
+
+// The LEVEL of a reproduction is what a signed `reproduces` claim records, and it was readable only
+// as a word inside a sentence: the cockpit matched `^reproduction: (L[01])\b` and wrote the capture
+// into the claim. So a signed record rested on a prose string.
+//
+// The exit code cannot replace it. It separates match from no-match; it cannot separate L0
+// (byte-identical) from L1 (equal only after a named normalizer), and that distinction decides
+// admission wherever a policy requires byte-identity. A consumer once inferred the level from
+// whether --via was passed, which mislabels a genuine L0 as L1 as soon as a default normalizer is
+// configured — which is why the string was parsed rather than guessed (#89).
+func TestReproducesReportsItsLevelAsAField(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PLANKTON_DIR", filepath.Join(dir, "reg"))
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(captureStdout(t, func() {
+			if err := run("hash", []string{p}); err != nil {
+				t.Fatal(err)
+			}
+		}))
+	}
+	a, b, c := write("a.txt", "x"), write("b.txt", "x"), write("c.txt", "y")
+
+	decode := func(args []string) map[string]any {
+		t.Helper()
+		var got map[string]any
+		raw := captureStdout(t, func() {
+			if err := run("reproduces", args); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatalf("not valid JSON: %v\n%s", err, raw)
+		}
+		return got
+	}
+
+	// L0: identical bytes, compared raw. `via` is null, not "" — a consumer must be able to tell
+	// "compared raw" from "compared through a normalizer" without string-testing an empty value.
+	got := decode([]string{a, b, "--json"})
+	if got["level"] != "L0" || got["matched"] != true || got["via"] != nil {
+		t.Errorf("L0 case = %v", got)
+	}
+
+	// A normalizer both outputs map to makes the same pair L1 — the distinction the prose carried
+	// and the exit code cannot.
+	if err := keygen([]string{filepath.Join(dir, "k"), "--seed", strings.Repeat("3d", 32)}); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(dir, "k.key")
+	n := filepath.Join(dir, "n.txt")
+	if err := os.WriteFile(n, []byte("norm"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range []string{"a.txt", "c.txt"} {
+		if err := run("author", []string{"--cmd", "normalize", "--in", filepath.Join(dir, in),
+			"--out", n, "--sign", key, "--add"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var recs struct {
+		Records []struct {
+			FotonID string `json:"fotonId"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal([]byte(captureStdout(t, func() {
+		if err := run("records", []string{"--json"}); err != nil {
+			t.Fatal(err)
+		}
+	})), &recs); err != nil {
+		t.Fatal(err)
+	}
+	var shown map[string]any
+	if err := json.Unmarshal([]byte(captureStdout(t, func() {
+		if err := run("show", []string{recs.Records[0].FotonID, "--json"}); err != nil {
+			t.Fatal(err)
+		}
+	})), &shown); err != nil {
+		t.Fatal(err)
+	}
+	via := shown["protocol"].(map[string]any)["ref"].(string)
+
+	got = decode([]string{a, c, "--via", via, "--json"})
+	if got["level"] != "L1" || got["matched"] != true || got["via"] != via {
+		t.Errorf("L1 case = %v; want L1 with the normalizer NAMED, so the reader knows what was compared under", got)
+	}
+}

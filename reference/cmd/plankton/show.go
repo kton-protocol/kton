@@ -181,3 +181,12 @@ func printJSON(v any) error {
 	fmt.Println(string(b))
 	return nil
 }
+
+// nullableVia renders --via as JSON null when absent, so a consumer can tell "compared raw" from
+// "compared through a normalizer" without string-testing an empty value.
+func nullableVia(via string) any {
+	if via == "" {
+		return nil
+	}
+	return via
+}
