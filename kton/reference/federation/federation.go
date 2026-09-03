@@ -90,6 +90,12 @@ func NewServer(dir string) http.Handler {
 	// /blob serves optionally-pinned bytes (a mirror that pinned is itself a byte source).
 	mux.HandleFunc("/blob", func(w http.ResponseWriter, req *http.Request) {
 		hash := req.URL.Query().Get("hash")
+		// A malformed hash is a BAD REQUEST, not a miss. "that is not a content hash" and "we do not
+		// have it" are different answers, and collapsing them hid AUD-04 for as long as it did.
+		if _, ok := core.NormalizeContentHash(hash); !ok {
+			http.Error(w, "not a sha256 content hash", http.StatusBadRequest)
+			return
+		}
 		bs, err := blobstore.Open(filepath.Join(dir, BlobsSubdir))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
