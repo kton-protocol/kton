@@ -61,3 +61,49 @@ func TestNektonShowJSON(t *testing.T) {
 		t.Errorf("object did not survive: %v", got.Predicate["object"])
 	}
 }
+
+// The head is what a consumer anchors or publishes, so it must be readable as data (#74). Both
+// caveats travel as FIELDS rather than as prose a reader may skip.
+func TestHeadJSON(t *testing.T) {
+	dir := t.TempDir()
+	reg := filepath.Join(dir, "reg")
+	t.Setenv("NEKTON_DIR", reg)
+	if err := keygen([]string{filepath.Join(dir, "k"), "--seed", strings.Repeat("6b", 32)}); err != nil {
+		t.Fatal(err)
+	}
+	scope := strings.TrimSpace(captureStdout(t, func() {
+		if err := seed([]string{"lab/x", "--sign", filepath.Join(dir, "k.key"),
+			"--when", "2026-07-16T00:00:00Z", "--registry", reg, "--add", "--print-id"}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+
+	var got struct {
+		Scope      string   `json:"scope"`
+		Heads      []string `json:"heads"`
+		Branched   bool     `json:"branched"`
+		Unresolved int      `json:"unresolved"`
+	}
+	raw := captureStdout(t, func() {
+		if err := run("head", []string{scope, "--json"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("head --json is not valid JSON: %v\n%s", err, raw)
+	}
+	if got.Scope != scope || len(got.Heads) != 1 || got.Heads[0] != scope {
+		t.Errorf("head --json = %+v; a fresh scope's tip is its own seed", got)
+	}
+	if got.Branched || got.Unresolved != 0 {
+		t.Errorf("branched/unresolved = %v/%d on a fresh scope", got.Branched, got.Unresolved)
+	}
+
+	// `sealed` must NOT be a field. A withheld LATER claim is undetectable in-band, so no value here
+	// could say so honestly; that is settled by matching a published or anchored head.
+	var loose map[string]any
+	_ = json.Unmarshal([]byte(raw), &loose)
+	if _, present := loose["sealed"]; present {
+		t.Error("head --json carries a `sealed` field - tail truncation is undetectable in-band, so it cannot be answered here")
+	}
+}
