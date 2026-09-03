@@ -565,7 +565,9 @@ Records are immutable and content-addressed, so replication is a conflict-free s
 
   *An HTTP(S) binding - `GET /sync?since=`, `GET /claim?id=` and so on - is one realization and is
   described in Annex C. It is informative: an implementation carrying these queries over anything
-  else is equally conforming.*
+  else is equally conforming. The reference implementation answers `sync(since)` over **stdout**
+  (`plankton records --json --since N`, `nekton records --json --since N`), which is why the fixtures
+  are generated from that command rather than written by hand.*
 
 ## 13 Long-term verifiability  *(0.1 - subject to change)*
 
@@ -669,6 +671,11 @@ a port has security obligations - authentication, transport security, rate limit
 that belong to a deployment rather than to a reference. Writing one over the table above is a small
 amount of code in any language, and `../reference/testdata/federation/` fixes the bytes it must
 produce.
+
+It does answer §12 over a different binding: `plankton records --json --since N` and
+`nekton records --json --since N` return exactly the `sync(since)` document above on stdout. A server
+over HTTP is then a shell around that, which is what "the transport is not specified" means in
+practice.
 
 ## Annex B *(informative)* - scenario → clause map
 
