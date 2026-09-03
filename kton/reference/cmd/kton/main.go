@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,9 +31,15 @@ usage:
   kton serve  plankton [addr]              serve the plankton federation API (default :8787)
   kton serve  nekton   [addr]              serve the nekton   federation API (default :8788)
   kton mirror plankton <peer> [--pin]      pull+persist a peer plankton registry
-  kton mirror nekton   <peer>              pull+persist a peer nekton   registry
-  kton anchor <envelope.dsse.json> <pubkey.pub|hex>
+  kton mirror nekton   <peer> [--with-material]  pull+persist a peer nekton registry
+      --with-material    also make this copy of the EVIDENCE complete: ask the peer about every
+                         claim held, not the last sync batch. Material is attached out of band
+                         and after the fact, so a batch would miss it (SPEC §8.1).
+  kton anchor <envelope.dsse.json> <pubkey.pub|hex> [--store]
                                            anchor a signed record in the Rekor transparency log
+      --store            record the verified entry as §8.1 verification material ON the record,
+                         which is what §13 asks for - otherwise the proof is only printed, and a
+                         year from now verification depends on the service still answering
   kton pin    <file>                       pin a file's bytes into the plankton blob store
   kton blob   <sha256:...>                 is this content pinned locally?
   kton fetch  <sha256:...>                 resolve content via signed nekton located-at claims,
@@ -133,29 +140,52 @@ func run(cmd string, args []string) error {
 
 	case "mirror":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: kton mirror <plankton|nekton> <peer> [--pin]")
+			return fmt.Errorf("usage: kton mirror <plankton|nekton> <peer> [--pin] [--with-material]")
 		}
 		which, peer := args[0], strings.TrimRight(args[1], "/")
-		pin := false
+		pin, withMaterial := false, false
 		for _, a := range args[2:] {
-			if a == "--pin" {
+			switch a {
+			case "--pin":
 				pin = true
+			case "--with-material":
+				withMaterial = true
+			default:
+				return fmt.Errorf("unknown flag %q", a)
 			}
 		}
 		switch which {
 		case "plankton":
+			if withMaterial {
+				return fmt.Errorf("--with-material applies to a nekton mirror (verification material attaches to claims here)")
+			}
 			return mirrorPlankton(planktonDir(), peer, pin)
 		case "nekton":
-			return mirrorNekton(nektonDir(), peer)
+			if err := mirrorNekton(nektonDir(), peer); err != nil {
+				return err
+			}
+			if withMaterial {
+				return pullMaterial(nektonDir(), peer)
+			}
+			return nil
 		default:
-			return fmt.Errorf("usage: kton mirror <plankton|nekton> <peer> [--pin]")
+			return fmt.Errorf("usage: kton mirror <plankton|nekton> <peer> [--pin] [--with-material]")
 		}
 
 	case "anchor":
-		if len(args) != 2 {
-			return fmt.Errorf("usage: kton anchor <envelope.dsse.json> <pubkey.pub|hex>")
+		anchorArgs, store := []string{}, false
+		for _, a := range args {
+			if a == "--store" {
+				store = true
+				continue
+			}
+			anchorArgs = append(anchorArgs, a)
 		}
-		return anchor(args[0], args[1])
+		if len(anchorArgs) != 2 {
+			return fmt.Errorf("usage: kton anchor <envelope.dsse.json> <pubkey.pub|hex> [--store]\n" +
+				"  --store records the verified entry as verification material on the record (SPEC §8.1, §13)")
+		}
+		return anchor(anchorArgs[0], anchorArgs[1], store)
 
 	case "pin":
 		if len(args) != 1 {
@@ -369,6 +399,35 @@ func nektonServer(d string) http.Handler {
 		writeJSON(w, map[string]any{"records": envsOf(recs)})
 	})
 
+	// /material?subject= - the verification material recorded about ONE record (SPEC §8.1).
+	//
+	// On demand by subject, deliberately NOT carried in the /sync batch. Material is attached out of
+	// band and AFTER the fact: a record synced at seq 5 may be given a bundle a week later, when the
+	// peer's cursor is long past it. A flag on the record cursor would look like it worked, deliver
+	// the current batch's evidence, and silently miss every later attachment (#62). This answer is
+	// always current instead, because it has no cursor to be behind.
+	//
+	// The server does not evaluate any of it - it serves what it stored (§8.1, §15).
+	mux.HandleFunc("/material", func(w http.ResponseWriter, req *http.Request) {
+		r, ok := open(w)
+		if !ok {
+			return
+		}
+		subj := req.URL.Query().Get("subject")
+		if subj == "" {
+			http.Error(w, "usage: /material?subject=sha256:<claimId>", http.StatusBadRequest)
+			return
+		}
+		if n, ok := core.NormalizeContentHash(subj); ok {
+			subj = n
+		}
+		mats := r.Material(subj)
+		if mats == nil {
+			mats = []nreg.VerificationMaterial{}
+		}
+		writeJSON(w, map[string]any{"subject": subj, "material": mats})
+	})
+
 	// /claim?id= - fetch ONE record by its claim id. Part of the minimum federation surface (SPEC
 	// §12): a peer holding an id from a chain's `prev` must be able to ask for exactly that record
 	// rather than pulling an index it would have to filter.
@@ -439,5 +498,68 @@ func nektonHTTPMirror(local *nreg.Registry, peer string) error {
 		return err
 	}
 	fmt.Printf("mirrored %s: %d new, %d skipped; registry holds %d claim(s)\n", peer, added, skipped, local.Len())
+	return nil
+}
+
+// pullMaterial makes this copy of the evidence COMPLETE: it asks the peer for the verification
+// material of every claim held locally, not of the claims that arrived in the last sync batch.
+//
+// That distinction is the whole design (#62). Material is attached out of band and AFTER a record
+// exists - a claim mirrored at seq 5 may be given its Sigstore bundle a week later, when the peer's
+// cursor is long past it. Carrying material inside the /sync response would therefore look like it
+// worked, deliver the current batch's evidence, and silently miss every later attachment: the shape
+// of a mirror that reports success while omitting things.
+//
+// So this is O(N) requests and may be slow. Slowness is honest; there is no batch for it to walk
+// past. When material gains a durable cursor of its own this becomes an incremental pass and the
+// flag keeps its meaning.
+func pullMaterial(dir, peer string) error {
+	r, err := nreg.Open(dir)
+	if err != nil {
+		return err
+	}
+	ids := r.ClaimIDs()
+	added, asked, failed := 0, 0, 0
+	for _, id := range ids {
+		asked++
+		resp, err := http.Get(fmt.Sprintf("%s/material?subject=%s", peer, url.QueryEscape(id)))
+		if err != nil {
+			failed++
+			continue
+		}
+		var body struct {
+			Material []nreg.VerificationMaterial `json:"material"`
+		}
+		derr := json.NewDecoder(resp.Body).Decode(&body)
+		resp.Body.Close()
+		if derr != nil {
+			failed++
+			continue
+		}
+		have := map[string]bool{}
+		for _, m := range r.Material(id) {
+			have[m.Scheme+"\x00"+m.Material] = true
+		}
+		for _, m := range body.Material {
+			// Idempotent by (scheme, bytes): a second pass must not double every bundle. Material is
+			// evidence, so duplicates are harmless to correctness and corrosive to a file.
+			if have[m.Scheme+"\x00"+m.Material] {
+				continue
+			}
+			m.Subject = id // never trust the peer's subject field over the record we asked about
+			if err := r.AttachMaterial(m); err != nil {
+				failed++
+				continue
+			}
+			added++
+		}
+	}
+	fmt.Printf("material: asked %d claim(s), stored %d new\n", asked, added)
+	if failed > 0 {
+		// Not an error: material is evidence ABOUT records and its absence changes nothing about
+		// them (§8.1). But a silent partial answer is what this project keeps finding, so say it.
+		fmt.Fprintf(os.Stderr, "note: %d request(s) or attachment(s) failed - this copy of the evidence is INCOMPLETE; re-run to complete it\n", failed)
+	}
+	fmt.Fprintln(os.Stderr, "note: stored, NOT verified - the kernel evaluates no verification material (SPEC §8.1)")
 	return nil
 }
