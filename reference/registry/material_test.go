@@ -121,3 +121,59 @@ func addTestFoton(t *testing.T, r *Registry) (string, core.Envelope) {
 	}
 	return id, env
 }
+
+// The union used to merge against this process's IN-MEMORY copy, so two processes co-signing one
+// record each merged into a stale view and the second atomic rename discarded the first's signature
+// (`concurrency-races`, VULNERABLE on every run until #77). Atomic rename makes each write
+// indivisible; it does nothing for a read-modify-write spanning two of them.
+//
+// This is the unit-level half of that PoC: a SECOND registry instance - a stand-in for a second
+// process, with its own in-memory state - co-signs a record the first already stored. Both
+// signatures must survive.
+func TestCoSignatureSurvivesASecondRegistryInstance(t *testing.T) {
+	dir := t.TempDir()
+	r1, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, env := addTestFoton(t, r1)
+
+	// A second instance opened BEFORE the co-signature: its in-memory view is the stale one.
+	r2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	twin := env
+	twin.Signatures = append(append([]struct {
+		KeyID string `json:"keyid"`
+		Sig   string `json:"sig"`
+	}{}, env.Signatures...), struct {
+		KeyID string `json:"keyid"`
+		Sig   string `json:"sig"`
+	}{KeyID: "second", Sig: signAsSecond(t, env)})
+	if _, _, err := r2.Add(twin); err != nil {
+		t.Fatal(err)
+	}
+
+	r3, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := r3.Envelope(id)
+	if !ok {
+		t.Fatal("the record vanished")
+	}
+	if len(got.Signatures) != 2 {
+		t.Errorf("%d signature(s) on disk, want 2 - a co-signer was dropped", len(got.Signatures))
+	}
+}
+
+func signAsSecond(t *testing.T, env core.Envelope) string {
+	t.Helper()
+	payload, err := base64.StdEncoding.DecodeString(env.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	return base64.StdEncoding.EncodeToString(ed25519.Sign(priv, core.PAE(core.PayloadType, payload)))
+}

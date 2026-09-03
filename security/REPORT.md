@@ -6,9 +6,9 @@ file cannot be regenerated or verified from here and is maintained by hand. Unti
 published, read it as prose - the executable part of this suite is `check.sh`, which prints how
 much of the engagement it actually runs.*
 
-## Posture: **23/26 spectrum members fulfilled** → NOT SECURE (3 open)
+## Posture: **24/26 spectrum members fulfilled** → NOT SECURE (2 open)
 
-23 closed · 3 open · 2 accepted boundary. Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
+24 closed · 2 open · 2 accepted boundary. Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
 vulnerable/fixed commits as signed `nekton` claims. Those claims and the `keys/` directory are not in this
 repository, so `nekton verify` cannot be run against them from here - `redteam.pub` alone verifies nothing.
 10 of the 28 PoCs are executable and run in `check.sh`; the rest are records, not reproductions.
@@ -125,18 +125,22 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **fixed at (reproduction now fails):** pk [`b625b1f`](https://github.com/gitmick/plankton/commit/b625b1f)
 - **PoC:** [`attacks/co-signer-drop.sh`](attacks/co-signer-drop.sh)
 
-### `concurrency-races` — ORANGE · ⚠️ OPEN (was recorded closed in error)
+### `concurrency-races` — ORANGE · ✅ closed (and once recorded closed in error)
 - **class:** `concurrency-nonatomic`
 - **theory:** Concurrent same-file writers corrupted objects and dropped a co-signature (non-atomic os.WriteFile).
-- **status:** Half fixed. `af3cefa` made the write atomic (temp+rename), which ended the torn-object
-  half. This entry also claimed a "locked union-write"; there is no lock in the plankton registry.
-  nekton serialises its union with `.objects.lock`; plankton does not, so two processes still read
-  the same stored object, each merge only their own signature, and the second rename discards the
-  first writer's. The PoC below loses a signature in every run.
+- **status:** Closed in two halves, years apart in effort. `af3cefa` made each write atomic
+  (temp+rename), ending the torn-object half — and this entry then claimed a "locked union-write"
+  that did not exist. Atomic rename makes each write indivisible; it does nothing for a
+  read-modify-write spanning two of them, so two processes co-signing one record each merged into a
+  stale in-memory view and the second rename discarded the first's signature. The union now takes a
+  per-object lock and RE-READS from disk under it (#77). The lock is per object file, not
+  store-wide: writers contend only on the same record, and a bulk ingest of distinct records has
+  nothing to serialize.
 - **vulnerable at:** pk [`a687723`](https://github.com/gitmick/plankton/commit/a687723)
-- **partially fixed at (torn objects only):** pk [`af3cefa`](https://github.com/gitmick/plankton/commit/af3cefa)
-- **PoC:** [`attacks/concurrency-races.sh`](attacks/concurrency-races.sh) — executable, currently VULNERABLE.
-  It was a stub that printed a sentence and no verdict, which is why the gate could not see this.
+- **atomic write at:** pk [`af3cefa`](https://github.com/gitmick/plankton/commit/af3cefa)
+- **PoC:** [`attacks/concurrency-races.sh`](attacks/concurrency-races.sh) — gated. It was a stub
+  printing a sentence and no verdict, which is exactly why the gate could not see this for as long
+  as it did; made executable first, then fixed.
 
 ### `corrupt-poisons-read` — ORANGE · ✅ closed
 - **class:** `read-face-brittle`
