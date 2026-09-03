@@ -6,9 +6,9 @@ file cannot be regenerated or verified from here and is maintained by hand. Unti
 published, read it as prose - the executable part of this suite is `check.sh`, which prints how
 much of the engagement it actually runs.*
 
-## Posture: **24/26 spectrum members fulfilled** → NOT SECURE (2 open)
+## Posture: **25/27 spectrum members fulfilled** → NOT SECURE (2 open)
 
-24 closed · 2 open · 2 accepted boundary. Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
+25 closed · 2 open · 2 accepted boundary. Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
 vulnerable/fixed commits as signed `nekton` claims. Those claims and the `keys/` directory are not in this
 repository, so `nekton verify` cannot be run against them from here - `redteam.pub` alone verifies nothing.
 10 of the 28 PoCs are executable and run in `check.sh`; the rest are records, not reproductions.
@@ -124,6 +124,23 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **vulnerable at:** pk [`0aa44b8`](https://github.com/gitmick/plankton/commit/0aa44b8)
 - **fixed at (reproduction now fails):** pk [`b625b1f`](https://github.com/gitmick/plankton/commit/b625b1f)
 - **PoC:** [`attacks/co-signer-drop.sh`](attacks/co-signer-drop.sh)
+
+### `scope-path-traversal` — RED · ✅ closed
+- **class:** `path-from-unvalidated-input`
+- **theory:** A claim's `scope` is a free-form string in a signed payload, and the store derived a
+  filename from it without validation. `scope: "sha256:../../../tmp/x"` made nekton create and
+  append to a file anywhere the process could write; ingesting the same claim twice then sent it
+  through `rewriteSubnekton`, which atomically replaced that file with only the attacker's record,
+  destroying whatever else it held. Reachable from a hostile peer: `kton mirror nekton` feeds peer
+  envelopes straight to `Add`, and ingest does not verify signatures (§8), so any key suffices.
+- **why it survived:** the same class was found and fixed in the blobstore (#79) — validate before
+  deriving a path — and left standing in the store layout added by #41. One kernel learned the
+  lesson and the other did not.
+- **fixed at:** #87 — a scope must be a canonical content hash before it can name a file, and the
+  result is proven to stay under the store root. One guarded derivation now serves both the record
+  file and its verification material, so the two cannot drift apart again.
+- **PoC:** [`attacks/scope-path-traversal.sh`](attacks/scope-path-traversal.sh) — gated. Verified to
+  report VULNERABLE against the pre-fix binary and PREVENTED after.
 
 ### `concurrency-races` — ORANGE · ✅ closed (and once recorded closed in error)
 - **class:** `concurrency-nonatomic`
