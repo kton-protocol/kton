@@ -540,9 +540,32 @@ Records are immutable and content-addressed, so replication is a conflict-free s
 - **Byte pinning is OPTIONAL** and lives outside the kernel: a mirror MAY fetch a referenced file's
   bytes, verify against the hash (5.6), and re-serve them. Fetched bytes MUST be rejected if their hash
   differs from the request.
-- Minimum federation surface (binding MAY vary; HTTP(S) is the reference): plankton
-  `producer?hash=`, `uses?hash=`, `sync?since=`, optional `blob?hash=`; nekton `claims?subject=`,
-  `claims?object=`, `claims?signer=`, `claims?predicate=`, `claim?id=`, `sync?since=`.
+- **Minimum federation surface.** A federating implementation MUST offer these QUERIES, and the
+  answers MUST be in the wire form below. **How they are carried is not specified** - a transport is
+  an implementation choice (§1), and this clause is about what is asked and what comes back:
+
+  | query | answers |
+  |---|---|
+  | `producer(hash)` | the foton(s) whose OUTPUT is `hash` |
+  | `uses(hash)` | the foton(s) whose INPUT is `hash` |
+  | `sync(since)` | records with a local sequence above `since`, in append order, with the new cursor |
+  | `blob(hash)` *(optional)* | the pinned bytes for `hash`, if this participant holds them |
+  | `claims(subject\|object\|signer\|predicate)` | the claims matching that axis |
+  | `claim(id)` | the one claim with that id, or a distinct not-held answer |
+
+  A `claim(id)` for a record the participant does not hold MUST be distinguishable from a record it
+  holds with nothing to say - "we do not have it" and "we have nothing about it" are different
+  answers, and a reader acts differently on each. An unrecognised or absent query parameter MUST be
+  an error, never an empty result: an empty answer to a malformed question is a successful wrong
+  answer.
+
+  **Wire form.** `sync` answers `{ "records": [ { "seq", "fotonId"|"claimId", "envelope" } ... ],
+  "max": <cursor> }`; the record queries answer `{ "records": [ <envelope> ... ] }`. Envelopes are
+  as in §8. Conformance fixtures for these answers live in `../reference/testdata/federation/`.
+
+  *An HTTP(S) binding - `GET /sync?since=`, `GET /claim?id=` and so on - is one realization and is
+  described in Annex C. It is informative: an implementation carrying these queries over anything
+  else is equally conforming.*
 
 ## 13 Long-term verifiability  *(0.1 - subject to change)*
 
@@ -620,6 +643,32 @@ Licensing identifiers: SPDX. Publication: nanopublication / Trusty URI (Clause 1
 used by *examples* (not the protocol) - EDAM/SWO/STATO/OBI, Cell Ontology, HGNC, SEPIO/micropublication
 for evidence - are application vocabulary, not normative kton terms. The full reuse ↔ native mapping and
 the reserved `gxp:*` set are in [`vocabulary.md`](vocabulary.md).
+
+## Annex C *(informative)* - an HTTP binding for Clause 12
+
+One realization of the §12 queries, and the one the reference client speaks. Nothing here is
+normative: an implementation carrying the same queries and the same wire form over another transport
+conforms equally.
+
+```
+GET /producer?hash=<content hash>          -> { "records": [ <envelope> ... ] }
+GET /uses?hash=<content hash>              -> { "records": [ <envelope> ... ] }
+GET /sync?since=<cursor>                   -> { "records": [ ... ], "max": <cursor> }
+GET /blob?hash=<content hash>              -> the bytes, or 404; 400 if not a content hash
+GET /claims?subject=|object=|signer=|predicate=  -> { "records": [ <envelope> ... ] }
+GET /claim?id=<claim id>                   -> { "records": [ <envelope> ] }, or 404 if not held
+GET /material?subject=<record id>          -> { "subject", "material": [ ... ] }   (§8.1)
+```
+
+A malformed or missing parameter answers 400. A record this participant does not hold answers 404.
+Both are distinct from an empty `records` list, which means "held, nothing matches".
+
+The reference implementation ships the **client** for this binding (`kton mirror`) and no server: a
+specification of a protocol is not a place to distribute a network service, and a server that binds
+a port has security obligations - authentication, transport security, rate limiting, request bounds -
+that belong to a deployment rather than to a reference. Writing one over the table above is a small
+amount of code in any language, and `../reference/testdata/federation/` fixes the bytes it must
+produce.
 
 ## Annex B *(informative)* - scenario → clause map
 
