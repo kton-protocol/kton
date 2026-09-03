@@ -10,8 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strconv"
 
 	"kton.dev/plankton/blobstore"
 	"kton.dev/plankton/core"
@@ -32,104 +30,13 @@ type SyncResp struct {
 	Max     int               `json:"max"`
 }
 
-// NewServer returns an HTTP handler serving the registry rooted at dir. Handlers re-open
-// the registry per request, so a concurrently-running `add`/`mirror` is reflected live.
-func NewServer(dir string) http.Handler {
-	mux := http.NewServeMux()
+// This package ships the federation CLIENT and no server. The queries of SPEC §12 are normative;
+// the HTTP binding that carries them is not (Annex C), and a specification of a protocol is not a
+// place to distribute a network service: a listening socket brings authentication, transport
+// security, rate limiting and request bounds with it, and those belong to a deployment. Writing a
+// server over the §12 table is a small amount of code in any language, and
+// reference/testdata/federation/ fixes the bytes it must produce (#83).
 
-	withReg := func(w http.ResponseWriter) (*registry.Registry, bool) {
-		r, err := registry.Open(dir)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return nil, false
-		}
-		return r, true
-	}
-	envsFor := func(r *registry.Registry, ids []string) EnvList {
-		out := EnvList{Records: []core.Envelope{}}
-		for _, id := range ids {
-			if env, ok := r.Envelope(id); ok {
-				out.Records = append(out.Records, env)
-			}
-		}
-		return out
-	}
-
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		r, ok := withReg(w)
-		if !ok {
-			return
-		}
-		writeJSON(w, map[string]any{"ok": true, "fotons": r.Len(), "maxSeq": r.MaxSeq()})
-	})
-
-	mux.HandleFunc("/producer", func(w http.ResponseWriter, req *http.Request) {
-		r, ok := withReg(w)
-		if !ok {
-			return
-		}
-		writeJSON(w, envsFor(r, r.Producer(req.URL.Query().Get("hash"))))
-	})
-
-	mux.HandleFunc("/uses", func(w http.ResponseWriter, req *http.Request) {
-		r, ok := withReg(w)
-		if !ok {
-			return
-		}
-		writeJSON(w, envsFor(r, r.Uses(req.URL.Query().Get("hash"))))
-	})
-
-	mux.HandleFunc("/ray", func(w http.ResponseWriter, req *http.Request) {
-		r, ok := withReg(w)
-		if !ok {
-			return
-		}
-		writeJSON(w, envsFor(r, r.Lineage(req.URL.Query().Get("hash"))))
-	})
-
-	// /blob serves optionally-pinned bytes (a mirror that pinned is itself a byte source).
-	mux.HandleFunc("/blob", func(w http.ResponseWriter, req *http.Request) {
-		hash := req.URL.Query().Get("hash")
-		// A malformed hash is a BAD REQUEST, not a miss. "that is not a content hash" and "we do not
-		// have it" are different answers, and collapsing them hid AUD-04 for as long as it did.
-		if _, ok := core.NormalizeContentHash(hash); !ok {
-			http.Error(w, "not a sha256 content hash", http.StatusBadRequest)
-			return
-		}
-		bs, err := blobstore.Open(filepath.Join(dir, BlobsSubdir))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		b, err := bs.Get(hash)
-		if err != nil {
-			http.Error(w, "not pinned here", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write(b)
-	})
-
-	mux.HandleFunc("/sync", func(w http.ResponseWriter, req *http.Request) {
-		r, ok := withReg(w)
-		if !ok {
-			return
-		}
-		since, _ := strconv.Atoi(req.URL.Query().Get("since"))
-		recs := r.Records(since)
-		if recs == nil {
-			recs = []registry.Record{}
-		}
-		writeJSON(w, SyncResp{Records: recs, Max: r.MaxSeq()})
-	})
-
-	return mux
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
-}
 
 // Sync pulls the records a peer has beyond `since`.
 func Sync(client *http.Client, peerURL string, since int) (*SyncResp, error) {

@@ -1,0 +1,19 @@
+{
+  "records": [
+    {
+      "seq": 1,
+      "fotonId": "sha256:0b5ef3320bb35c562ede7125f1460d91e6292faf4bc4ff79091c77deb25944d2",
+      "envelope": {
+        "payloadType": "application/vnd.in-toto+json",
+        "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJwcmVkaWNhdGUiOnsiaW5wdXRzIjpbeyJkaWdlc3QiOnsic2hhMjU2IjoiODc0MjhmYzUyMjgwM2QzMTA2NWU3YmNlM2NmMDNmZTQ3NTA5NjYzMWU1ZTA3YmJkN2EwZmRlNjBjNGNmMjVjNyJ9LCJuYW1lIjoiaW4udHh0In1dLCJwcm90b2NvbCI6eyJkZXNjcmlwdG9yIjp7ImNtZCI6Im1lYW4gaW4udHh0IG91dC50eHQifSwia2luZCI6InNjcmlwdCIsInJlZiI6InNoYTI1NjpmMmIwYjgwZWVhN2JlODAwYWJkMjAwOGJhZTdkODU1ODdhNTQwMzdhYzEwYmFhM2Y0ZmZmZTJhYzFhZWEwOTYyIn0sInNwZWNWZXJzaW9uIjoiMC4xIn0sInByZWRpY2F0ZVR5cGUiOiJodHRwczovL2t0b24uZGV2L2ZvdG9uL3YwIiwic3ViamVjdCI6W3siZGlnZXN0Ijp7InNoYTI1NiI6IjAyNjM4Mjk5ODliNmZkOTU0ZjcyYmFhZjJmYzY0YmMyZTJmMDFkNjkyZDRkZTcyOTg2ZWE4MDhmNmU5OTgxM2YifSwibmFtZSI6Im91dC50eHQifV19",
+        "signatures": [
+          {
+            "keyid": "fd5ea2e48862c9b0",
+            "sig": "xv+h5cA4tK+7D9irUTC7QK4tMj0ZuQIqe0aePL5VDSFI2TAbp0prvKbwUoCILMpXxtpGslpbscgJ8YHr8JwHAQ=="
+          }
+        ]
+      }
+    }
+  ],
+  "max": 1
+}

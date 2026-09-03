@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"kton.dev/kton/federation"
@@ -28,8 +27,6 @@ import (
 const usage = `kton - the cockpit that conducts plankton + nekton (reimplements nothing)
 
 usage:
-  kton serve  plankton [addr]              serve the plankton federation API (default :8787)
-  kton serve  nekton   [addr]              serve the nekton   federation API (default :8788)
   kton mirror plankton <peer> [--pin]      pull+persist a peer plankton registry
   kton mirror nekton   <peer> [--with-material]  pull+persist a peer nekton registry
       --with-material    also make this copy of the EVIDENCE complete: ask the peer about every
@@ -116,31 +113,6 @@ func run(cmd string, args []string) error {
 	case "man":
 		fmt.Print(manPage)
 		return nil
-	case "serve":
-		if len(args) < 1 {
-			return fmt.Errorf("usage: kton serve <plankton|nekton> [addr]")
-		}
-		addr := ""
-		if len(args) >= 2 {
-			addr = args[1]
-		}
-		switch args[0] {
-		case "plankton":
-			if addr == "" {
-				addr = ":8787"
-			}
-			fmt.Printf("plankton federation API on %s  (registry %s)\n", addr, planktonDir())
-			return http.ListenAndServe(addr, federation.NewServer(planktonDir()))
-		case "nekton":
-			if addr == "" {
-				addr = ":8788"
-			}
-			fmt.Printf("nekton federation API on %s  (registry %s)\n", addr, nektonDir())
-			return http.ListenAndServe(addr, nektonServer(nektonDir()))
-		default:
-			return fmt.Errorf("usage: kton serve <plankton|nekton> [addr]")
-		}
-
 	case "mirror":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: kton mirror <plankton|nekton> <peer> [--pin] [--with-material]")
@@ -375,122 +347,6 @@ func settleAdd(add func(core.Envelope) (string, bool, error), envs []core.Envelo
 type syncResp struct {
 	Records []nreg.Record `json:"records"`
 	Max     int           `json:"max"`
-}
-
-func nektonServer(d string) http.Handler {
-	mux := http.NewServeMux()
-	open := func(w http.ResponseWriter) (*nreg.Registry, bool) {
-		r, err := nreg.Open(d)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return nil, false
-		}
-		return r, true
-	}
-	writeJSON := func(w http.ResponseWriter, v any) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(v)
-	}
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		r, ok := open(w)
-		if !ok {
-			return
-		}
-		writeJSON(w, map[string]any{"ok": true, "claims": r.Len(), "maxSeq": r.MaxSeq()})
-	})
-	mux.HandleFunc("/claims", func(w http.ResponseWriter, req *http.Request) {
-		r, ok := open(w)
-		if !ok {
-			return
-		}
-		q := req.URL.Query()
-		var recs []nreg.Record
-		switch {
-		case q.Get("subject") != "":
-			recs = r.About(q.Get("subject"))
-		case q.Get("object") != "":
-			recs = r.ByObject(q.Get("object"))
-		case q.Get("signer") != "":
-			recs = r.BySigner(q.Get("signer"))
-		case q.Get("predicate") != "":
-			recs = r.ByPredicate(q.Get("predicate"))
-		default:
-			// Refuse rather than answer emptily. Without this, a misspelled parameter fell through
-			// and returned {"records":[]} - indistinguishable from "that subject has no claims", so
-			// a caller got a SUCCESSFUL wrong answer. The failure shape this project keeps finding.
-			http.Error(w, "usage: /claims?subject= | ?object= | ?signer= | ?predicate= (one of); /claim?id= for a single record", http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, map[string]any{"records": envsOf(recs)})
-	})
-
-	// /material?subject= - the verification material recorded about ONE record (SPEC §8.1).
-	//
-	// On demand by subject, deliberately NOT carried in the /sync batch. Material is attached out of
-	// band and AFTER the fact: a record synced at seq 5 may be given a bundle a week later, when the
-	// peer's cursor is long past it. A flag on the record cursor would look like it worked, deliver
-	// the current batch's evidence, and silently miss every later attachment (#62). This answer is
-	// always current instead, because it has no cursor to be behind.
-	//
-	// The server does not evaluate any of it - it serves what it stored (§8.1, §15).
-	mux.HandleFunc("/material", func(w http.ResponseWriter, req *http.Request) {
-		r, ok := open(w)
-		if !ok {
-			return
-		}
-		subj := req.URL.Query().Get("subject")
-		if subj == "" {
-			http.Error(w, "usage: /material?subject=sha256:<claimId>", http.StatusBadRequest)
-			return
-		}
-		if n, ok := core.NormalizeContentHash(subj); ok {
-			subj = n
-		}
-		mats := r.Material(subj)
-		if mats == nil {
-			mats = []nreg.VerificationMaterial{}
-		}
-		writeJSON(w, map[string]any{"subject": subj, "material": mats})
-	})
-
-	// /claim?id= - fetch ONE record by its claim id. Part of the minimum federation surface (SPEC
-	// §12): a peer holding an id from a chain's `prev` must be able to ask for exactly that record
-	// rather than pulling an index it would have to filter.
-	mux.HandleFunc("/claim", func(w http.ResponseWriter, req *http.Request) {
-		r, ok := open(w)
-		if !ok {
-			return
-		}
-		id := req.URL.Query().Get("id")
-		if id == "" {
-			http.Error(w, "usage: /claim?id=sha256:<claimId>", http.StatusBadRequest)
-			return
-		}
-		if n, ok := core.NormalizeContentHash(id); ok {
-			id = n // SPEC §5.1: a bare or uppercase digest must resolve under the stored key
-		}
-		rec, found := r.Claim(id)
-		if !found {
-			// 404, not an empty list: "this registry does not hold it" and "it holds nothing about
-			// it" are different answers, and a federated reader acts differently on each.
-			http.Error(w, "no such claim in this registry", http.StatusNotFound)
-			return
-		}
-		writeJSON(w, map[string]any{"records": envsOf([]nreg.Record{rec})})
-	})
-	mux.HandleFunc("/sync", func(w http.ResponseWriter, req *http.Request) {
-		r, ok := open(w)
-		if !ok {
-			return
-		}
-		since, _ := strconv.Atoi(req.URL.Query().Get("since"))
-		recs := r.Records(since)
-		if recs == nil {
-			recs = []nreg.Record{}
-		}
-		writeJSON(w, syncResp{Records: recs, Max: r.MaxSeq()})
-	})
-	return mux
 }
 
 func envsOf(recs []nreg.Record) []core.Envelope {

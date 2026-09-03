@@ -64,6 +64,13 @@ Because fotons/files/attestations are **immutable and content-addressed**:
   everywhere → no conflicts, CRDT-trivial; Merkle-style reconciliation to find diffs).
 - A **public instance** = open read; a **private instance** = authenticated read with
   access control. Federation is "ask the registries you're allowed to, union the answers."
+
+  That is a description of deployments, not of anything this repository ships. The reference
+  implementation has a federation **client** (`kton mirror`) and **no server**: the §12 queries are
+  normative, the transport is not (SPEC Annex C), and a listening socket brings authentication,
+  transport security, rate limiting and request bounds with it — obligations that belong to whoever
+  deploys, not to a protocol reference. Serving the §12 table is a small amount of code in any
+  language, and `reference/testdata/federation/` fixes the bytes it has to produce.
 - Lazy as ever: you exchange *metadata*; bytes are fetched from uris on demand, verified by
   hash.
 
