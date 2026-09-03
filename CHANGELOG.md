@@ -70,6 +70,24 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Foton authoring lifted out of the CLI into `kton.dev/plankton/foton` (#35).
 - A claim about a URI subject renders as an edge, not a floating node (#33).
 
+### Security
+
+- **`kton fetch` no longer dereferences a locator nobody verified** (#81). A located-at claim is a
+  suggestion from whoever signed it, and ingest stores signed claims *without* verifying them
+  (§8: the wire carries a keyid, not a key) — so anyone able to put a claim in front of a registry
+  chose the URI this process opened. Dereferencing is a request made from the host, and for
+  `file://` a read of its disk; the hash check afterwards proves what the bytes are, cannot undo the
+  request, and for a file whose hash is known does not even reject the result.
+
+  `--trust-keys <dir>` is now required, the signer is derived from the key that actually verifies
+  (never the declared keyid), `file://` and addresses on this host or network need `--allow-local`
+  on top, redirects are re-checked against the same rule, and a body is bounded.
+
+- **`blobstore` refuses a path built from anything that is not a content hash** (#79), and `/blob`
+  answers 400 rather than 404 for a malformed one. Fixing it surfaced a second bug: `Get` compared
+  the content hash against the caller's *spelling*, so an uppercase or bare digest found its file
+  and then reported it corrupt.
+
 ### Security suite
 
 - **The plankton registry takes a lock around its signature union** (#77), and re-reads from disk
