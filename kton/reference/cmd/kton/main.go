@@ -17,9 +17,9 @@ import (
 	"strconv"
 	"strings"
 
+	"kton.dev/kton/federation"
 	"kton.dev/plankton/blobstore"
 	"kton.dev/plankton/core"
-	"kton.dev/kton/federation"
 	preg "kton.dev/plankton/registry"
 
 	nreg "kton.dev/nekton/registry"
@@ -42,8 +42,11 @@ usage:
                          year from now verification depends on the service still answering
   kton pin    <file>                       pin a file's bytes into the plankton blob store
   kton blob   <sha256:...>                 is this content pinned locally?
-  kton fetch  <sha256:...>                 resolve content via signed nekton located-at claims,
-                                           dereference the URIs, verify sha256, and pin
+  kton fetch  <sha256:...> --trust-keys <dir> [--allow-local]
+                                           resolve content via located-at claims signed by a key
+                                           you named, dereference, verify sha256, and pin.
+      --allow-local      also accept file:// and addresses on this host/network. A signature
+                         about CONTENT cannot vouch for a path on your machine.
   kton man                                 print the embedded manual page (roff)
 
   <peer> is a URL (http://host:port, needs a running 'kton serve') OR a local registry
@@ -233,10 +236,32 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "fetch":
-		if len(args) != 1 {
-			return fmt.Errorf("usage: kton fetch <sha256:...>")
+		var fHash, fTrust string
+		fLocal := false
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "--trust-keys":
+				i++
+				if i >= len(args) {
+					return fmt.Errorf("--trust-keys expects a directory of *.pub keys")
+				}
+				fTrust = args[i]
+			case "--allow-local":
+				fLocal = true
+			default:
+				if strings.HasPrefix(args[i], "--") {
+					return fmt.Errorf("unknown flag %q", args[i])
+				}
+				fHash = args[i]
+			}
 		}
-		return fetch(args[0])
+		if fHash == "" {
+			return fmt.Errorf("usage: kton fetch <sha256:...> --trust-keys <dir> [--allow-local]\n" +
+				"  a located-at claim is a SUGGESTION from whoever signed it. Dereferencing one is a\n" +
+				"  request from this host - and for file://, a read of this disk - which the hash check\n" +
+				"  afterwards cannot undo. So it happens only for signers you named.")
+		}
+		return fetch(fHash, fTrust, fLocal)
 
 	default:
 		fmt.Print(usage)
