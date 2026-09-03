@@ -39,6 +39,8 @@ usage:
         --add ingests it directly (one step, no file); --registry D picks the store.
   plankton author <spec.json> <key.hex> <out.dsse>    author + sign a foton from a spec file
   plankton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
+  plankton records [--json] [--since N]                every record WITH its signed envelope: the
+                                                      SPEC §12 sync(since) answer, over stdout
   plankton attach <sha256:id> --scheme S --file F [--media M]  bind external evidence to a foton
                                                       (SPEC §8.1). Stored, NEVER evaluated.
   plankton material <sha256:id> [--json]              what evidence is attached to a foton
@@ -236,6 +238,10 @@ func run(cmd string, args []string) error {
 		}
 		fmt.Println(id)
 		return nil
+
+	case "records":
+		// The §12 sync(since) query, over stdout rather than HTTP (#85).
+		return records(args)
 
 	case "attach":
 		// SPEC §8.1: bind external evidence to a record by its CONTENT ADDRESS, never by filename.

@@ -158,6 +158,11 @@ func showJSON(id string, f *core.Foton, env core.Envelope) error {
 		"outputs":  refs(f.Outputs),
 		// DECLARED, not verified - the envelope says so; `plankton verify` is what checks it.
 		"declaredKeyids": keyids,
+		// The signed envelope itself. A consumer that has to VERIFY needs the bytes the signature
+		// is over, and the projection above is not those bytes. Without this the only route to them
+		// was parsing the store - which is what an abstraction over the layout exists to prevent,
+		// and what #41 showed fails silently (#85). Symmetric with `nekton about --json`.
+		"envelope": env,
 	}, "", "  ")
 	if err != nil {
 		return err

@@ -100,7 +100,7 @@ func TestSeededKeygenIsDeterministicAndPubkeyRecoversIt(t *testing.T) {
 		t.Error("the same --seed produced different public keys")
 	}
 	if read(a+".key") != seed {
-		t.Errorf("the .key is not the seed it was given: %s", read(a + ".key"))
+		t.Errorf("the .key is not the seed it was given: %s", read(a+".key"))
 	}
 
 	// The control: without --seed the keys must differ, or the assertion above proves nothing.
