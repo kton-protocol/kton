@@ -115,3 +115,14 @@ func showClaim(args []string) error {
 	}
 	return nil
 }
+
+// printJSONOut is the one JSON writer for nekton's read surface, so `show`, `about`/`by`, `head`
+// and `material` cannot drift on formatting.
+func printJSONOut(v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
+}

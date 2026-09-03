@@ -48,7 +48,7 @@ usage:
   nekton add <envelope.dsse.json> [--registry D]      ingest a signed claim (D or NEKTON_DIR)
   nekton about <subject>                              claims about a subject (hash "sha256:..." or uri)
   nekton by <signer|predicate|object> <value>         claims by signer keyid / predicate (template/CURIE/IRI) / object
-  nekton head <scope-id>                              the tip of a scope's chain (publish/anchor it to seal history)
+  nekton head <scope-id> [--json]                              the tip of a scope's chain (publish/anchor it to seal history)
   nekton export [--title T] [out]                     serialize claims as JSON (for the Navigator join)
   nekton export --nanopub <claim.dsse.json> [-o out]  render a claim to its nanopublication (RDF/TriG) face
   nekton nanopublish <claim.dsse.json> [--rsa key.pem] [--creator IRI] [-o out]  RSA-sign it + mint a Trusty URI
@@ -536,10 +536,11 @@ func run(cmd string, args []string) error {
 		// head transitively commits to the whole chain; publishing or `kton anchor`-ing it makes
 		// every prior edit in the scope tamper-evident. This is the only chain-query the kernel
 		// offers - resolution/walking beyond the tip is a consumer/cockpit concern.
-		if len(args) != 1 {
-			return fmt.Errorf("usage: nekton head <scope-id>  (the seed/scope id, sha256:...)")
+		headArgs, headJSON := takeJSON(args)
+		if len(headArgs) != 1 {
+			return fmt.Errorf("usage: nekton head <scope-id> [--json]  (the seed/scope id, sha256:...)")
 		}
-		scope := args[0]
+		scope := headArgs[0]
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
@@ -547,6 +548,18 @@ func run(cmd string, args []string) error {
 		heads, chainLen, ok := r.Heads(scope)
 		if !ok {
 			return fmt.Errorf("no such scope %s (not a seed ingested in registry %s)", scope, dir())
+		}
+		if headJSON {
+			// The head is what a consumer anchors or publishes, so it must be readable as data. Both
+			// caveats travel with it as FIELDS rather than as prose a reader may skip: `unresolved`
+			// (a withheld MIDDLE claim leaves later ones unreachable, so this tip is provisional) and
+			// `branched` (each head then commits only to its own branch). `sealed` is deliberately
+			// absent - a withheld LATER claim is undetectable in-band, and no field here could say so
+			// honestly. That is settled by matching a published/anchored head, not by this command.
+			return printJSONOut(map[string]any{
+				"scope": scope, "heads": heads, "chainLength": chainLen,
+				"branched": len(heads) > 1, "unresolved": r.Unresolved(scope),
+			})
 		}
 		// A withheld MIDDLE claim leaves later claims (possibly the real sealed head) unresolvable, so
 		// the resolved tip below is only PROVISIONAL. Never present a truncated chain as sealed in silence.

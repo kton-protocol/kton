@@ -43,7 +43,7 @@ usage:
                                                       (SPEC §8.1). Stored, NEVER evaluated.
   plankton material <sha256:id> [--json]              what evidence is attached to a foton
                                                       registry id; pubkey: a .pub file or the hex)
-  plankton add <envelope.dsse.json> [--registry D]    ingest a signed foton into the registry (D or PLANKTON_DIR)
+  plankton add <envelope.dsse.json>... [--print-id] [--registry D]    ingest a signed foton into the registry (D or PLANKTON_DIR)
   plankton show <foton.dsse.json|sha256:id> [--json]  print a foton: command, environment, inputs, outputs
       --json on show/producer/uses/lineage/reproductions: the machine form. A record's id is a
       NAMED field there, so a consumer never has to assume it is the first hash on a line.
@@ -53,7 +53,7 @@ usage:
                                                       FORGEABLE (a relabeled keyid inflates it); over PLANKTON_DIR
                                                       only - the federated ↻N is the aggregator's.
   plankton uses [--source D] [--json] <sha256:…>      what CONSUMED this file (downstream; the shared-input join)
-  plankton reuse <foton.statement.json>               action key + cache-hit check
+  plankton reuse <foton.statement.json> [--json]               action key + cache-hit check
   plankton lineage [--source D] [--json] <sha256:…>   walk producers backwards (union of --source registries, no copy;
                                                       a missing --source is an error, not a silently-dropped source)
         [--sources-file F] a newline-delimited list of sources (escapes ARG_MAX; empty list is an error, not a fallback);
@@ -490,9 +490,12 @@ func run(cmd string, args []string) error {
 		// for this substrate, not an edge case: federation hands you a set, an executor publishes a
 		// batch of runs, a consumer imports a corpus someone handed over. Open once, then ingest.
 		regDir := ""
+		addPrintID := false
 		var paths []string
 		for i := 0; i < len(args); i++ {
-			if args[i] == "--registry" && i+1 < len(args) {
+			if args[i] == "--print-id" {
+				addPrintID = true
+			} else if args[i] == "--registry" && i+1 < len(args) {
 				i++
 				regDir = args[i]
 			} else {
@@ -500,11 +503,17 @@ func run(cmd string, args []string) error {
 			}
 		}
 		if len(paths) == 0 {
-			return fmt.Errorf("usage: plankton add <envelope.dsse.json>... [--registry <dir>]")
+			return fmt.Errorf("usage: plankton add <envelope.dsse.json>... [--registry <dir>] [--print-id]")
 		}
 		r, err := registry.Open(regOrDefault(regDir))
 		if err != nil {
 			return err
+		}
+		if addPrintID && len(paths) > 1 {
+			// --print-id promises ONE bare id on stdout (author, claim, annotate, seed). A bulk add
+			// mints many, and printing several would quietly break `ID=$(plankton add … --print-id)`
+			// for the caller who added one file too many. Refuse instead.
+			return fmt.Errorf("--print-id takes exactly one envelope (it prints one id); got %d", len(paths))
 		}
 		if len(paths) > 1 {
 			// A record rejected ON ITS MERITS does not wedge the import: it is named, counted, and
@@ -552,10 +561,20 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
+		msg := fmt.Printf
+		if addPrintID {
+			// Same contract as `plankton author --print-id` and the three nekton verbs: the ONLY
+			// thing on stdout is the bare id, every human line goes to stderr. `add` minted the same
+			// identifier as its siblings and was the one that made a caller parse for it.
+			msg = func(format string, a ...any) (int, error) { return fmt.Fprintf(os.Stderr, format, a...) }
+		}
 		if !isNew {
-			fmt.Printf("already present: foton %s\n", id)
+			_, _ = msg("already present: foton %s\n", id)
 		} else {
-			fmt.Printf("indexed foton %s  (registry now holds %d fotons)\n", id, r.Len())
+			_, _ = msg("indexed foton %s  (registry now holds %d fotons)\n", id, r.Len())
+		}
+		if addPrintID {
+			fmt.Println(id)
 		}
 		// add RECORDS; it does not judge trust. A signature is only checked when you ask
 		// (`plankton verify`) - so an unverified or tampered record ingests here without complaint.
@@ -754,9 +773,19 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "reuse":
-		if len(args) != 1 {
-			return fmt.Errorf("usage: plankton reuse <foton.statement.json>")
+		reuseJSON := false
+		var reusePos []string
+		for _, a := range args {
+			if a == "--json" {
+				reuseJSON = true
+				continue
+			}
+			reusePos = append(reusePos, a)
 		}
+		if len(reusePos) != 1 {
+			return fmt.Errorf("usage: plankton reuse <foton.statement.json> [--json]")
+		}
+		args = reusePos
 		b, err := os.ReadFile(args[0])
 		if err != nil {
 			return err
@@ -790,12 +819,39 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("action key: %s\n", ak)
+		if !reuseJSON {
+			fmt.Printf("action key: %s\n", ak)
+		}
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
 		}
 		hits := r.Reuse(ak)
+		if reuseJSON {
+			// The hit COUNT is a decision input - "was this computation asked before?" - and it was
+			// the last number in this repo a consumer had to read out of prose. kton-examples
+			// 16-reuse-cache sed'"'"'s it out of "cache: HIT -> %d prior…", and documents doing so.
+			out := make([]map[string]any, 0, len(hits))
+			for _, id := range hits {
+				signer := ""
+				if env, ok := r.Envelope(id); ok && len(env.Signatures) > 0 {
+					signer = env.Signatures[0].KeyID
+				}
+				var outs []string
+				if f, ok := r.Foton(id); ok {
+					for _, o := range f.Outputs {
+						outs = append(outs, o.Hash)
+					}
+				}
+				// declaredSigner, and verified:false - these are COMPETING matches on the cache key,
+				// and the keyid is the envelope'"'"'s unauthenticated hint. A machine reader must see
+				// that on the record, not only in a stderr note it may never read.
+				out = append(out, map[string]any{
+					"fotonId": id, "declaredSigner": signer, "outputs": outs, "verified": false,
+				})
+			}
+			return printJSON(map[string]any{"actionKey": ak, "hit": len(hits) > 0, "hits": out})
+		}
 		if len(hits) == 0 {
 			fmt.Println("cache: MISS (no prior computation with these inputs+protocol)")
 		} else {
