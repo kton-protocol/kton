@@ -93,8 +93,11 @@ func (r *Registry) readLegacyObject(id string) (core.Envelope, bool) {
 // survives). Returns the merged envelope actually stored.
 func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envelope, error) {
 	merged := env
+	path, perr := subnektonPath(r.objectsDir, scope)
+	if perr != nil {
+		return env, perr
+	}
 	err := r.withWriteLock(func() error {
-		path := subnektonPath(r.objectsDir, scope)
 		recs := readSubnekton(path)
 		for i, of := range recs {
 			if of.ClaimID != id {
@@ -684,12 +687,45 @@ func writeStoreFormat(objectsDir string) error {
 // of per-claim hashes can be. The file is a BAG, not a sequence: order stays the chain's alone
 // (`prev`), so the file never becomes a second, unsigned representation of order that could drift
 // from the signed one. JSONL so a new claim is an append, not a rewrite of the subnekton.
-func subnektonPath(objectsDir, scope string) string {
+func subnektonPath(objectsDir, scope string) (string, error) {
 	if scope == "" {
-		return filepath.Join(objectsDir, "unscoped.nekton.jsonl")
+		return filepath.Join(objectsDir, "unscoped.nekton.jsonl"), nil
 	}
-	_, s := splitID(scope)
-	return filepath.Join(objectsDir, "scope", s+".nekton.jsonl")
+	// `scope` comes out of a SIGNED CLAIM PAYLOAD and is attacker-chosen: any party with any key can
+	// put any string there, and ingest does not verify signatures (SPEC §8). Deriving a filesystem
+	// path from it unvalidated let a claim carrying `scope: "sha256:../../../tmp/x"` create and
+	// append to a file anywhere the process could write - and, on a second ingest of the same claim,
+	// rewriteSubnekton truncated that file to the attacker's record. A hostile peer reached this
+	// through `kton mirror`, which feeds peer envelopes straight to Add.
+	//
+	// Same class as the blobstore path (#79), fixed there and left here. So: the scope must be a
+	// canonical content hash before it can name a file, and the result is proven to stay under the
+	// store root as defence in depth.
+	return scopedPath(objectsDir, scope, ".nekton.jsonl")
+}
+
+// scopedPath is the ONE place a scope becomes a filename, for records and for their verification
+// material alike. Both derive from the same attacker-chosen field, so both are guarded here rather
+// than in two places that could drift.
+func scopedPath(objectsDir, scope, suffix string) (string, error) {
+	norm, ok := core.NormalizeContentHash(scope)
+	if !ok {
+		return "", fmt.Errorf("scope %q is not a sha256 content hash; refusing to derive a store path from it", scope)
+	}
+	_, hex := splitID(norm)
+	path := filepath.Join(objectsDir, "scope", hex+suffix)
+	root, err := filepath.Abs(objectsDir)
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(abs, root+string(filepath.Separator)) {
+		return "", fmt.Errorf("refusing a store path outside the root (scope %q)", scope)
+	}
+	return path, nil
 }
 
 // legacyObjectPath is the per-claim path every record had before the store gained subnekton files.
@@ -957,12 +993,11 @@ func (r *Registry) SetPeerCursor(url string, seq int) error {
 // objectFile{ClaimID, Envelope} on every co-signature merge, so material carried as a field on that
 // struct would be erased for every record in the file by any older build that co-signed one claim -
 // silently, reporting success. That is the failure mode 0.2 exists to document.
-func materialPath(objectsDir, scope string) string {
+func materialPath(objectsDir, scope string) (string, error) {
 	if scope == "" {
-		return filepath.Join(objectsDir, "unscoped.material.jsonl")
+		return filepath.Join(objectsDir, "unscoped.material.jsonl"), nil
 	}
-	_, s := splitID(scope)
-	return filepath.Join(objectsDir, "scope", s+".material.jsonl")
+	return scopedPath(objectsDir, scope, ".material.jsonl")
 }
 
 // readMaterialFile parses one material file. Tolerant in the same way readSubnekton is: one corrupt
@@ -1035,7 +1070,10 @@ func (r *Registry) AttachMaterial(vm VerificationMaterial) error {
 	if err != nil {
 		return err
 	}
-	path := materialPath(r.objectsDir, scopeOf(st, vm.Subject))
+	path, perr := materialPath(r.objectsDir, scopeOf(st, vm.Subject))
+	if perr != nil {
+		return perr
+	}
 	err = r.withWriteLock(func() error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err

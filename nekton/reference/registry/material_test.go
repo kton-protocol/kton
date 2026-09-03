@@ -137,3 +137,46 @@ func TestMaterialNeedsARecordToBindTo(t *testing.T) {
 		t.Error("material was attached to a subject the registry does not hold")
 	}
 }
+
+// `scope` is a free-form string in a SIGNED CLAIM PAYLOAD - attacker-chosen, and ingest does not
+// verify signatures (SPEC §8), so any key will do. The store derived a filename from it unvalidated,
+// which let a claim write outside the store and, on a second ingest, truncate the file it landed in.
+//
+// Same class as the blobstore path (#79): validate before deriving a path. Fixed in one kernel and
+// left in the other, which is why this asserts the property rather than the symptom.
+func TestAScopeCannotNameAFileOutsideTheStore(t *testing.T) {
+	dir := t.TempDir()
+	r, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []string{
+		"sha256:../../../../etc/passwd",
+		"../../../etc/passwd",
+		"sha256:" + strings.Repeat("z", 64), // right length, not hex
+		"sha256:/absolute/path",
+		"sha256:a/b",
+		"not-a-hash",
+	} {
+		if p, err := subnektonPath(filepath.Join(dir, "objects"), scope); err == nil {
+			t.Errorf("subnektonPath(%q) = %q; want a refusal", scope, p)
+		}
+		if p, err := materialPath(filepath.Join(dir, "objects"), scope); err == nil {
+			t.Errorf("materialPath(%q) = %q; want a refusal - both derive from the same field", scope, p)
+		}
+	}
+
+	// A real scope still resolves, in every spelling SPEC §5.1 accepts.
+	real := "sha256:" + strings.Repeat("a", 64)
+	for _, form := range []string{real, strings.ToUpper(real), strings.Repeat("a", 64)} {
+		p, err := subnektonPath(filepath.Join(dir, "objects"), form)
+		if err != nil {
+			t.Errorf("subnektonPath(%q): %v", form, err)
+			continue
+		}
+		if !strings.HasSuffix(p, strings.Repeat("a", 64)+".nekton.jsonl") {
+			t.Errorf("subnektonPath(%q) = %q; spellings must fold to one file", form, p)
+		}
+	}
+	_ = r
+}
