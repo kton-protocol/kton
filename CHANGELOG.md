@@ -72,6 +72,16 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 ### Security suite
 
+- **The plankton registry takes a lock around its signature union** (#77), and re-reads from disk
+  under it. `concurrency-races` was VULNERABLE on every run: the union merged against this process's
+  in-memory copy, so two processes co-signing one record each merged into a stale view and the
+  second atomic rename discarded the first's signature. Atomic rename makes each write indivisible;
+  it does nothing for a read-modify-write spanning two of them. The lock is **per object file**, not
+  store-wide — writers contend only on the same record, and a bulk ingest of distinct records has
+  nothing to serialize. `peers.json` gets its own, and merges cursors by maximum rather than
+  overwriting, so two concurrent mirrors cannot lose one another's position. Posture returns to 24
+  closed / 2 open, this time with an executable PoC behind the claim.
+
 - `security/REPORT.md` recorded `concurrency-races` as closed with an "atomic temp+rename + locked
   union-write". There is no lock in the plankton registry — nekton serialises its union with
   `.objects.lock`, plankton does not — so two processes still lose a co-signature. Reopened, with

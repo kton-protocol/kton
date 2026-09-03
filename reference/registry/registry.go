@@ -283,21 +283,19 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 		// survive, order-independent - red-team round 10, RED-2), then let apply() union it in memory.
 		// Subsumes the old heal-a-corrupt-twin case (union keeps only well-formed signatures).
 		if i, ok := r.keyIdx[key]; ok {
-			old := r.records[i].Envelope
-			if merged, changed := unionSignatures(old, env); changed {
-				rec := Record{Seq: r.records[i].Seq, FotonID: fotonID, Envelope: merged}
-				if err := r.writeObject(key, rec); err != nil {
-					return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
-				}
-				r.apply(rec)
+			merged, err := r.persistRecord(key, fotonID, env)
+			if err != nil {
+				return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 			}
+			r.apply(Record{Seq: r.records[i].Seq, FotonID: fotonID, Envelope: merged})
 		}
 		return fotonID, false, nil
 	}
-	rec := Record{Seq: r.maxSeq + 1, FotonID: fotonID, Envelope: env}
-	if err := r.writeObject(key, rec); err != nil {
+	merged, err := r.persistRecord(key, fotonID, env)
+	if err != nil {
 		return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 	}
+	rec := Record{Seq: r.maxSeq + 1, FotonID: fotonID, Envelope: merged}
 	r.apply(rec)
 	return fotonID, true, nil
 }
@@ -447,11 +445,59 @@ func (r *Registry) PeerCursor(url string) int { return r.peers[url] }
 // SetPeerCursor records the last remote seq pulled from a peer and persists it.
 func (r *Registry) SetPeerCursor(url string, seq int) error {
 	r.peers[url] = seq
-	b, err := json.MarshalIndent(r.peers, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(r.peersPath, b, 0o644)
+	// peers.json is ONE file every mirror mutates, so two concurrent mirrors would otherwise lose one
+	// another's cursor - and a lost cursor is a silently re-fetched or silently skipped range.
+	return r.withLock(".peers.lock", func() error {
+		on := map[string]int{}
+		if b, err := os.ReadFile(r.peersPath); err == nil {
+			_ = json.Unmarshal(b, &on)
+		}
+		for k, v := range r.peers {
+			if v > on[k] {
+				on[k] = v
+			}
+		}
+		b, err := json.MarshalIndent(on, "", "  ")
+		if err != nil {
+			return err
+		}
+		return atomicWrite(r.peersPath, b)
+	})
+}
+
+// persistRecord is the ONE write path for an object, and the only place a signature union is
+// decided. It takes a per-object lock, RE-READS what is on disk, unions against THAT, and writes.
+//
+// Re-reading under the lock is the whole point. The union used to merge against this process's
+// in-memory copy, so two processes co-signing one record each merged their own signature into a
+// stale view and the second atomic rename discarded the first's. Atomic rename makes each write
+// indivisible; it does nothing for a read-modify-write spanning two of them
+// (`concurrency-races`, red-team, VULNERABLE on every run until now).
+//
+// The lock is per object file, not store-wide: two writers only contend when they touch the same
+// record, and a bulk ingest of distinct records has no conflict to serialize.
+func (r *Registry) persistRecord(key, fotonID string, env core.Envelope) (core.Envelope, error) {
+	merged := env
+	err := r.withLock(".obj-"+strings.NewReplacer("/", "_", ":", "_").Replace(key)+".lock", func() error {
+		p := objectPath(r.objectsDir, key)
+		if b, rerr := os.ReadFile(p); rerr == nil {
+			var of objectFile
+			if json.Unmarshal(b, &of) == nil && of.Envelope.Payload != "" {
+				if m, _ := unionSignatures(of.Envelope, merged); len(m.Signatures) > 0 {
+					merged = m
+				}
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		b, err := json.MarshalIndent(objectFile{FotonID: fotonID, Envelope: merged}, "", "  ")
+		if err != nil {
+			return err
+		}
+		return atomicWrite(p, b)
+	})
+	return merged, err
 }
 
 // Len reports the number of indexed fotons.

@@ -14,8 +14,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; KX="${1:-}"
 
-GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated silent-source-drop export-attribution canon-bigint rdf-injection spectrum-existence"
-OPEN="concurrency-races"
+GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated silent-source-drop export-attribution canon-bigint rdf-injection spectrum-existence concurrency-races"
+OPEN=""
 SKIPPED=""
 
 if [ -n "$KX" ] && [ -f "$KX/viewer/build_union.py" ]; then

@@ -32,12 +32,18 @@ func materialPath(objectsDir string) string {
 }
 
 // withMaterialLock serializes appends to the material file across processes.
-//
-// SCOPE: this covers the material file ONLY. plankton's object union path still has no
-// cross-process lock (`concurrency-races`, open) - that is a separate fix on a separate path, and
-// this must not be read as closing it.
 func (r *Registry) withMaterialLock(fn func() error) error {
-	lp := filepath.Join(r.dir, ".material.lock")
+	return r.withLock(".material.lock", fn)
+}
+
+// withLock serializes a read-modify-write across INDEPENDENT PROCESSES, per named lock file.
+//
+// Named rather than store-wide on purpose: a lock is only worth taking where two writers can
+// actually reach the same file. plankton writes exactly three kinds of file - one object per
+// record, one peers.json, one material.jsonl - so contention is per object, plus one for each of
+// the other two. A single store-wide lock would serialize a bulk ingest that has no conflict in it.
+func (r *Registry) withLock(name string, fn func() error) error {
+	lp := filepath.Join(r.dir, name)
 	for attempt := 0; attempt < 2000; attempt++ {
 		f, err := os.OpenFile(lp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
