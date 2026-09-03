@@ -61,7 +61,7 @@ usage:
         [--sources-file F] a newline-delimited list of sources (escapes ARG_MAX; empty list is an error, not a fallback);
         [--strict] refuse (exit non-zero) if the read is incomplete (any record skipped) OR any record is unsigned;
                    --strict is COMPLETENESS + signature-PRESENCE, not authenticity - use 'plankton verify' for that
-  plankton reproduces <ref-out-hash> <cand-out-hash> [--via <potential>]
+  plankton reproduces <ref-out-hash> <cand-out-hash> [--via <potential>] [--json]
                                                       do two OUTPUTS reproduce? args are OUTPUT content hashes
                                                       ('plankton hash out.csv'), NOT foton ids. --via normalises
                                                       before compare. exit 0 = L0/L1 match, 1 = none
@@ -595,8 +595,11 @@ func run(cmd string, args []string) error {
 		// comparator's signed verdict, not a kernel check. --via names a POTENTIAL, not a kind: two
 		// different normalizers of the same kind are different comparisons (SPEC §9).
 		var ref, cand, via string
+		repJSON := false
 		for i := 0; i < len(args); i++ {
-			if args[i] == "--via" && i+1 < len(args) {
+			if args[i] == "--json" {
+				repJSON = true
+			} else if args[i] == "--via" && i+1 < len(args) {
 				i++
 				via = args[i]
 			} else if ref == "" {
@@ -606,7 +609,7 @@ func run(cmd string, args []string) error {
 			}
 		}
 		if ref == "" || cand == "" {
-			return fmt.Errorf("usage: plankton reproduces <ref-output-hash> <cand-output-hash> [--via <normalizer: protocol ref or foton id>]\n" +
+			return fmt.Errorf("usage: plankton reproduces <ref-output-hash> <cand-output-hash> [--via <normalizer: protocol ref or foton id>] [--json]\n" +
 				"  args are OUTPUT content hashes (e.g. `plankton hash out.csv`), NOT foton ids")
 		}
 		// Normalize the output-hash args to canonical lowercase (SPEC §5.1) so a bare/uppercase hash
@@ -635,8 +638,23 @@ func run(cmd string, args []string) error {
 			}
 		}
 		if level == "" {
-			fmt.Println("reproduction: none (no L0/L1 match - an L2 comparator verdict is required)")
+			// Emit a parseable answer BEFORE the non-zero exit: "no match" is a RESULT, and a caller
+			// should read it as one rather than infer it from an exit code and an empty stdout.
+			if repJSON {
+				_ = printJSON(map[string]any{"level": nil, "matched": false, "via": nullableVia(via)})
+			} else {
+				fmt.Println("reproduction: none (no L0/L1 match - an L2 comparator verdict is required)")
+			}
 			os.Exit(1)
+		}
+		if repJSON {
+			// The LEVEL is what a signed reproduces claim records, and it was readable only as a word
+			// inside a sentence. The exit code separates match from no-match; it cannot separate L0
+			// from L1, and that distinction decides admission where a policy requires byte-identity.
+			// A consumer previously inferred the level from whether --via was passed, which mislabels
+			// a genuine L0 as L1 whenever a default normalizer is configured - which is exactly why
+			// the string was being parsed instead of guessed (#89).
+			return printJSON(map[string]any{"level": level, "matched": true, "via": nullableVia(via)})
 		}
 		if identical {
 			// The expected PASS: two independent runs producing the same bytes hash to the same value, so
