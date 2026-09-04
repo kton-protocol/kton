@@ -492,7 +492,11 @@ func run(cmd string, args []string) error {
 		}
 		peer := args[0]
 		if strings.HasPrefix(peer, "http://") || strings.HasPrefix(peer, "https://") {
-			return fmt.Errorf("network peer %s - use: kton mirror nekton %s", peer, peer)
+			return fmt.Errorf("network peer %s - this repository carries no network transport.\n"+
+				"  Mirror a local registry directory here; reaching a peer across a network is a\n"+
+				"  cockpit capability. SPEC §12 leaves the transport unspecified: the queries and\n"+
+				"  the wire form are normative, the binding is not, and `nekton records --json --since N`\n"+
+				"  answers sync(since) over stdout.", peer)
 		}
 		if fi, err := os.Stat(peer); err != nil || !fi.IsDir() {
 			return fmt.Errorf("peer registry %q does not exist (nothing to mirror)", peer)

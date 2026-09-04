@@ -19,10 +19,14 @@ normalisers - those are done by \fIexecutors\fR (separate programs) and plankton
 records and compares the results by hash.
 .TP
 .B the kernel is network-free.
-Serving a port, mirroring a URL peer, transparency-log anchoring, and byte pinning are
-\fInot\fR plankton - they live in the cockpit,
+Transparency-log anchoring, locator dereferencing and byte pinning are \fInot\fR plankton - they
+live in the cockpit,
 .BR kton (1).
-plankton keeps only \fIlocal\fR overlay-by-hash federation.
+Federation over a network is in neither: no server, and no client either. The Clause 12 queries and
+wire form are normative, the transport is not, and
+.B plankton records --json --since
+answers \fBsync(since)\fR on stdout. plankton keeps \fIlocal\fR overlay-by-hash federation, which
+is a data operation rather than a transport.
 .SH CONCEPTS
 .TP
 .B foton
@@ -190,9 +194,10 @@ as a
 attestation.
 .TP
 .B plankton mirror \fIlocal-registry-dir\fR
-Overlay a peer registry (a local directory) into yours by hash - pure, no network. For a URL
-peer use
-.BR "kton mirror" .
+Overlay a peer registry (a local directory) into yours by hash - pure, no network. A URL peer is
+refused: reaching one is a transport, and this repository carries no transport. See
+.B plankton records --json --since
+for the Clause 12 sync answer a cockpit reads.
 .TP
 .B plankton export [--title \fIT\fR] [\fIout\fR]
 Serialize the horizon graph as JSON (headless query projection).

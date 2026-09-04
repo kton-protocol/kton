@@ -64,6 +64,35 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
 
+### Removed
+
+- **The HTTP federation client** (#101) — `kton mirror <url>`, the `kton/federation` package, and
+  the two raw `http.Get` call sites behind `--with-material`. `kton serve` went in #83; this is the
+  other half. A protocol repository is about bytes, not about which other protocol carries them
+  somewhere: §12 fixes the queries and the wire form and leaves the **transport** unspecified, and
+  the HTTP binding in Annex C is informative.
+
+  It had **no caller**. `kton mirror` appears 25 times across the examples, the cockpit and
+  kton-web — not once with an `http(s)://` peer. The only URL occurrences anywhere were two lines
+  of documentation.
+
+  Three of the four unbounded HTTP clients in the repository disappear with it, rather than being
+  hardened: `federation.Sync` and `federation.GetBlob` (no timeout; `GetBlob` read the **whole**
+  body into memory before comparing the hash), `nektonHTTPMirror`, and the material pull that made
+  one untimed request **per claim id**. `mirror --pin` and `mirror --with-material` go too: both
+  only ever did anything for a URL peer and were silent no-ops on a local directory.
+
+  **What replaces it:** nothing, because nothing used it. `plankton records --json --since N` and
+  `nekton records --json --since N` answer `sync(since)` on stdout — the binding the cockpit
+  already reads. Mirroring a local registry directory is unchanged and stays in the kernels
+  (`plankton mirror` / `nekton mirror`); a URL is now refused with a message saying where the
+  capability went.
+
+  The deleted package held the only tests over the §12 conformance vectors, and they tested the
+  **consuming** side. They are replaced by a producer-side test that asserts
+  `plankton records --json` re-emits `testdata/federation/sync-plankton.json` as the same document —
+  the direction that matters now, and the first thing to actually compare the two.
+
 ### Added
 
 - **`plankton records` / `nekton records`** (#85) — every record with its signed envelope, the
