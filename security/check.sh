@@ -14,7 +14,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; KX="${1:-}"
 
-GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated silent-source-drop export-attribution canon-bigint rdf-injection spectrum-existence concurrency-races scope-path-traversal read-path-ungated"
+GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated silent-source-drop export-attribution canon-bigint rdf-injection spectrum-existence concurrency-races scope-path-traversal read-path-ungated union-across-payloads"
 OPEN=""
 SKIPPED=""
 

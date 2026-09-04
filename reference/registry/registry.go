@@ -230,9 +230,15 @@ func (r *Registry) apply(rec Record) {
 		// The identity is already present. A same-id TWIN (same covered payload, different signatures - two
 		// independent producers, or a corrupt copy planted first) does NOT let first-seen win: UNION the two
 		// envelopes' well-formed signatures into one record (red-team round 10, RED-2). The result is
-		// order-INDEPENDENT - a later mirror of a good source heals a corrupt twin AND a second genuine
-		// producer's signature is retained, so `producer`/`reproductions` see every signer. `verify` still
-		// adjudicates each signature cryptographically.
+		// order-independent FOR IDENTICAL BYTES - a later mirror of a good source heals a corrupt twin
+		// and a second genuine producer's signature is retained, so `producer`/`reproductions` see
+		// every signer. `verify` still adjudicates each signature cryptographically.
+		//
+		// It is NOT order-independent when two records share an id but carry different payloads
+		// (different `uri`, say - carried, not covered). unionSignatures refuses those, so which
+		// carried variant is stored depends on ingest order. That is a known limitation, stated
+		// rather than papered over: the alternative was attaching a signature to bytes its owner
+		// never signed, which is what this used to do (#93).
 		old := r.records[i].Envelope
 		if merged, changed := unionSignatures(old, rec.Envelope); changed {
 			r.records[i].Envelope = merged
@@ -612,10 +618,27 @@ func sigEntryWellFormed(keyid, sig string) bool {
 // id covers only the covered projection - so two independent PRODUCERS of an identical computation are
 // ONE foton with TWO signatures, not two rival records where ingest/source order decides which signer
 // survives (red-team round 10, RED-2). The union is deterministic (dedup by keyid+sig, sorted), hence
-// order-independent (SPEC §12 conflict-free union), and it subsumes prefer-valid-twin: only well-formed
+// order-independent for identical bytes (SPEC §12 conflict-free union; differing payloads are refused
+// above and are order-DEPENDENT in which variant is kept), and it subsumes prefer-valid-twin: only well-formed
 // signatures enter the set, so a corrupt twin ingested first is healed by a later good one. Returns the
 // merged envelope and whether it differs from `old` (whether a rewrite/reindex is needed).
 func unionSignatures(old, incoming core.Envelope) (core.Envelope, bool) {
+	// A signature stands over PAE(payloadType, payload). Unioning across DIFFERENT payloads therefore
+	// attaches a signature to bytes it never signed - and the identity of a record does not cover
+	// everything the payload carries, so two honest producers can collide here: same foton id,
+	// different `uri` (carried, not covered, §6.1), different signed bytes.
+	//
+	// The old code kept the FIRST payload and unioned both signature sets. Demonstrated result: the
+	// stored record carried the attacker's locator, the signature list held BOTH keyids, and
+	// `plankton verify` with the honest producer's key answered WRONG KEY. The honest producer
+	// appeared as an endorser of someone else's payload, and `records --json` republished it.
+	//
+	// So: never merge across differing bytes. The stored record stays as it is and the caller says
+	// so. One of the two carried-field variants wins, which is a real limitation and an honest one -
+	// what is NOT acceptable is a keyid attached to bytes its owner did not sign.
+	if old.PayloadType != incoming.PayloadType || old.Payload != incoming.Payload {
+		return old, false
+	}
 	type sk struct{ k, s string }
 	seen := map[sk]bool{}
 	cur := old.Signatures[:0:0]

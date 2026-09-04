@@ -147,6 +147,22 @@ func sigEntryWellFormed(keyid, sig string) bool {
 // ingested first is healed by a later mirror of the good one (its malformed sig is simply excluded).
 // Returns the merged envelope and whether it differs from old (whether a rewrite/reindex is needed).
 func unionSignatures(old, incoming core.Envelope) (core.Envelope, bool) {
+	// A signature stands over PAE(payloadType, payload). Unioning across DIFFERENT payloads therefore
+	// attaches a signature to bytes it never signed - and the identity of a record does not cover
+	// everything the payload carries, so two honest producers can collide here: same foton id,
+	// different `uri` (carried, not covered, §6.1), different signed bytes.
+	//
+	// The old code kept the FIRST payload and unioned both signature sets. Demonstrated result: the
+	// stored record carried the attacker's locator, the signature list held BOTH keyids, and
+	// `plankton verify` with the honest producer's key answered WRONG KEY. The honest producer
+	// appeared as an endorser of someone else's payload, and `records --json` republished it.
+	//
+	// So: never merge across differing bytes. The stored record stays as it is and the caller says
+	// so. One of the two carried-field variants wins, which is a real limitation and an honest one -
+	// what is NOT acceptable is a keyid attached to bytes its owner did not sign.
+	if old.PayloadType != incoming.PayloadType || old.Payload != incoming.Payload {
+		return old, false
+	}
 	type sk struct{ k, s string }
 	seen := map[sk]bool{}
 	cur := old.Signatures[:0:0] // empty slice of the same (anonymous) element type

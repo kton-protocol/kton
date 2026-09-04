@@ -6,9 +6,9 @@ file cannot be regenerated or verified from here and is maintained by hand. Unti
 published, read it as prose - the executable part of this suite is `check.sh`, which prints how
 much of the engagement it actually runs.*
 
-## Posture: **26/28 spectrum members fulfilled** → NOT SECURE (2 open)
+## Posture: **27/29 spectrum members fulfilled** → NOT SECURE (2 open)
 
-26 closed · 2 open · 2 accepted boundary. Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
+27 closed · 2 open · 2 accepted boundary. Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
 vulnerable/fixed commits as signed `nekton` claims. Those claims and the `keys/` directory are not in this
 repository, so `nekton verify` cannot be run against them from here - `redteam.pub` alone verifies nothing.
 10 of the 28 PoCs are executable and run in `check.sh`; the rest are records, not reproductions.
@@ -124,6 +124,25 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **vulnerable at:** pk [`0aa44b8`](https://github.com/gitmick/plankton/commit/0aa44b8)
 - **fixed at (reproduction now fails):** pk [`b625b1f`](https://github.com/gitmick/plankton/commit/b625b1f)
 - **PoC:** [`attacks/co-signer-drop.sh`](attacks/co-signer-drop.sh)
+
+### `union-across-payloads` — RED · ✅ closed
+- **class:** `signature-attached-to-bytes-it-did-not-sign`
+- **theory:** A foton id covers inputs/outputs/protocol; `uri` is **carried, not covered** (§6.1). So
+  two honest producers publishing the same computation with different locators collide: same id,
+  different signed bytes. The store kept the FIRST payload and unioned BOTH signature sets — and a
+  signature stands over `PAE(payloadType, payload)`, so the second producer's signature then hung on
+  bytes it never signed.
+- **demonstrated:** the stored record carried the attacker's locator, the signature list held both
+  keyids, and `plankton verify` with the honest producer's key answered **WRONG KEY**. The honest
+  producer was presented as an endorser of someone else's payload, and `records --json` republished
+  it to every peer. Ingesting in the opposite order produced a different object file, contradicting
+  the code's own "order-INDEPENDENT" comment.
+- **fixed at:** #93 — never merge across differing bytes, on both kernels. One carried variant wins,
+  which is order-dependent and now *said so* in the code rather than denied by it. What is not
+  acceptable is a keyid attached to bytes its owner did not sign.
+- **PoC:** [`attacks/union-across-payloads.sh`](attacks/union-across-payloads.sh) — gated. It checks
+  the signature count *and* that every stored signature verifies against a key we hold, because a
+  count alone would pass whenever the two payloads happened to match.
 
 ### `read-path-ungated` — RED · ✅ closed
 - **class:** `ingest-gate-not-on-the-read-path`
