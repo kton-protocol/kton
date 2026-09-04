@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"kton.dev/plankton/blobstore"
 	"kton.dev/plankton/core"
 	"kton.dev/plankton/registry"
 )
@@ -78,6 +79,12 @@ usage:
                                                       (a member had no candidate). the L0/L1 judgment is a nekton claim on top
   plankton export [--title T] [out]                   serialize the horizon graph as JSON (headless query)
   plankton export --rdf [--lineage <id|hash>] [-o o]  project lineage as RDF/Turtle (PROV; joins nekton RDF)
+  plankton pin <file>                                 pin a file's bytes into the OPTIONAL blob store
+                                                      (PLANKTON_DIR/blobs) - the registry itself
+                                                      stores no bytes (SPEC 6.1, 10)
+  plankton blob <sha256:...>                          is this content pinned? re-hashes on read, so
+                                                      a bit-rotted blob reports CORRUPT, not PINNED.
+                                                      exit 0 pinned, 1 absent or corrupt
   plankton hash <file>                                content address a file
   plankton mirror <local-registry-dir>                overlay a peer registry by hash (local, no network)
   plankton man                                        print the embedded manual page (roff)
@@ -946,6 +953,57 @@ func run(cmd string, args []string) error {
 			}
 			fmt.Fprintln(os.Stderr, "note: these are COMPETING cache-key matches, not a trusted result - anyone can author a foton with these inputs, and their OUTPUTS may differ. Pick a hit whose SIGNER you trust and `plankton verify` it.")
 		}
+		return nil
+
+	case "pin":
+		// Pinning is OPTIONAL and deliberately outside the registry: the kernel records fotons and
+		// stores no bytes (SPEC §6.1, §10). It is here rather than in the cockpit because it needs no
+		// address - a hash says WHAT, and these bytes are already on this machine. Fetching bytes
+		// that are NOT here is a different thing and stays a cockpit capability (`kton fetch`).
+		if len(args) != 1 {
+			return fmt.Errorf("usage: plankton pin <file>")
+		}
+		b, err := os.ReadFile(args[0])
+		if err != nil {
+			return err
+		}
+		bs, err := blobstore.OpenFor(dir())
+		if err != nil {
+			return err
+		}
+		h, err := bs.Put(b)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("pinned %s  (%d bytes)\n", h, len(b))
+		return nil
+
+	case "blob":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: plankton blob <sha256:...>")
+		}
+		h, ok := core.NormalizeContentHash(args[0])
+		if !ok {
+			return fmt.Errorf("%q is not a sha256 content hash", args[0])
+		}
+		bs, err := blobstore.OpenFor(dir())
+		if err != nil {
+			return err
+		}
+		if !bs.Has(h) {
+			fmt.Printf("absent %s\n", h)
+			os.Exit(1)
+		}
+		// Do not trust the content-addressed FILENAME: read the bytes back (Get re-hashes and errors
+		// on a mismatch), so a bit-rotted blob is reported CORRUPT, not PINNED. `Has` alone only
+		// checks that the file exists, and a present-and-good status line that never re-hashes is a
+		// lie of exactly the kind this substrate exists to prevent.
+		b, err := bs.Get(h)
+		if err != nil {
+			fmt.Printf("CORRUPT %s  (%v)\n", h, err)
+			os.Exit(1)
+		}
+		fmt.Printf("PINNED %s  (%d bytes, re-hashed OK)\n", h, len(b))
 		return nil
 
 	case "hash":

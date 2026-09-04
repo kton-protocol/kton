@@ -64,6 +64,23 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
 
+### Changed
+
+- **`pin` and `blob` are plankton commands** (#102). `plankton pin <file>` and
+  `plankton blob <sha256:…>`. Pinning needs no address — a hash says *what*, and the bytes are
+  already on this machine — so it was never a cockpit capability. Fetching bytes that are **not**
+  here is a different thing and stays in the cockpit (`kton fetch`).
+
+  The store's location moves with them: `blobstore.Subdir` and `blobstore.OpenFor(registryDir)`
+  replace a `filepath.Join` every caller wrote by hand against a constant that lived in the
+  cockpit's `federation` package — plankton's own storage layout declared in a package that
+  *depends on* plankton.
+
+  The path is unchanged (`<registry>/blobs`), so an existing store stays readable and both
+  spellings reach the same bytes; a test pins that layout so a later refactor cannot quietly
+  relocate everyone's pinned data. `kton pin` and `kton blob` still work and print a deprecation
+  note; they go when the cockpit leaves the repository.
+
 ### Fixed
 
 - **A claim spec could name a subject that silently disappeared** (#106). The authoring spec spells a
@@ -154,6 +171,23 @@ build reading a format it does not know refuses loudly instead of reporting an e
   `reproduces` claim records and which the exit code cannot distinguish.
 - **`kton fetch --allow-local`** (#81) — see Security.
 
+### Changed
+
+- **`pin` and `blob` are plankton commands** (#102). `plankton pin <file>` and
+  `plankton blob <sha256:…>`. Pinning needs no address — a hash says *what*, and the bytes are
+  already on this machine — so it was never a cockpit capability. Fetching bytes that are **not**
+  here is a different thing and stays in the cockpit (`kton fetch`).
+
+  The store's location moves with them: `blobstore.Subdir` and `blobstore.OpenFor(registryDir)`
+  replace a `filepath.Join` every caller wrote by hand against a constant that lived in the
+  cockpit's `federation` package — plankton's own storage layout declared in a package that
+  *depends on* plankton.
+
+  The path is unchanged (`<registry>/blobs`), so an existing store stays readable and both
+  spellings reach the same bytes; a test pins that layout so a later refactor cannot quietly
+  relocate everyone's pinned data. `kton pin` and `kton blob` still work and print a deprecation
+  note; they go when the cockpit leaves the repository.
+
 ### Fixed
 
 - **`nekton seed --when` / `nekton annotate --when`** (#42). `when` is covered by the claim id, and a
@@ -224,6 +258,23 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Changed
+
+- **`pin` and `blob` are plankton commands** (#102). `plankton pin <file>` and
+  `plankton blob <sha256:…>`. Pinning needs no address — a hash says *what*, and the bytes are
+  already on this machine — so it was never a cockpit capability. Fetching bytes that are **not**
+  here is a different thing and stays in the cockpit (`kton fetch`).
+
+  The store's location moves with them: `blobstore.Subdir` and `blobstore.OpenFor(registryDir)`
+  replace a `filepath.Join` every caller wrote by hand against a constant that lived in the
+  cockpit's `federation` package — plankton's own storage layout declared in a package that
+  *depends on* plankton.
+
+  The path is unchanged (`<registry>/blobs`), so an existing store stays readable and both
+  spellings reach the same bytes; a test pins that layout so a later refactor cannot quietly
+  relocate everyone's pinned data. `kton pin` and `kton blob` still work and print a deprecation
+  note; they go when the cockpit leaves the repository.
 
 ### Fixed
 

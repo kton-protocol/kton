@@ -76,7 +76,7 @@ func fetch(hash string, trustKeysDir string, allowLocal bool) error {
 	}
 	locs = verified
 
-	bs, err := blobstore.Open(filepath.Join(planktonDir(), blobsSubdir))
+	bs, err := blobstore.OpenFor(planktonDir())
 	if err != nil {
 		return err
 	}
