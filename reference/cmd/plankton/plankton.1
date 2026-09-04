@@ -198,6 +198,18 @@ as a
 .BR nekton (1)
 attestation.
 .TP
+.B plankton pin \fIfile\fR
+Pin a file's bytes into the OPTIONAL blob store at \fIPLANKTON_DIR\fR/blobs. The registry itself
+records fotons and stores no bytes (SPEC 6.1, 10); pinning is the opt-in retention backend. It needs
+no network: a hash says \fIwhat\fR, and these bytes are already here. Fetching bytes that are
+\fInot\fR here is a different thing and lives in the cockpit,
+.BR kton (1).
+.TP
+.B plankton blob \fIsha256:...\fR
+Is this content pinned locally? The bytes are read back and \fBre-hashed\fR, so a bit-rotted blob
+reports \fBCORRUPT\fR rather than PINNED - checking that the file exists would be a
+present-and-good status line that never verifies anything. Exit 0 pinned, 1 absent or corrupt.
+.TP
 .B plankton mirror \fIlocal-registry-dir\fR
 Overlay a peer registry (a local directory) into yours by hash - pure, no network. A URL peer is
 refused: reaching one is a transport, and this repository carries no transport. See

@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"kton.dev/plankton/blobstore"
@@ -31,8 +30,10 @@ usage:
       --store            record the verified entry as §8.1 verification material ON the record,
                          which is what §13 asks for - otherwise the proof is only printed, and a
                          year from now verification depends on the service still answering
-  kton pin    <file>                       pin a file's bytes into the plankton blob store
-  kton blob   <sha256:...>                 is this content pinned locally?
+  kton pin    <file>                       DEPRECATED - use 'plankton pin'
+  kton blob   <sha256:...>                 DEPRECATED - use 'plankton blob'
+      both moved to the kernel: pinning needs no address, only a hash, so it is not a cockpit
+      capability. They still work and reach the SAME store; they go when the cockpit leaves.
   kton fetch  <sha256:...> --trust-keys <dir> [--allow-local]
                                            resolve content via located-at claims signed by a key
                                            you named, dereference, verify sha256, and pin.
@@ -102,11 +103,6 @@ func refuseNetworkPeer(peer string) error {
 		"  normative, the binding is not.", peer)
 }
 
-// blobsSubdir is where pinned bytes live under the plankton registry directory. It used to sit in
-// the deleted federation package - i.e. plankton's own storage layout was defined in a package that
-// depends on plankton. It moves to plankton with `pin`/`blob` (#102); this is its waypoint.
-const blobsSubdir = "blobs"
-
 func run(cmd string, args []string) error {
 	switch cmd { // help/version in COMMAND position (not just as a flag) should not be "unknown command"
 	case "--help", "-h", "help":
@@ -156,6 +152,10 @@ func run(cmd string, args []string) error {
 		return anchor(anchorArgs[0], anchorArgs[1], store)
 
 	case "pin":
+		// MOVED to plankton (#102): pinning needs no address, only a hash, so it is a kernel
+		// operation. Kept here until the cockpit leaves this repository (#103) so kton-examples and
+		// any script does not break on the same day the command moves.
+		fmt.Fprintln(os.Stderr, "note: `kton pin` moved to `plankton pin`; this spelling is deprecated and will be removed")
 		if len(args) != 1 {
 			return fmt.Errorf("usage: kton pin <file>")
 		}
@@ -163,7 +163,7 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
-		bs, err := blobstore.Open(filepath.Join(planktonDir(), blobsSubdir))
+		bs, err := blobstore.OpenFor(planktonDir())
 		if err != nil {
 			return err
 		}
@@ -175,11 +175,12 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "blob":
+		fmt.Fprintln(os.Stderr, "note: `kton blob` moved to `plankton blob`; this spelling is deprecated and will be removed")
 		if len(args) != 1 {
 			return fmt.Errorf("usage: kton blob <sha256:...>")
 		}
 		h := normalizeHash(args[0]) // accept bare-hex / UPPERCASE / whitespace spellings of the same hash
-		bs, err := blobstore.Open(filepath.Join(planktonDir(), blobsSubdir))
+		bs, err := blobstore.OpenFor(planktonDir())
 		if err != nil {
 			return err
 		}

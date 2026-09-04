@@ -41,10 +41,15 @@ stdout, and a year from now verification depends on the service still answering.
 offline re-verification of a saved proof. The public key may be a .pub file path or the hex string.
 .TP
 .B kton pin \fIfile\fR
-Pin a file's bytes into the plankton blob store (optional; the kernel stores no bytes).
+\fBDEPRECATED\fR - use
+.BR "plankton pin" .
+Pinning needs no address, only a hash, so it is a kernel operation and moved there. This spelling
+still works and reaches the same store; it goes when the cockpit leaves this repository.
 .TP
 .B kton blob \fIsha256:...\fR
-Is this content pinned locally?
+\fBDEPRECATED\fR - use
+.BR "plankton blob" .
+Same store, same answer; it goes when the cockpit leaves this repository.
 .TP
 .B kton fetch \fIsha256:...\fR --trust-keys \fIdir\fR [--allow-local]
 Resolve content to its bytes via nekton \fBlocated-at\fR claims (predicate \fBdcat:downloadURL\fR)

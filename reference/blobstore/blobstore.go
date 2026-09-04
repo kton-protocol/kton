@@ -14,6 +14,17 @@ import (
 	"kton.dev/plankton/core"
 )
 
+// Subdir is where a registry's pinned bytes live, relative to the registry directory. It used to be
+// defined in the kton cockpit's federation package - so plankton's own storage layout was declared
+// in a package that depends on plankton. It belongs here, with the bytes.
+const Subdir = "blobs"
+
+// OpenFor opens the blob store belonging to a registry directory. Every caller derived this path by
+// hand; one of them getting it wrong would silently pin into a store nothing else reads.
+func OpenFor(registryDir string) (*Store, error) {
+	return Open(filepath.Join(registryDir, Subdir))
+}
+
 // Store is a content-addressed byte store rooted at a directory.
 type Store struct{ dir string }
 
