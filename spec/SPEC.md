@@ -559,6 +559,22 @@ Records are immutable and content-addressed, so replication is a conflict-free s
   an error, never an empty result: an empty answer to a malformed question is a successful wrong
   answer.
 
+  **The sequence.** `seq` is a participant's own numbering of the records it holds. It is LOCAL -
+  two participants holding the same records may number them differently, and a cursor is only ever
+  meaningful against the participant that issued it - but it MUST satisfy three properties, because
+  a peer's only guarantee is that asking again with the returned cursor loses nothing:
+
+  1. **Issued once.** A record's sequence MUST NOT change once the record has been answered for.
+  2. **Newer is higher.** A record first held after a cursor was issued MUST be numbered above it.
+  3. **Independent of content.** The sequence MUST NOT be derived from the record's identity, its
+     hash, or any ordering a record's author can influence. Otherwise a participant who can write a
+     record - a git merge is a supported transport (§11) - can choose one that reorders the store
+     and pushes an existing record back under a peer's cursor, where that peer will never ask for it
+     again.
+
+  A sequence need not be dense, and gaps carry no meaning: a record dropped, refused, or never
+  indexed may still have consumed a number. Only the ordering is normative.
+
   **Wire form.** `sync` answers `{ "records": [ { "seq", "fotonId"|"claimId", "envelope" } ... ],
   "max": <cursor> }`; the record queries answer `{ "records": [ <envelope> ... ] }`. Envelopes are
   as in §8. Conformance fixtures for these answers live in `../reference/testdata/federation/`.

@@ -50,6 +50,40 @@ func atomicWrite(path string, b []byte) error {
 // (O_CREATE|O_EXCL, portable - no syscall/build tags), so two processes co-signing the same claim do
 // not both read the old envelope and clobber each other (dropping a valid co-signature). A lock left by
 // a crashed holder is stolen after a grace period.
+// resolveSeqs returns the durable federation position of every id, issuing one to any id that does
+// not have one yet (SPEC §12; see core.SeqMap for why the numbering lives beside the records).
+// persist=false is the read-only source path: it numbers in memory and writes nothing, because a
+// read MUST NOT mutate the store it reads.
+//
+// It must NOT be called with the object write lock already held - it takes that lock itself.
+func (r *Registry) resolveSeqs(ids []string, persist bool) (map[string]int, error) {
+	p := filepath.Join(r.dir, seqFileName)
+	m := core.ReadSeqMap(p)
+	need := false
+	for _, id := range ids {
+		if _, ok := m.Seq[id]; !ok && id != "" {
+			need = true
+			break
+		}
+	}
+	if !need || !persist {
+		m.Assign(ids) // in-memory only: nothing new to record, or a read-only source
+		return m.Seq, nil
+	}
+	var out map[string]int
+	err := r.withWriteLock(func() error {
+		m := core.ReadSeqMap(p) // re-read under the lock: another process may have issued positions
+		if m.Assign(ids) {
+			if err := core.WriteSeqMap(p, m); err != nil {
+				return err
+			}
+		}
+		out = m.Seq
+		return nil
+	})
+	return out, err
+}
+
 func (r *Registry) withWriteLock(fn func() error) error {
 	lp := filepath.Join(r.dir, ".objects.lock")
 	for attempt := 0; attempt < 2000; attempt++ {
@@ -288,7 +322,10 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 		if err != nil {
 			return nil, err
 		}
-		pending = append(pending, src.RawRecords()...)
+		for _, rec := range src.RawRecords() {
+			rec.Seq = 0 // a foreign store's positions are meaningless here; settle appends them
+			pending = append(pending, rec)
+		}
 	}
 	u.dropped += u.settle(pending)
 	return u, nil
@@ -342,6 +379,22 @@ func openAt(dir string, create bool) (*Registry, error) {
 	// could be an orphan. So replay is chain-VALIDATING: index records whose §7.4 chain resolves
 	// against the state so far, settling repeatedly (a child waits for its seed/prev), then DROP
 	// whatever never resolves - a tampered or reordered object cannot be silently trusted on load.
+	// Number the records from objects/.seq BEFORE settling. Two things matter here. First, the
+	// numbers come off disk, so a position already handed to a peer can never move. Second, the ids
+	// are offered in readStore's stable store order rather than settle's RESOLUTION order - the
+	// latter depends on what else is present, which is exactly how a planted record used to shift
+	// everything after it (AUD-02).
+	ids := make([]string, 0, len(pending))
+	for _, rec := range pending {
+		ids = append(ids, rec.ClaimID)
+	}
+	seqs, err := r.resolveSeqs(ids, create)
+	if err != nil {
+		return nil, err
+	}
+	for i := range pending {
+		pending[i].Seq = seqs[pending[i].ClaimID]
+	}
 	r.dropped = r.settle(pending)
 	// Verification material is read AFTER settling and never feeds into it: §8.1 requires that its
 	// presence, absence or invalidity leave a record's validity and resolvability untouched.
@@ -373,7 +426,11 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 				next = append(next, rec) // not (yet) valid - defer to a later pass
 				continue
 			}
-			rec.Seq = r.maxSeq + 1
+			if rec.Seq == 0 {
+				// Only reached from OpenUnion, which zeroes foreign positions: a number issued by
+				// another store means nothing here, so it is appended above this store's own.
+				rec.Seq = r.maxSeq + 1
+			}
 			r.index(rec)
 			progress = true
 		}
@@ -564,7 +621,11 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	if err != nil {
 		return "", false, err
 	}
-	rec := Record{Seq: r.maxSeq + 1, ClaimID: id, Envelope: merged}
+	seqs, serr := r.resolveSeqs([]string{id}, true)
+	if serr != nil {
+		return "", false, serr
+	}
+	rec := Record{Seq: seqs[id], ClaimID: id, Envelope: merged}
 	if chainErr != nil { // errUnresolved: persisted, awaiting its dependency
 		if p != nil && p.Scope != "" {
 			r.unresolved[p.Scope]++ // may be a withheld-middle successor -> `head` flags a truncation
@@ -675,6 +736,12 @@ func splitID(id string) (algo, hex string) {
 // unfixable in retrospect, and is the reason the subnekton layout ships as 0.2 rather than a patch.
 // From format 2 on, a store says what it is.
 const StoreFormat = 2
+
+// seqFileName is the store-local federation numbering (SPEC §12). It sits NEXT TO peers.json, not
+// inside objects/: it has exactly peers.json's character - local bookkeeping about federation, not
+// content - and keeping it out of objects/ means the record tree a git federation ships stays
+// records only, with nothing in it that two stores would legitimately disagree about.
+const seqFileName = ".seq"
 
 const formatMarker = ".format"
 

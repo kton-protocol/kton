@@ -44,6 +44,23 @@ build reading a format it does not know refuses loudly instead of reporting an e
   from the signed one. Reads still resolve pre-0.2 per-claim objects, and a write migrates a record
   the first time it touches it, so an existing store keeps working and converts as it is used.
 
+- **`sync(since)` stops losing records** (#97, AUD-02). §12 always said the answer is "records with
+  a local sequence above `since`, **in append order**". Both kernels instead derived that sequence
+  from the record's rank in the hash-sorted store, recomputed on every load — so the one guarantee a
+  cursor exists to give (*ask again with this number and you lose nothing*) did not hold. In plain
+  use, only a record whose hash happened to sort last was ever delivered to an already-synced peer:
+  measured at **7 of 8** new records silently withheld. It is also grindable — a scope id is the
+  hash of a seed an attacker writes, and a scope that sorts early pushes an existing scope's records
+  back under the peer's cursor for good (1–20 attempts, measured).
+
+  A position is now issued **once**, at first sight, and never recomputed. It lives in a `.seq` file
+  next to `peers.json` — deliberately outside `objects/`, so the record tree a git federation ships
+  stays byte-identical across peers and conflict-free to merge. Gated as `cursor-shift`.
+
+  **On upgrade:** an existing store is numbered on first open, in the same order it was already
+  being numbered in, so peers do not re-sync. Positions are not dense — a record that is dropped or
+  refused may still consume one — and gaps carry no meaning.
+
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
 

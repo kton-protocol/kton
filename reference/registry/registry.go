@@ -59,10 +59,10 @@ type Registry struct {
 	// Verification material (SPEC §8.1), indexed by the subject it is about. Deliberately NOT part
 	// of a Record: presence, absence or invalidity must not touch validity or resolvability (§11).
 	material map[string][]VerificationMaterial
-	byOutput  map[string][]string // output hash -> []fotonID
-	byInput   map[string][]string // input hash  -> []fotonID
-	byAction  map[string][]string // action key  -> []fotonID
-	peers     map[string]int      // peer url -> last remote seq pulled
+	byOutput map[string][]string // output hash -> []fotonID
+	byInput  map[string][]string // input hash  -> []fotonID
+	byAction map[string][]string // action key  -> []fotonID
+	peers    map[string]int      // peer url -> last remote seq pulled
 }
 
 // Open loads (or creates) a registry rooted at dir, replaying its log.
@@ -76,15 +76,15 @@ func openAt(dir string, create bool) (*Registry, error) {
 		dir:        dir,
 		objectsDir: filepath.Join(dir, "objects"),
 		peersPath:  filepath.Join(dir, "peers.json"),
-		seen:      map[string]bool{},
-		keyIdx:    map[string]int{},
-		fotonByID: map[string]Record{},
-		foton:     map[string]*core.Foton{},
-		material:  map[string][]VerificationMaterial{},
-		byOutput:  map[string][]string{},
-		byInput:   map[string][]string{},
-		byAction:  map[string][]string{},
-		peers:     map[string]int{},
+		seen:       map[string]bool{},
+		keyIdx:     map[string]int{},
+		fotonByID:  map[string]Record{},
+		foton:      map[string]*core.Foton{},
+		material:   map[string][]VerificationMaterial{},
+		byOutput:   map[string][]string{},
+		byInput:    map[string][]string{},
+		byAction:   map[string][]string{},
+		peers:      map[string]int{},
 	}
 	if create {
 		if err := os.MkdirAll(r.objectsDir, 0o755); err != nil {
@@ -110,6 +110,7 @@ func openAt(dir string, create bool) (*Registry, error) {
 		return nil, err
 	}
 	sort.Strings(paths)
+	loaded := make([]objectFile, 0, len(paths))
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
 		if err != nil {
@@ -124,7 +125,23 @@ func openAt(dir string, create bool) (*Registry, error) {
 			r.degraded++
 			continue
 		}
-		r.apply(Record{Seq: r.maxSeq + 1, FotonID: of.FotonID, Envelope: of.Envelope})
+		loaded = append(loaded, of)
+	}
+	// Number the records from objects/.seq, offering the ids in the stable sorted-path order above
+	// rather than in apply order. The positions come off disk, so one already handed to a peer can
+	// never move - which is what stops a planted record whose hash sorts EARLY from shifting every
+	// later record down and pushing it back under a peer's cursor (AUD-02).
+	ids := make([]string, 0, len(loaded))
+	for _, of := range loaded {
+		k, _ := recordKey(of.Envelope, of.FotonID)
+		ids = append(ids, k)
+	}
+	seqs, err := r.resolveSeqs(ids, create)
+	if err != nil {
+		return nil, err
+	}
+	for i, of := range loaded {
+		r.apply(Record{Seq: seqs[ids[i]], FotonID: of.FotonID, Envelope: of.Envelope})
 	}
 	// Verification material is read AFTER the records and never feeds into them: §8.1 requires that
 	// its presence, absence or invalidity leave validity and resolvability untouched.
@@ -321,7 +338,11 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 	}
-	rec := Record{Seq: r.maxSeq + 1, FotonID: fotonID, Envelope: merged}
+	seqs, serr := r.resolveSeqs([]string{key}, true)
+	if serr != nil {
+		return "", false, fmt.Errorf("%w: %v", ErrPersist, serr)
+	}
+	rec := Record{Seq: seqs[key], FotonID: fotonID, Envelope: merged}
 	r.apply(rec)
 	return fotonID, true, nil
 }
@@ -502,6 +523,45 @@ func (r *Registry) SetPeerCursor(url string, seq int) error {
 //
 // The lock is per object file, not store-wide: two writers only contend when they touch the same
 // record, and a bulk ingest of distinct records has no conflict to serialize.
+// resolveSeqs returns the durable federation position of every record key, issuing one to any key
+// that does not have one yet (SPEC §12; see core.SeqMap for why the numbering lives beside the
+// records rather than inside them - the on-disk record must stay byte-identical across peers or a
+// git merge of two registries stops being conflict-free). persist=false is the read-only source
+// path: it numbers in memory and writes nothing, because a read MUST NOT mutate what it reads.
+func (r *Registry) resolveSeqs(keys []string, persist bool) (map[string]int, error) {
+	p := filepath.Join(r.dir, seqFileName)
+	m := core.ReadSeqMap(p)
+	need := false
+	for _, k := range keys {
+		if _, ok := m.Seq[k]; !ok && k != "" {
+			need = true
+			break
+		}
+	}
+	if !need || !persist {
+		m.Assign(keys) // in-memory only: nothing new to record, or a read-only source
+		return m.Seq, nil
+	}
+	var out map[string]int
+	err := r.withLock(".seq.lock", func() error {
+		m := core.ReadSeqMap(p) // re-read under the lock: another process may have issued positions
+		if m.Assign(keys) {
+			if err := core.WriteSeqMap(p, m); err != nil {
+				return err
+			}
+		}
+		out = m.Seq
+		return nil
+	})
+	return out, err
+}
+
+// seqFileName is the store-local federation numbering (SPEC §12). It sits NEXT TO peers.json, not
+// inside objects/: it has exactly peers.json's character - local bookkeeping about federation, not
+// content - and keeping it out of objects/ means the record tree a git federation ships stays
+// records only, with nothing in it that two stores would legitimately disagree about.
+const seqFileName = ".seq"
+
 func (r *Registry) persistRecord(key, fotonID string, env core.Envelope) (core.Envelope, error) {
 	merged := env
 	err := r.withLock(".obj-"+strings.NewReplacer("/", "_", ":", "_").Replace(key)+".lock", func() error {
