@@ -112,7 +112,11 @@ claim set:
 .TP
 .B nekton claim \fIspec.json\fR \fIkey.key\fR [\fIout.dsse\fR] [--add] [--registry \fID\fR]
 Author + sign a claim from an explicit JSON spec (when a template does not fit). The authoring spec
-differs from the wire claim: \fBsubject\fR is an ARRAY and \fBpredicate\fR is a BARE string.
+differs from the wire claim: \fBsubject\fR is an ARRAY, \fBpredicate\fR is a BARE string, and a
+subject names its content with \fBhash\fR - \fInot\fR with the \fBdigest\fR map you see in the
+signed statement. The two spellings are the spec form and the in-toto form of the same thing; a
+field this build does not know is REFUSED rather than dropped, so writing \fBdigest\fR here is an
+error and not a claim about nothing.
 .RS
 .nf
 
@@ -131,7 +135,10 @@ differs from the wire claim: \fBsubject\fR is an ARRAY and \fBpredicate\fR is a 
 Ingest a signed claim (enforces the scope chain) into the registry (default ./nekton-data).
 .TP
 .B nekton verify \fIenvelope.dsse.json\fR \fIpubkey.pub\fR|\fIhex\fR
-Verify a DSSE signature and report the claim (prints the \fBclaim id\fR). The public key may be a
+Verify a DSSE signature AND the structure the store requires, and report the claim (prints the
+\fBclaim id\fR). Exit status: 0 the signature is genuine and the claim is one \fBadd\fR would
+accept; 1 corrupt or tampered; 2 wrong key; 3 the signature is genuine but the claim is structurally
+invalid - the store refuses it. The public key may be a
 \fB.pub file path\fR OR the hex string itself.
 .TP
 .B nekton about \fIsubject\fR

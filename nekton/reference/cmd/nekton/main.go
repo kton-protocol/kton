@@ -32,6 +32,8 @@ usage:
                          a rebuilt corpus land on the same scope ids (default: now)
         [--by ID] [--parent <parentSeedId>] [-o out]      (scoped claims chain under it via --scope/--prev)
   nekton claim <spec.json> <key.key> [<out.dsse>] [--add] [--registry D]  author + sign a claim; --add ingests directly
+      a subject in the spec is named with hash: "sha256:<hex>" - NOT with the digest map of the
+      signed statement; an unknown field is refused, never dropped
   nekton annotate <subj|--foton F> --template <name> [--add] [--registry D]  author + sign a claim from a TEMPLATE
       --print-id         print ONLY the bare id on stdout, human lines to stderr
                          (same contract as plankton author --print-id): ID=$(nekton annotate … --print-id)
@@ -39,8 +41,11 @@ usage:
         --set k=v ... --sign key.key [--by ID] [-o out]   (aliases + auto timestamp; no jq/openssl)
   nekton templates [--show <name>]                    list templates + aliases; --show prints a template's fields
   nekton show <claim.dsse.json|sha256:id> [--json]             print a claim: subject, predicate, statement, signer
-  nekton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
+  nekton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature AND the
+                                                      structure ingest requires (envelope FILE or a
                                                       registry id; pubkey: a .pub file or the hex)
+                                                      exit 0 genuine+storable, 1 tampered, 2 wrong
+                                                      key, 3 genuine but ingest would refuse it
   nekton records [--json] [--since N]                  every claim WITH its signed envelope: the
                                                       SPEC §12 sync(since) answer, over stdout
   nekton attach <sha256:id> --scheme S --file F [--media M]   bind external evidence to a record (SPEC §8.1):
@@ -318,6 +323,23 @@ func run(cmd string, args []string) error {
 			fmt.Printf("signature:       VALID - verified as keyid %s (the authoritative signer)\n", suppliedKeyid)
 			if suppliedKeyid != signerKeyid {
 				fmt.Printf("                 NOTE: the envelope declares keyid %s, which differs from the verifying key; the declared field is unauthenticated and must not be trusted.\n", signerKeyid)
+			}
+			// A valid signature says WHO signed these bytes. It does not say the claim is one the
+			// substrate will accept. `add` runs a structural gate (SPEC §7.2/§7.3) that verify never
+			// did, so a claim about NOTHING - a subject naming neither a digest nor a uri - printed a
+			// clean bill of health here and was refused at ingest. Anyone who verified a file and did
+			// not then add it believed it was good.
+			//
+			// Exit 3, not 1 or 0: the signature verdict keeps its meaning (1 = invalid/tampered,
+			// 2 = wrong key), and 0 still means "this claim is genuine AND storable".
+			if st, _, perr := claim.ParseEnvelope(env); perr == nil {
+				p, _ := st.ParsePredicate()
+				if serr := st.Validate(p); serr != nil {
+					fmt.Printf("structure:       INVALID - %v\n", serr)
+					fmt.Println("                 the signature is genuine; the claim is still one `add` refuses.")
+					os.Exit(3)
+				}
+				fmt.Println("structure:       VALID - the fields SPEC §7.2/§7.3 require are present")
 			}
 			return nil
 		case suppliedKeyid != signerKeyid:

@@ -131,13 +131,18 @@ Verify a DSSE signature against a public key (a \fB.pub file path\fR OR the hex)
 \fBsigner's keyid\fR (embedded in the record) and \fByour key's keyid\fR, then one of:
 .RS
 .IP \(bu 2
-\fBVALID\fR (exit 0) - the signature checks out.
+\fBVALID\fR (exit 0) - the signature checks out AND the record is one this store would accept.
 .IP \(bu 2
 \fBWRONG KEY\fR (exit 2) - your keyid differs from the signer's: you verified against the wrong
 identity, \fInot\fR a tamper. Supply the signer's actual public key.
 .IP \(bu 2
 \fBTAMPERED\fR (exit 1) - the keyids match but the signature does not: the bytes were altered
 after signing.
+.IP \(bu 2
+\fBstructure INVALID\fR (exit 3) - the signature is genuine, but the record fails a gate
+\fBadd\fR enforces (canonical payload, a protocol ref that agrees with its descriptor). A valid
+signature says who signed the bytes, not that the substrate will store them; without this, a record
+the store refuses printed a clean bill of health here.
 .RE
 \fBverify is the only command that checks signatures.\fR \fBadd\fR, \fBreproduces\fR and
 \fBspectrum\fR never do - they trust the hash, not the signer.

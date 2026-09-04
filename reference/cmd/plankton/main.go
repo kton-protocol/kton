@@ -38,8 +38,11 @@ usage:
           with a nekton 'reproduces' claim — do NOT tweak --cmd to force a new id.
         --add ingests it directly (one step, no file); --registry D picks the store.
   plankton author <spec.json> <key.hex> <out.dsse>    author + sign a foton from a spec file
-  plankton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
+  plankton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature AND the
+                                                      structure ingest requires (envelope FILE or a
                                                       registry id; pubkey: a .pub file or the hex)
+                                                      exit 0 genuine+storable, 1 tampered, 2 wrong
+                                                      key, 3 genuine but ingest would refuse it
   plankton records [--json] [--since N]                every record WITH its signed envelope: the
                                                       SPEC §12 sync(since) answer, over stdout
   plankton attach <sha256:id> --scheme S --file F [--media M]  bind external evidence to a foton
@@ -196,6 +199,35 @@ func readSourcesFile(path string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// verifyStructure runs the gates INGEST runs, so `verify` cannot bless a record the store refuses.
+// It mirrors registry.parseEnv/apply: the whole payload must be canonical JSON (FotonID covers only
+// the projection, so a duplicate key elsewhere would pass the id check and still mean different
+// things to two readers), and a foton's protocol ref must agree with its descriptor (§6.2 - a ref
+// that lies about its descriptor poisons the action key).
+//
+// A non-foton envelope has no foton grammar to check; its signature verdict stands alone.
+func verifyStructure(env core.Envelope) error {
+	pb, err := env.PayloadBytes()
+	if err != nil {
+		return err
+	}
+	if _, err := core.CanonJSON(pb); err != nil {
+		return fmt.Errorf("payload is not valid canonical JSON: %w", err)
+	}
+	st, err := env.Statement()
+	if err != nil {
+		return err
+	}
+	if st.PredicateType != core.PredicateFoton {
+		return nil
+	}
+	f, err := st.ToFoton()
+	if err != nil {
+		return err
+	}
+	return f.CheckProtocolRef()
 }
 
 func run(cmd string, args []string) error {
@@ -477,6 +509,17 @@ func run(cmd string, args []string) error {
 			if suppliedKeyid != signerKeyid {
 				fmt.Printf("                 NOTE: the envelope declares keyid %s, which differs from the verifying key; the declared field is unauthenticated and must not be trusted.\n", signerKeyid)
 			}
+			// A valid signature says WHO signed these bytes, not that the record is one `add` will
+			// take. Ingest runs structural gates that verify did not, so a record refused by the
+			// store printed a clean bill of health here - and anyone who verified a file without
+			// then adding it believed it was good. Exit 3 keeps the signature verdict's meaning
+			// (1 = invalid/tampered, 2 = wrong key) and 0 = genuine AND storable.
+			if serr := verifyStructure(env); serr != nil {
+				fmt.Printf("structure:       INVALID - %v\n", serr)
+				fmt.Println("                 the signature is genuine; the record is still one `add` refuses.")
+				os.Exit(3)
+			}
+			fmt.Println("structure:       VALID - the record is one this store would accept")
 			return nil
 		case suppliedKeyid != signerKeyid:
 			// The supplied key is simply not the signer's key. This is a KEY MISMATCH, not evidence
