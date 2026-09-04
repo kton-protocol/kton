@@ -47,6 +47,27 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
 
+### Added
+
+- **`plankton records` / `nekton records`** (#85) — every record with its signed envelope, the
+  Clause 12 `sync(since)` answer on stdout. `plankton show --json` now carries the envelope too: a
+  consumer that has to *verify* needs the bytes the signature stands over, and a projection is not
+  those bytes.
+- **`plankton attach` / `material`, `nekton attach` / `material`** (#62, #64) — bind external
+  verification material to a record by its content address (§8.1) and read back what is attached.
+  Stored, never evaluated.
+- **`kton anchor --store`** (#62) — record the verified Rekor entry on the record, which is what §13
+  asks for; without it the proof only ever reached stdout.
+- **`kton mirror --with-material`** (#62) — make this copy of the evidence complete, asking the peer
+  about every claim held rather than about the last sync batch.
+- **`--print-id`** on `nekton claim`, `annotate` and `seed` (#56) — the bare id alone on stdout, the
+  contract `plankton author` already had. `plankton add` too (#74).
+- **`--json`** on `plankton producer`/`uses`/`lineage`/`reproductions`/`reuse` and `nekton head`
+  (#57, #74, #89). A record's id is a named field there, so nothing has to assume it is the first
+  hash on a line — and `reproduces --json` reports its **level** as a field, which a signed
+  `reproduces` claim records and which the exit code cannot distinguish.
+- **`kton fetch --allow-local`** (#81) — see Security.
+
 ### Fixed
 
 - **`nekton seed --when` / `nekton annotate --when`** (#42). `when` is covered by the claim id, and a
@@ -119,6 +140,21 @@ build reading a format it does not know refuses loudly instead of reporting an e
   new layout while the property they test still held.
 
 ### Removed
+
+- **`kton serve`, and the whole HTTP server** (#83) — the largest breaking change in this release.
+  `federation.NewServer`, the nekton handler, the `serve` verb, and with them the `:8787`/`:8788`
+  defaults. **A consumer that read a registry over `/sync` must move to `plankton records --json
+  --since N` / `nekton records --json --since N`**, which return exactly the same document on stdout.
+
+  SPEC Clause 12 was restated first: the queries and the wire form are normative, the transport is
+  not, and the HTTP binding moved to informative Annex C. A specification of a protocol is not a
+  place to distribute a network service — a listening socket brings authentication, transport
+  security, rate limiting and request bounds with it, and those belong to a deployment. Writing a
+  server over the Clause 12 table is a small amount of code in any language, and
+  `reference/testdata/federation/` fixes the bytes it must produce.
+
+  The federation **client** is unaffected: `kton mirror` over a URL or a directory still works.
+
 
 - **`kton/reference/web/graph/`** (#72) - ~2500 lines of browser-facing code, and with it the
   `graph.wasm` release artifact, its `wasm_exec.js`, their checksums and the `graph.wasm.buildinfo`

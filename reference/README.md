@@ -67,12 +67,15 @@ PLANKTON_DIR=B plankton mirror ./A                 # B overlays A's metadata, no
 PLANKTON_DIR=B plankton producer <hash>            # B now resolves lineage locally
 ```
 
-**Network** federation is a cockpit concern - see `../kton/`:
+**Network** federation is a cockpit concern - see `../kton/`. kton ships the federation **client**
+and no server: SPEC Clause 12 makes the queries normative and leaves the transport unspecified
+(Annex C describes one HTTP binding), and a protocol reference is not a place to distribute a
+network service.
 
 ```
-PLANKTON_DIR=A kton serve plankton :8799           # A serves its graph over HTTP
-PLANKTON_DIR=B kton mirror plankton http://A:8799  # B pulls A's metadata over the network
-PLANKTON_DIR=B kton mirror plankton --pin http://A # …and pins the verified bytes
+plankton records --json --since 0                  # the Clause 12 sync answer, on stdout
+PLANKTON_DIR=B kton mirror plankton https://A      # B pulls A's metadata from any Clause 12 peer
+PLANKTON_DIR=B kton mirror plankton --pin https://A # …and verifies the bytes
 PLANKTON_DIR=B kton pin input.csv                  # pin bytes locally (optional blobstore)
 ```
 
@@ -85,9 +88,11 @@ lives in the optional `blobstore/` - the kernel still stores no bytes.
 ## Scope (Phase 0 + Phase 1)
 
 In: the kernel data model, canonical hashing, action key, DSSE verify, the four hash indexes,
-lineage/discovery/reuse queries, a CLI (Phase 0); the **HTTP federation API + `sync` +
-mirroring** (Phase 1). Out (later phases): **byte pinning** during mirror, Sigstore-keyless /
-transparency-log identity, a real KV/LSM backend, structured executors and adapters. Per
+lineage/discovery/reuse queries, a CLI (Phase 0); the **Clause 12 query set + `sync` + mirroring**
+(Phase 1) - answered on stdout by `records`, with the client for a network peer in `../kton/`, and
+no server. Shipped since: **byte pinning** during mirror (`kton mirror --pin`), Sigstore anchoring
+with the verified entry stored as §8.1 material (`kton anchor --store`). Out (later phases): a real
+KV/LSM backend, structured executors and adapters, key lifecycle and revocation. Per
 `../spec/SPEC.md` §10, execution / byte storage / UI are never the kernel.
 
 ## Known v0 limitations

@@ -39,12 +39,12 @@ usage:
         --add ingests it directly (one step, no file); --registry D picks the store.
   plankton author <spec.json> <key.hex> <out.dsse>    author + sign a foton from a spec file
   plankton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
+                                                      registry id; pubkey: a .pub file or the hex)
   plankton records [--json] [--since N]                every record WITH its signed envelope: the
                                                       SPEC §12 sync(since) answer, over stdout
   plankton attach <sha256:id> --scheme S --file F [--media M]  bind external evidence to a foton
                                                       (SPEC §8.1). Stored, NEVER evaluated.
   plankton material <sha256:id> [--json]              what evidence is attached to a foton
-                                                      registry id; pubkey: a .pub file or the hex)
   plankton add <envelope.dsse.json>... [--print-id] [--registry D]    ingest a signed foton into the registry (D or PLANKTON_DIR)
   plankton show <foton.dsse.json|sha256:id> [--json]  print a foton: command, environment, inputs, outputs
       --json on show/producer/uses/lineage/reproductions: the machine form. A record's id is a
@@ -79,10 +79,12 @@ usage:
   plankton mirror <local-registry-dir>                overlay a peer registry by hash (local, no network)
   plankton man                                        print the embedded manual page (roff)
 
-federation over the NETWORK (serving a port, mirroring a URL peer), transparency-log
-anchoring, and byte pinning are NOT kernel operations - the kernel opens no ports and needs
-no network. They live in the cockpit: see 'kton serve', 'kton mirror', 'kton anchor',
-'kton pin', 'kton blob'. Local overlay-by-hash (above) stays here: it is pure federation.
+federation over the NETWORK (mirroring a URL peer), transparency-log anchoring, and byte
+pinning are NOT kernel operations - the kernel opens no ports and needs no network. They
+live in the cockpit: see 'kton mirror', 'kton anchor', 'kton pin', 'kton blob', 'kton
+fetch'. Nothing in this repository serves a port at all: records --json --since N is the
+SPEC §12 sync answer on stdout, and a server over it is a deployment's job. Local
+overlay-by-hash (above) stays here: it is pure federation.
 
 env:
   PLANKTON_DIR   registry directory (default ./plankton-data)

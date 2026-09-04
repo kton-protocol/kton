@@ -48,8 +48,32 @@ The interop face: a claim RENDERS as a nanopublication (RDF/TriG) via
 The DSSE claim stays the stored/signed form.
 .SH COMMANDS
 .TP
-.B nekton keygen \fIname\fR
+.B nekton keygen \fIname\fR [--seed \fI64-hex\fR]
 Generate an Ed25519 identity (\fIname\fR.key / \fIname\fR.pub). Same format as plankton.
+\fB--seed\fR derives it deterministically so a corpus rebuilds to the same ids; fixtures only.
+.TP
+.B nekton pubkey \fIkey.key\fR|\fIhex\fR
+Print the public key hex - what \fBverify\fR, \fB--trust-keys\fR and viewer key directories read.
+.TP
+.B nekton keyid \fIkey.pub\fR|\fIkey.key\fR|\fIhex\fR
+Print the keyid shown as \fBby=key:\fR\fI<id>\fR.
+.TP
+.B nekton records [--json] [--since \fIN\fR]
+Every claim together with its signed envelope: the SPEC Clause 12 \fBsync(since)\fR answer on stdout.
+\fB--since\fR takes the cursor from the previous answer's \fBmax\fR.
+.TP
+.B nekton attach \fIsha256:id\fR --scheme \fIS\fR --file \fIF\fR [--media \fIM\fR]
+Bind external verification material to a claim by its content address (SPEC 8.1): a Sigstore bundle,
+a Rekor entry, an RFC 3161 token, an X.509 or eIDAS signature. It is stored beside the claim's own
+subnekton, so handing a scope over hands its evidence over too. Stored, NEVER evaluated.
+.TP
+.B nekton material \fIsha256:id\fR [--json]
+What verification material is attached to a record. Listed, not verified.
+.TP
+.B nekton nanopublish \fIclaim.dsse.json\fR [--rsa \fIkey.pem\fR] [--creator \fIIRI\fR] [-o \fIout\fR]
+Render a claim to its nanopublication face and RSA-sign it, minting a Trusty URI - the external
+publication projection (SPEC Clause 14). The projection's hash legitimately differs from the claim
+id; the binding back is an explicit provenance reference, never assumed hash equality.
 .TP
 .B nekton annotate \fIsubject\fR|--foton \fIF\fR --template \fIname\fR|\fIalias\fR --set \fIk\fR=\fIv\fR ... --sign \fIkey\fR [--by \fIID\fR] [--scope \fIid\fR --prev \fIid\fR] [--templates-dir \fID\fR] [-o \fIout\fR]
 Author + sign a claim from a template. The subject is a sha256:... , a URI, or \fB--foton \fIF\fR
