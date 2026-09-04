@@ -19,6 +19,18 @@ printf x > f
 
 sigs() { jq -s 'map(.envelope.signatures[]?.keyid)|unique|length' "$1"/objects/sha256/*.json 2>/dev/null || echo 0; }
 
+# POSITIVE CONTROL. `worst` starts at the PASSING value and is only ever lowered, so a setup that
+# authors nothing leaves it at 3 - and `[ "$n" -lt "$worst" ]` on an empty $n errors out rather than
+# firing, which is exactly how this PoC used to report PREVENTED against a binary that did nothing.
+# Prove one signature can be authored at all before racing three.
+( export PLANKTON_DIR="$W/ctl"; mkdir -p "$W/ctl"
+  plankton keygen a >/dev/null 2>&1
+  plankton author --cmd run --in f --out f --sign a.key --add >/dev/null 2>&1 )
+if [ "$(sigs "$W/ctl")" != "1" ]; then
+  echo "setup failed: a single signer could not author one record, so 'no signature was lost' proves nothing"
+  echo "VERDICT: INCONCLUSIVE"; exit 0
+fi
+
 worst=3
 for round in $(seq 1 12); do
   R="$W/r$round"; mkdir -p "$R"
@@ -29,7 +41,7 @@ for round in $(seq 1 12); do
     plankton author --cmd run --in f --out f --sign b.key --add >/dev/null 2>&1 &
     plankton author --cmd run --in f --out f --sign c.key --add >/dev/null 2>&1 &
     wait )
-  n=$(sigs "$R"); n=${n:-0}
+  n=$(sigs "$R"); case "$n" in ''|*[!0-9]*) n=0 ;; esac
   [ "$n" -lt "$worst" ] && worst=$n
 done
 
