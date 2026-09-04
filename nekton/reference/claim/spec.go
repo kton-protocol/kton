@@ -61,14 +61,50 @@ type Spec struct {
 // the author typed ...993, and CanonValue (which rejects an imprecise integer) never sees the real
 // value. With json.Number the big int survives to canonicalization and is REJECTED, so the signer
 // is told rather than silently signing a different number.
+// DisallowUnknownFields because encoding/json otherwise DROPS a field it does not know, in
+// silence. The trap that motivated this: a subject is written `{"hash":"sha256:..."}` on the way in
+// and rendered `{"digest":{"sha256":"..."}}` on the way out (SPEC §7.3, the in-toto form). Anyone
+// who reads a signed statement and reasons backwards writes `digest` - and got a claim whose subject
+// was `{}`. It signed, it verified, it indexed, and it was about nothing. Not one word of warning.
+//
+// A misspelling in a signed document must be an error, not an omission. This also catches every
+// other typo (`predicat`, `subjekt`, a misplaced `when`) at the one place a human writes the file.
 func ParseSpec(raw []byte) (Spec, error) {
 	var spec Spec
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(&spec); err != nil {
-		return Spec{}, err
+		return Spec{}, specFieldError(err)
 	}
 	return spec, nil
+}
+
+// specFieldError turns encoding/json's terse "unknown field" into something that says what to
+// write instead, for the spellings a reader of the SIGNED form would reasonably reach for.
+func specFieldError(err error) error {
+	msg := err.Error()
+	const unknown = `json: unknown field "`
+	i := strings.Index(msg, unknown)
+	if i < 0 {
+		return err
+	}
+	field := msg[i+len(unknown):]
+	if j := strings.IndexByte(field, '"'); j >= 0 {
+		field = field[:j]
+	}
+	switch field {
+	case "digest":
+		return fmt.Errorf("a claim spec names a subject with `hash` (\"sha256:<hex>\"), not `digest`. "+
+			"`digest: {sha256: ...}` is the in-toto form of the SIGNED statement (SPEC §7.3); the spec "+
+			"you hand to `nekton claim` uses the shorter `hash`. Writing `digest` here used to be "+
+			"accepted and silently produced a claim about NOTHING: %w", err)
+	case "subjects", "subj":
+		return fmt.Errorf("the field is `subject` (an array), not %q: %w", field, err)
+	default:
+		return fmt.Errorf("%w - a claim spec field this build does not know is refused rather than "+
+			"dropped, because a dropped field is signed away in silence", err)
+	}
 }
 
 // BareHash strips a multihash-style "sha256:" prefix, leaving the bare hex digest that the

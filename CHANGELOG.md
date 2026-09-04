@@ -64,6 +64,46 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
 
+### Fixed
+
+- **A claim spec could name a subject that silently disappeared** (#106). The authoring spec spells a
+  subject `hash: "sha256:…"`; the signed statement spells the same thing `digest: {sha256: …}` (the
+  in-toto form, SPEC §7.3). Anyone who read a signed statement and reasoned backwards wrote `digest`
+  in the spec — `encoding/json` dropped the field it did not know, and the subject rendered as `{}`.
+
+  ```
+  in                          out
+  {hash:"sha256:…"}           {digest:{sha256:…}}   ok
+  {name, hash:"sha256:…"}     {digest, name}        ok
+  {digest:{sha256:…}}         {}                    everything gone, in silence
+  {name, digest:{…}}          {name}                the hash gone, in silence
+  ```
+
+  The claim was then **signed, ingested, verified and attachable** — and about nothing. `about <hash>`
+  could never reach it, because it was about no hash. `show` printed `subject:` followed by an empty
+  line. Not one word of warning.
+
+  Three changes, because the hole had three mouths:
+
+  1. `Validate` now refuses a subject entry whose `Key()` is empty — neither a `digest` nor a `uri`.
+     Counting the subjects was never enough; `subject: []` was refused while `subject: [{}]` passed.
+     It sits at the gate **every** claim crosses, so a record arriving by mirror or by a git merge is
+     caught too, not only one authored locally. A `name` alone is a label, not an identity.
+  2. `ParseSpec` refuses an **unknown field** instead of dropping it, and says what to write instead
+     when it sees `digest`. A misspelling in a document about to be signed must never be an omission;
+     this also catches `predicat`, `subjects`, and every other typo at the one place a human writes
+     the file.
+  3. `verify` now reports the **structure** as well as the signature, in both kernels, and exits 3
+     when the signature is genuine but ingest would refuse the record. A valid signature says who
+     signed the bytes, not that the substrate will store them — so `verify` used to issue a clean
+     bill of health for a claim `add` rejects, and anyone who verified a file without adding it
+     believed it was good. Exit 0 now means genuine **and** storable; 1 and 2 keep their meanings.
+
+  Found by the examples workstream while writing claims by hand. One of the project's own test
+  fixtures had fallen into the same trap: `claim_test.go` built a Statement with `subject: [{"hash":
+  …}]`, which is the spec spelling in the wire position, and had been asserting over a claim about
+  nothing — green the whole time.
+
 ### Removed
 
 - **The HTTP federation client** (#101) — `kton mirror <url>`, the `kton/federation` package, and
@@ -184,6 +224,46 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Fixed
+
+- **A claim spec could name a subject that silently disappeared** (#106). The authoring spec spells a
+  subject `hash: "sha256:…"`; the signed statement spells the same thing `digest: {sha256: …}` (the
+  in-toto form, SPEC §7.3). Anyone who read a signed statement and reasoned backwards wrote `digest`
+  in the spec — `encoding/json` dropped the field it did not know, and the subject rendered as `{}`.
+
+  ```
+  in                          out
+  {hash:"sha256:…"}           {digest:{sha256:…}}   ok
+  {name, hash:"sha256:…"}     {digest, name}        ok
+  {digest:{sha256:…}}         {}                    everything gone, in silence
+  {name, digest:{…}}          {name}                the hash gone, in silence
+  ```
+
+  The claim was then **signed, ingested, verified and attachable** — and about nothing. `about <hash>`
+  could never reach it, because it was about no hash. `show` printed `subject:` followed by an empty
+  line. Not one word of warning.
+
+  Three changes, because the hole had three mouths:
+
+  1. `Validate` now refuses a subject entry whose `Key()` is empty — neither a `digest` nor a `uri`.
+     Counting the subjects was never enough; `subject: []` was refused while `subject: [{}]` passed.
+     It sits at the gate **every** claim crosses, so a record arriving by mirror or by a git merge is
+     caught too, not only one authored locally. A `name` alone is a label, not an identity.
+  2. `ParseSpec` refuses an **unknown field** instead of dropping it, and says what to write instead
+     when it sees `digest`. A misspelling in a document about to be signed must never be an omission;
+     this also catches `predicat`, `subjects`, and every other typo at the one place a human writes
+     the file.
+  3. `verify` now reports the **structure** as well as the signature, in both kernels, and exits 3
+     when the signature is genuine but ingest would refuse the record. A valid signature says who
+     signed the bytes, not that the substrate will store them — so `verify` used to issue a clean
+     bill of health for a claim `add` rejects, and anyone who verified a file without adding it
+     believed it was good. Exit 0 now means genuine **and** storable; 1 and 2 keep their meanings.
+
+  Found by the examples workstream while writing claims by hand. One of the project's own test
+  fixtures had fallen into the same trap: `claim_test.go` built a Statement with `subject: [{"hash":
+  …}]`, which is the spec spelling in the wire position, and had been asserting over a claim about
+  nothing — green the whole time.
 
 ### Removed
 
