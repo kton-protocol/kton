@@ -1,11 +1,26 @@
 # CLI design - `plankton` & `nekton` as bash tools
 
 > **Status: DESIGN SKETCH, and the implementation has overtaken it.** This is the command surface
-> that was *intended*, not the one that ships. As of 0.2, four of the fourteen verbs below exist —
-> `annotate`, `claim`, `show`, `templates` — and these ten do not: `claims`, `confirm`, `delegate`,
-> `equiv`, `qualify-env`, `review`, `risk-accept`, `serve`, `supersede`, `vote`. They exit 1 with the
-> usage banner, so a script fails loudly. Conversely this document never mentions `about`, `add`,
-> `by`, `export`, `head`, `keygen`, `mirror`, `seed` or `verify`, which do exist.
+> that was *intended*, not the one that ships. Read it as a design record, and take the shipping
+> surface from `nekton man` / `plankton man` — those were checked against the dispatch switch in
+> `main.go` and carry no phantoms.
+>
+> **Do not use the counts in this block to decide what exists.** An earlier revision said the
+> document "never mentions `about`, `add`, `by`, `export`, `head`, `keygen`, `mirror`, `seed` or
+> `verify`" — line 195 is literally `nekton serve | remote | sync | mirror | verify`. The count was
+> reached by overlooking that line, and the sentence a paragraph later overlooked it again. A
+> correction to a wrong document that is itself wrong is worse than the original, so this block no
+> longer counts anything.
+>
+> What is safe to say: **both halves of this document describe verbs that do not exist**, and the
+> earlier revision audited only the nekton half. On the plankton side that includes `record`,
+> `observe`, `id set`, `ray`, `compare`, `serve`/`remote`/`sync`, and an `add PATH [--pin]` that
+> takes an envelope and has no `--pin`. On the nekton side, `claims`, `confirm`, `delegate`, `equiv`,
+> `qualify-env`, `review`, `risk-accept`, `serve`, `supersede`, `vote`. All exit 1 with a usage
+> banner, so a script fails loudly rather than silently. There is also no config-file support
+> anywhere, despite the `~/.config/{plankton,nekton}/config.toml` line below.
+>
+> `serve` is doubly stale: it was removed from `kton` entirely in #83, and the kernels never had it.
 >
 > Two specifics worth naming, because they mislead rather than merely omit:
 >
@@ -18,9 +33,9 @@
 >   into any binary and there is no `nekton/templates/` in this repository. Regulated vocabulary
 >   ships as aliases and templates in the example repo, never as the protocol ontology.
 >
-> **For what this build actually has, run `nekton man`.** Its command list was checked against the
-> dispatch in `cmd/nekton/main.go`: identical, no phantoms. Read the document below as a design
-> record — output shown is illustrative and in places does not match the binary.
+> Output shown below is illustrative and in places does not match the binary — the worked
+> `templates --show` example prints `subject:` not `target:`, no `vocab:` line, and a different
+> context IRI.
 
 ## The hard invariant - read first
 

@@ -56,8 +56,38 @@ every reference output. Whether that fulfilment is \fIaccepted\fR as a validatio
 attestation - not plankton's verdict.
 .SH COMMANDS
 .TP
-.B plankton keygen \fIname\fR
+.B plankton keygen \fIname\fR [--seed \fI64-hex\fR]
 Generate an Ed25519 signing identity: writes \fIname\fR.key (secret) and \fIname\fR.pub.
+\fB--seed\fR derives it from a seed rather than the entropy pool, so a corpus or a snapshot rebuilds
+to the same record ids - the public key is inside every signed payload, so a random key per run moves
+every id. Fixtures only: such a key is exactly as strong as the seed behind it.
+.TP
+.B plankton pubkey \fIkey.key\fR|\fIhex\fR
+Print the public key hex. Needed because an identity can be written by hand (a bare 32-byte seed is a
+valid .key), and \fBverify\fR, \fB--trust-keys\fR and viewer key directories all read the public half.
+.TP
+.B plankton keyid \fIkey.pub\fR|\fIkey.key\fR|\fIhex\fR
+Print the keyid shown as \fBby=key:\fR\fI<id>\fR - maps a key back to the signer it identifies.
+.TP
+.B plankton records [--json] [--since \fIN\fR]
+Every record together with its signed envelope: the SPEC Clause 12 \fBsync(since)\fR answer, emitted
+on stdout rather than over a transport. \fB--since\fR takes the cursor from the previous answer's
+\fBmax\fR. This is the surface a consumer verifies against - a projection like \fBshow\fR does not
+carry the bytes a signature stands over.
+.TP
+.B plankton reproductions [--trust-keys \fIdir\fR] [--json] \fIsha256:output-hash\fR
+How many INDEPENDENT signers produced exactly these bytes. With \fB--trust-keys\fR only signers whose
+signature actually verifies are counted; without it the count is self-declared and forgeable, and is
+flagged as such. The JSON form marks \fBverified\fR per record, not once for the answer.
+.TP
+.B plankton attach \fIsha256:id\fR --scheme \fIS\fR --file \fIF\fR [--media \fIM\fR]
+Bind external verification material to a foton by its content address (SPEC 8.1): a Sigstore bundle,
+a Rekor entry, an RFC 3161 token, an X.509 or eIDAS signature. Stored, NEVER evaluated - deciding
+which issuers count is a consumer's trust policy. An unknown scheme is carried, not rejected; it only
+needs \fB--media\fR so a reader knows how to read the bytes.
+.TP
+.B plankton material \fIsha256:id\fR [--json]
+What verification material is attached to a record. Listed, not verified.
 .TP
 .B plankton author --in \fIF\fR --out \fIF\fR --cmd \fB"..."\fR [--kind \fIK\fR] [--environment \fIsha256:…\fR] [--sign \fIkey\fR] [-o \fIout\fR] [--add] [--registry \fID\fR]
 Author + sign a foton from files that ALREADY EXIST: it hashes each \fB--in\fR/\fB--out\fR file

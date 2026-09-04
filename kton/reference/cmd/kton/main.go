@@ -46,7 +46,7 @@ usage:
                          about CONTENT cannot vouch for a path on your machine.
   kton man                                 print the embedded manual page (roff)
 
-  <peer> is a URL (http://host:port, needs a running 'kton serve') OR a local registry
+  <peer> is a URL answering the SPEC §12 queries (this repo ships the CLIENT, not a server) OR a local registry
   directory (e.g. ../session-1/plankton-data) - a local peer is read directly, no port.
   --pin (plankton, URL peer only) also fetches and re-serves the verified bytes.
 

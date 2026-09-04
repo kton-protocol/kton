@@ -21,25 +21,26 @@ overlay-by-hash federation stays in the kernels (\fBplankton mirror\fR / \fBnekt
 directory); kton adds the network peer. Like the kernels, kton never executes your programs.
 .SH COMMANDS
 .TP
-.B kton serve plankton [\fIaddr\fR]
-Serve the plankton federation API over HTTP (default :8787).
-.TP
-.B kton serve nekton [\fIaddr\fR]
-Serve the nekton federation API over HTTP (default :8788).
-.TP
 .B kton mirror plankton \fIpeer\fR [--pin]
-Pull + persist a peer plankton registry. \fIpeer\fR is a URL (needs a running \fBkton serve\fR) or
-a local registry directory (read directly, no port). \fB--pin\fR (URL peer only) also fetches and
-re-serves the verified bytes.
+Pull + persist a peer plankton registry. \fIpeer\fR is a URL served by any implementation of the
+SPEC Clause 12 queries, or a local registry directory (read directly, no port). \fB--pin\fR (URL
+peer only) also fetches and verifies the bytes. kton ships the federation CLIENT and no server: the
+queries are normative, the transport is not (SPEC Annex C), and a listening socket carries
+authentication and rate-limiting obligations that belong to a deployment. \fBplankton records
+--json --since\fR \fIN\fR answers the same sync query on stdout.
 .TP
-.B kton mirror nekton \fIpeer\fR
-Pull + persist a peer nekton registry (URL or local directory).
+.B kton mirror nekton \fIpeer\fR [--with-material]
+Pull + persist a peer nekton registry (URL or local directory). \fB--with-material\fR additionally
+makes this copy of the SPEC 8.1 verification material complete, asking the peer about every claim
+held rather than about the last batch - material is attached out of band and after the fact, so a
+batch would miss it.
 .TP
-.B kton anchor \fIenvelope.dsse.json\fR \fIpubkey.pub\fR|\fIhex\fR
+.B kton anchor \fIenvelope.dsse.json\fR \fIpubkey.pub\fR|\fIhex\fR [--store]
 Anchor a signed record in the Rekor transparency log (Sigstore) and verify the inclusion proof at
-anchor time. NOTE: the proof is printed to stdout, not (yet) embedded in the record, and there is no
-offline re-verification of a saved proof - see the spec's long-term-verifiability clause. The
-public key may be a .pub file path or the hex string.
+anchor time. \fB--store\fR records the verified entry as SPEC 8.1 verification material on the
+record, which is what the long-term-verifiability clause asks for; without it the proof only reaches
+stdout, and a year from now verification depends on the service still answering. There is still no
+offline re-verification of a saved proof. The public key may be a .pub file path or the hex string.
 .TP
 .B kton pin \fIfile\fR
 Pin a file's bytes into the plankton blob store (optional; the kernel stores no bytes).
@@ -47,10 +48,19 @@ Pin a file's bytes into the plankton blob store (optional; the kernel stores no 
 .B kton blob \fIsha256:...\fR
 Is this content pinned locally?
 .TP
-.B kton fetch \fIsha256:...\fR
-Resolve content to its bytes via signed nekton \fBlocated-at\fR claims (predicate
-\fBdcat:downloadURL\fR): dereference each suggested URI, verify the SHA-256, and pin. Fails if no
-signed location claim exists for the hash. The kernels never resolve URIs - this is a cockpit job.
+.B kton fetch \fIsha256:...\fR --trust-keys \fIdir\fR [--allow-local]
+Resolve content to its bytes via nekton \fBlocated-at\fR claims (predicate \fBdcat:downloadURL\fR)
+\fBsigned by a key you named\fR: dereference each verified URI, verify the SHA-256, and pin.
+.B --trust-keys
+is REQUIRED, and it is a directory of .pub keys. Ingest does not verify signatures (the wire carries
+a keyid, not a key), so "the claim is in the registry" says nothing about who put it there -
+without a trust policy the locators are listed and nothing is opened. Dereferencing is a request
+made from this host, and for \fBfile://\fR a read of this disk, which the hash check afterwards
+cannot undo.
+.B --allow-local
+additionally permits \fBfile://\fR and addresses on this host or network; both are refused by
+default, redirects are re-checked against the same rule, and the body is bounded. The kernels never
+resolve URIs - this is a cockpit job.
 .TP
 .B kton man
 Print this manual page (roff source; pipe to \fBman -l -\fR to render). Embedded in the binary.
@@ -62,22 +72,35 @@ plankton registry directory (default ./plankton-data).
 .B NEKTON_DIR
 nekton registry directory (default ./nekton-data).
 .SH EXAMPLES
-Share one session's results with another over the network:
-.RS
-.nf
-
-  # session A
-  PLANKTON_DIR=A kton serve plankton :8787
-  # session B
-  PLANKTON_DIR=B kton mirror plankton http://localhost:8787
-.fi
-.RE
-.PP
-Or, with no server at all, mirror a local directory with the kernel:
+Share one session's results with another, with no network at all:
 .RS
 .nf
 
   PLANKTON_DIR=B plankton mirror ../A/plankton-data
+.fi
+.RE
+.PP
+Over a network, against any peer that answers the SPEC Clause 12 queries:
+.RS
+.nf
+
+  PLANKTON_DIR=B kton mirror plankton https://peer.example
+.fi
+.RE
+.PP
+Read a registry's records - envelopes included - as the same document a peer would be served:
+.RS
+.nf
+
+  plankton records --json --since 0
+.fi
+.RE
+.PP
+Fetch content, naming whose locations you accept:
+.RS
+.nf
+
+  kton fetch sha256:... --trust-keys ./trusted-keys
 .fi
 .RE
 .SH "SEE ALSO"

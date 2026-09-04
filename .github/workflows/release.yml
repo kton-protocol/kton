@@ -65,9 +65,3 @@ jobs:
           files: |
             ${{ env.ASSET }}
             ${{ env.ASSET }}.sha256
-
-  # The browser build. Separate from the matrix above: it is one artifact for every platform, and it
-  # is the one a consumer CANNOT build for themselves without a Go toolchain - which is the whole
-  # reason to ship it. `-trimpath` is not optional here: without it the binary embeds the CI runner's
-  # checkout path, so the same source would hash differently on every machine and the sha256 below
-  # would attest to nothing.

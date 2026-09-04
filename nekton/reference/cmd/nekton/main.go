@@ -40,16 +40,16 @@ usage:
   nekton templates [--show <name>]                    list templates + aliases; --show prints a template's fields
   nekton show <claim.dsse.json|sha256:id> [--json]             print a claim: subject, predicate, statement, signer
   nekton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
+                                                      registry id; pubkey: a .pub file or the hex)
   nekton records [--json] [--since N]                  every claim WITH its signed envelope: the
                                                       SPEC §12 sync(since) answer, over stdout
   nekton attach <sha256:id> --scheme S --file F [--media M]   bind external evidence to a record (SPEC §8.1):
                                                       a Sigstore bundle, a Rekor entry, an RFC 3161 token, an
                                                       X.509/CAdES or eIDAS signature. Stored, NEVER evaluated.
   nekton material <sha256:id> [--json]                what evidence is attached to a record
-                                                      registry id; pubkey: a .pub file or the hex)
   nekton add <envelope.dsse.json> [--registry D]      ingest a signed claim (D or NEKTON_DIR)
-  nekton about <subject>                              claims about a subject (hash "sha256:..." or uri)
-  nekton by <signer|predicate|object> <value>         claims by signer keyid / predicate (template/CURIE/IRI) / object
+  nekton about <subject> [--json]                     claims about a subject (hash "sha256:..." or uri)
+  nekton by <signer|predicate|object> <value> [--json]  claims by signer keyid / predicate (template/CURIE/IRI) / object
   nekton head <scope-id> [--json]                              the tip of a scope's chain (publish/anchor it to seal history)
   nekton export [--title T] [out]                     serialize claims as JSON (for the Navigator join)
   nekton export --nanopub <claim.dsse.json> [-o out]  render a claim to its nanopublication (RDF/TriG) face
