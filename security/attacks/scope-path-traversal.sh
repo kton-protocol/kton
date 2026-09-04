@@ -21,6 +21,19 @@ export NEKTON_DIR="$W/reg"
 nekton keygen k >/dev/null 2>&1
 H="sha256:$(printf x | sha256sum | cut -d' ' -f1)"
 
+# POSITIVE CONTROL. Everything below asserts that something did NOT happen - no file outside the
+# store, the victim file untouched. A binary that never ran satisfies all of it. So first prove the
+# binary works and that a claim of this exact shape, with a LEGITIMATE scope, does land in the
+# store; only then does "the hostile one did not" mean anything.
+printf '{"subject":[{"hash":"%s"}],"predicate":"https://kton.dev/v/note","object":{"ok":"1"},"by":"a","when":"2026-07-16T00:00:00Z"}' \
+  "$H" > control.json
+nekton claim control.json k.key --add >/dev/null 2>&1
+control=$(find "$W/reg/objects" -name '*.nekton.jsonl' -exec cat {} + 2>/dev/null | grep -c .)
+if [ "${control:-0}" -lt 1 ]; then
+  echo "setup failed: a benign claim did not reach the store either, so 'the attack wrote nothing' proves nothing"
+  echo "VERDICT: INCONCLUSIVE"; exit 0
+fi
+
 # 1) escape: write outside the store
 printf '{"subject":[{"hash":"%s"}],"predicate":"https://kton.dev/v/note","object":{"x":"1"},"by":"a","when":"2026-07-16T00:00:00Z","scope":"sha256:../../../../%s/ESCAPED","prev":"%s"}' \
   "$H" "$(basename "$W")" "$H" > escape.json

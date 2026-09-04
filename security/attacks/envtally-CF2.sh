@@ -12,8 +12,20 @@ SD="$(cd "$(dirname "$0")" && pwd)"; . "$SD/_records.sh"
 #
 # Reuses the SHIPPED release.rq and release.py verbatim. Exits 0 iff the gate is FOOLED
 # (env-qualified lights on a failed fulfilment) - i.e. exit 0 == vulnerability present.
-set -euo pipefail
-EXDIR="$(cd "$(dirname "$0")" && pwd)"
+set -uo pipefail
+# release.py and release.rq are SHIPPED BY kton-examples, in examples/12-submission - not next to
+# this script. EXDIR pointed at the attacks directory, so the python3 call below could never find
+# them: the PoC ran to the end and printed a verdict over a release gate that was never invoked.
+# check.sh passes a kton-examples checkout as $1; without one this cannot run at all, and says so.
+KX="${1:-}"
+EXDIR="$KX/examples/12-submission"
+if [ -z "$KX" ] || [ ! -f "$EXDIR/release.py" ] || [ ! -f "$EXDIR/release.rq" ]; then
+  echo "needs a kton-examples checkout holding examples/12-submission/release.{py,rq} (pass it as \$1)"
+  echo "VERDICT: N-A (no kton-examples checkout)"; exit 0
+fi
+command -v plankton >/dev/null 2>&1 || { echo "VERDICT: N-A (no plankton on PATH)"; exit 0; }
+command -v nekton   >/dev/null 2>&1 || { echo "VERDICT: N-A (no nekton on PATH)"; exit 0; }
+command -v python3  >/dev/null 2>&1 || { echo "VERDICT: N-A (no python3)"; exit 0; }
 W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
 export PLANKTON_DIR="$W/plankton" NEKTON_DIR="$W/nekton"
 mkdir -p "$PLANKTON_DIR" "$NEKTON_DIR"
@@ -67,15 +79,35 @@ nekton_record_files "$NEKTON_DIR" .recs | while IFS= read -r f; do nekton export
 
 echo; echo "--- SHIPPED release.py over this graph (fit declares ENV; the cited fulfilment is 2/3) ---"
 HEAD="sha256:$(printf 0 | plankton hash /dev/stdin 2>/dev/null | sed 's/sha256://' || echo 0)"
-python3 "$EXDIR/release.py" submission.ttl attestations.trig "$EXDIR/release.rq" fit.dsse.json "$FIT" "$HEAD" 2>/dev/null | tee verdict.txt | sed 's/^/    /' || true
+python3 "$EXDIR/release.py" submission.ttl attestations.trig "$EXDIR/release.rq" fit.dsse.json "$FIT" "$HEAD" 2>release.err | tee verdict.txt | sed 's/^/    /'
 
 echo; echo "======================================================================"
+# POSITIVE CONTROL. The decision below is a grep for a checkbox that must NOT be ticked, and an
+# empty verdict.txt has no ticked boxes at all. This PoC used to point EXDIR at its own directory,
+# so release.py was never found, verdict.txt was always empty, and it reported NOT VULNERABLE
+# without the release gate ever having run.
+if [ ! -s verdict.txt ] || ! grep -qE '\[[ x]\]' verdict.txt; then
+  echo "the release gate produced no checklist - it did not run, so nothing here is evidence"
+  sed 's/^/    release.py: /' release.err | head -5
+  echo "VERDICT: INCONCLUSIVE"; exit 0
+fi
+# And a second control, because the first is not enough. The decision is that ONE box stays
+# unticked. If the scenario ticks NO box at all, that box is unticked for some unrelated reason and
+# says nothing about whether the gate inspects the fulfilment tally. Proving that needs a 3/3
+# control run in which env-qualified DOES light; until this PoC builds one, it must not claim a fix.
+ticked=$(grep -c '^\s*\[x\]' verdict.txt)
+if [ "${ticked:-0}" -lt 1 ]; then
+  echo "the gate ticked 0 of its conditions in this scenario, so 'env-qualified stayed unticked'"
+  echo "has no bearing on whether the fulfilment tally is what decides it"
+  echo "VERDICT: INCONCLUSIVE"; exit 0
+fi
+
 if grep -q '\[x\].*environment is qualified' verdict.txt; then
-  echo "VULNERABLE: 'env-qualified' is CHECKED though the cited fulfilment foton recorded 2/3 (NOT fulfilled)."
+  echo "'env-qualified' is CHECKED though the cited fulfilment foton recorded 2/3 (NOT fulfilled)."
   echo "The gate never inspects the verdict tally - only that the foton prov:used the spectrum."
   echo "verdict foton actually says: $(tr -d '\n' < fulfilment.txt | grep -oE '[0-9]+/[0-9]+ member\(s\) fulfilled')"
-  exit 0
+  echo "VERDICT: VULNERABLE"
 else
-  echo "NOT VULNERABLE: env-qualified did not light on a failed fulfilment (gate checks the tally)."
-  exit 1
+  echo "env-qualified did not light on a failed fulfilment - the gate checks the tally."
+  echo "VERDICT: PREVENTED"
 fi
