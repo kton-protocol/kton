@@ -31,8 +31,6 @@ CI enforces all of this - see `../scripts/check-import-direction.sh`.
 ## CLI
 
 ```
-kton serve  plankton [addr]              serve the plankton federation API (default :8787)
-kton serve  nekton   [addr]              serve the nekton   federation API (default :8788)
 kton mirror plankton <peer> [--pin]      pull+persist a peer plankton registry (URL or local dir)
 kton mirror nekton   <peer>              pull+persist a peer nekton   registry (URL or local dir)
 kton anchor <envelope.dsse.json> <pubkey.hex>   anchor a signed record in Rekor

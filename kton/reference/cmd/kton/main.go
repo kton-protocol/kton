@@ -10,15 +10,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 
 	"kton.dev/plankton/blobstore"
 	"kton.dev/plankton/core"
-	"kton.dev/kton/federation"
 	preg "kton.dev/plankton/registry"
 
 	nreg "kton.dev/nekton/registry"
@@ -27,21 +23,28 @@ import (
 const usage = `kton - the cockpit that conducts plankton + nekton (reimplements nothing)
 
 usage:
-  kton serve  plankton [addr]              serve the plankton federation API (default :8787)
-  kton serve  nekton   [addr]              serve the nekton   federation API (default :8788)
-  kton mirror plankton <peer> [--pin]      pull+persist a peer plankton registry
-  kton mirror nekton   <peer>              pull+persist a peer nekton   registry
-  kton anchor <envelope.dsse.json> <pubkey.pub|hex>
+  kton mirror plankton <dir>               pull+persist a peer plankton registry
+  kton mirror nekton   <dir>               pull+persist a peer nekton registry
+  kton anchor <envelope.dsse.json> <pubkey.pub|hex> [--store]
                                            anchor a signed record in the Rekor transparency log
-  kton pin    <file>                       pin a file's bytes into the plankton blob store
-  kton blob   <sha256:...>                 is this content pinned locally?
-  kton fetch  <sha256:...>                 resolve content via signed nekton located-at claims,
-                                           dereference the URIs, verify sha256, and pin
+      --store            record the verified entry as §8.1 verification material ON the record,
+                         which is what §13 asks for - otherwise the proof is only printed, and a
+                         year from now verification depends on the service still answering
+  kton pin    <file>                       DEPRECATED - use 'plankton pin'
+  kton blob   <sha256:...>                 DEPRECATED - use 'plankton blob'
+      both moved to the kernel: pinning needs no address, only a hash, so it is not a cockpit
+      capability. They still work and reach the SAME store; they go when the cockpit leaves.
+  kton fetch  <sha256:...> --trust-keys <dir> [--allow-local]
+                                           resolve content via located-at claims signed by a key
+                                           you named, dereference, verify sha256, and pin.
+      --allow-local      also accept file:// and addresses on this host/network. A signature
+                         about CONTENT cannot vouch for a path on your machine.
   kton man                                 print the embedded manual page (roff)
 
-  <peer> is a URL (http://host:port, needs a running 'kton serve') OR a local registry
-  directory (e.g. ../session-1/plankton-data) - a local peer is read directly, no port.
-  --pin (plankton, URL peer only) also fetches and re-serves the verified bytes.
+  <dir> is a local registry directory (e.g. ../session-1/plankton-data), read directly - no
+  server, no port. Mirroring a peer over a NETWORK is a cockpit capability and lives in the
+  cockpit repository: this repository holds the protocol, and the protocol is about bytes, not
+  about which transport carries them (SPEC §12 - the queries are normative, the transport is not).
 
 env:
   PLANKTON_DIR   plankton registry dir (default ./plankton-data)
@@ -82,9 +85,22 @@ func readEnvelope(path string) (core.Envelope, error) {
 	return env, json.Unmarshal(b, &env)
 }
 
-// isURL reports whether a peer reference is an HTTP endpoint (vs a local directory).
-func isURL(peer string) bool {
-	return strings.HasPrefix(peer, "http://") || strings.HasPrefix(peer, "https://")
+// refuseNetworkPeer rejects a peer given as a URL, and says where that capability went.
+//
+// It is a REFUSAL, not a branch. This repository holds the protocol, and a protocol is about bytes
+// - not about which other protocol carries them somewhere. Mirroring over HTTP lived here, had no
+// caller anywhere (25 uses of `kton mirror`, none with a URL), and brought four unbounded HTTP
+// clients with it. SPEC §12 fixes the queries and the wire form and leaves the transport
+// unspecified; `plankton records --json --since N` answers sync(since) over stdout, which is what a
+// cockpit reads.
+func refuseNetworkPeer(peer string) error {
+	if !strings.HasPrefix(peer, "http://") && !strings.HasPrefix(peer, "https://") {
+		return nil
+	}
+	return fmt.Errorf("%s is a network peer, and this repository carries no network transport.\n"+
+		"  A peer over HTTP is a cockpit capability: point the cockpit at it, or mirror a local\n"+
+		"  registry directory here. SPEC §12 leaves the transport unspecified - the queries are\n"+
+		"  normative, the binding is not.", peer)
 }
 
 func run(cmd string, args []string) error {
@@ -93,7 +109,7 @@ func run(cmd string, args []string) error {
 		fmt.Print(usage)
 		return nil
 	case "--version", "-v", "version":
-		fmt.Println("kton 0.1 (reference)")
+		fmt.Println("kton 0.2 (reference)")
 		return nil
 	}
 	for _, a := range args {
@@ -106,58 +122,40 @@ func run(cmd string, args []string) error {
 	case "man":
 		fmt.Print(manPage)
 		return nil
-	case "serve":
-		if len(args) < 1 {
-			return fmt.Errorf("usage: kton serve <plankton|nekton> [addr]")
-		}
-		addr := ""
-		if len(args) >= 2 {
-			addr = args[1]
-		}
-		switch args[0] {
-		case "plankton":
-			if addr == "" {
-				addr = ":8787"
-			}
-			fmt.Printf("plankton federation API on %s  (registry %s)\n", addr, planktonDir())
-			return http.ListenAndServe(addr, federation.NewServer(planktonDir()))
-		case "nekton":
-			if addr == "" {
-				addr = ":8788"
-			}
-			fmt.Printf("nekton federation API on %s  (registry %s)\n", addr, nektonDir())
-			return http.ListenAndServe(addr, nektonServer(nektonDir()))
-		default:
-			return fmt.Errorf("usage: kton serve <plankton|nekton> [addr]")
-		}
-
 	case "mirror":
-		if len(args) < 2 {
-			return fmt.Errorf("usage: kton mirror <plankton|nekton> <peer> [--pin]")
+		if len(args) != 2 {
+			return fmt.Errorf("usage: kton mirror <plankton|nekton> <local-registry-dir>")
 		}
 		which, peer := args[0], strings.TrimRight(args[1], "/")
-		pin := false
-		for _, a := range args[2:] {
-			if a == "--pin" {
-				pin = true
-			}
-		}
 		switch which {
 		case "plankton":
-			return mirrorPlankton(planktonDir(), peer, pin)
+			return mirrorPlankton(planktonDir(), peer)
 		case "nekton":
 			return mirrorNekton(nektonDir(), peer)
 		default:
-			return fmt.Errorf("usage: kton mirror <plankton|nekton> <peer> [--pin]")
+			return fmt.Errorf("usage: kton mirror <plankton|nekton> <local-registry-dir>")
 		}
 
 	case "anchor":
-		if len(args) != 2 {
-			return fmt.Errorf("usage: kton anchor <envelope.dsse.json> <pubkey.pub|hex>")
+		anchorArgs, store := []string{}, false
+		for _, a := range args {
+			if a == "--store" {
+				store = true
+				continue
+			}
+			anchorArgs = append(anchorArgs, a)
 		}
-		return anchor(args[0], args[1])
+		if len(anchorArgs) != 2 {
+			return fmt.Errorf("usage: kton anchor <envelope.dsse.json> <pubkey.pub|hex> [--store]\n" +
+				"  --store records the verified entry as verification material on the record (SPEC §8.1, §13)")
+		}
+		return anchor(anchorArgs[0], anchorArgs[1], store)
 
 	case "pin":
+		// MOVED to plankton (#102): pinning needs no address, only a hash, so it is a kernel
+		// operation. Kept here until the cockpit leaves this repository (#103) so kton-examples and
+		// any script does not break on the same day the command moves.
+		fmt.Fprintln(os.Stderr, "note: `kton pin` moved to `plankton pin`; this spelling is deprecated and will be removed")
 		if len(args) != 1 {
 			return fmt.Errorf("usage: kton pin <file>")
 		}
@@ -165,7 +163,7 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
-		bs, err := blobstore.Open(filepath.Join(planktonDir(), federation.BlobsSubdir))
+		bs, err := blobstore.OpenFor(planktonDir())
 		if err != nil {
 			return err
 		}
@@ -177,11 +175,12 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "blob":
+		fmt.Fprintln(os.Stderr, "note: `kton blob` moved to `plankton blob`; this spelling is deprecated and will be removed")
 		if len(args) != 1 {
 			return fmt.Errorf("usage: kton blob <sha256:...>")
 		}
 		h := normalizeHash(args[0]) // accept bare-hex / UPPERCASE / whitespace spellings of the same hash
-		bs, err := blobstore.Open(filepath.Join(planktonDir(), federation.BlobsSubdir))
+		bs, err := blobstore.OpenFor(planktonDir())
 		if err != nil {
 			return err
 		}
@@ -203,10 +202,32 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "fetch":
-		if len(args) != 1 {
-			return fmt.Errorf("usage: kton fetch <sha256:...>")
+		var fHash, fTrust string
+		fLocal := false
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "--trust-keys":
+				i++
+				if i >= len(args) {
+					return fmt.Errorf("--trust-keys expects a directory of *.pub keys")
+				}
+				fTrust = args[i]
+			case "--allow-local":
+				fLocal = true
+			default:
+				if strings.HasPrefix(args[i], "--") {
+					return fmt.Errorf("unknown flag %q", args[i])
+				}
+				fHash = args[i]
+			}
 		}
-		return fetch(args[0])
+		if fHash == "" {
+			return fmt.Errorf("usage: kton fetch <sha256:...> --trust-keys <dir> [--allow-local]\n" +
+				"  a located-at claim is a SUGGESTION from whoever signed it. Dereferencing one is a\n" +
+				"  request from this host - and for file://, a read of this disk - which the hash check\n" +
+				"  afterwards cannot undo. So it happens only for signers you named.")
+		}
+		return fetch(fHash, fTrust, fLocal)
 
 	default:
 		fmt.Print(usage)
@@ -214,28 +235,18 @@ func run(cmd string, args []string) error {
 	}
 }
 
-// mirrorPlankton pulls a peer plankton registry into the local one. A URL peer uses the HTTP
-// federation client (optionally pinning bytes); a local-directory peer is read directly - the
-// zero-ceremony path the lab uses for cross-session discovery (no server, no port).
-func mirrorPlankton(localDir, peer string, pin bool) error {
+// mirrorPlankton pulls a peer plankton registry into the local one. The peer is a directory on this
+// filesystem, read directly - the zero-ceremony path the lab uses for cross-session discovery: no
+// server, no port. Reading a peer's append-only log and re-adding its signed fotons is a DATA
+// operation and stays here; reaching a peer across a network is a transport, and transports are a
+// cockpit concern (SPEC §12 leaves the transport unspecified; §1 puts hosting out of scope).
+func mirrorPlankton(localDir, peer string) error {
 	local, err := preg.Open(localDir)
 	if err != nil {
 		return err
 	}
-	if isURL(peer) {
-		var bs *blobstore.Store
-		if pin {
-			if bs, err = blobstore.Open(filepath.Join(localDir, federation.BlobsSubdir)); err != nil {
-				return err
-			}
-		}
-		added, pinned, err := federation.Mirror(nil, local, bs, peer)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("mirrored %s: %d new record(s), %d blob(s) pinned; registry holds %d fotons\n",
-			peer, added, pinned, local.Len())
-		return nil
+	if err := refuseNetworkPeer(peer); err != nil {
+		return err
 	}
 	if fi, err := os.Stat(peer); err != nil || !fi.IsDir() {
 		return fmt.Errorf("peer registry %q does not exist (nothing to mirror)", peer)
@@ -261,8 +272,8 @@ func mirrorNekton(localDir, peer string) error {
 	if err != nil {
 		return err
 	}
-	if isURL(peer) {
-		return nektonHTTPMirror(local, peer)
+	if err := refuseNetworkPeer(peer); err != nil {
+		return err
 	}
 	if fi, err := os.Stat(peer); err != nil || !fi.IsDir() {
 		return fmt.Errorf("peer registry %q does not exist (nothing to mirror)", peer)
@@ -317,95 +328,10 @@ func settleAdd(add func(core.Envelope) (string, bool, error), envs []core.Envelo
 // SPEC §6: claims by subject/object/signer/predicate + sync/mirror. This is cockpit surface,
 // not kernel - it opens a port, so it lives here.
 
-type syncResp struct {
-	Records []nreg.Record `json:"records"`
-	Max     int           `json:"max"`
-}
-
-func nektonServer(d string) http.Handler {
-	mux := http.NewServeMux()
-	open := func(w http.ResponseWriter) (*nreg.Registry, bool) {
-		r, err := nreg.Open(d)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return nil, false
-		}
-		return r, true
-	}
-	writeJSON := func(w http.ResponseWriter, v any) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(v)
-	}
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		r, ok := open(w)
-		if !ok {
-			return
-		}
-		writeJSON(w, map[string]any{"ok": true, "claims": r.Len(), "maxSeq": r.MaxSeq()})
-	})
-	mux.HandleFunc("/claims", func(w http.ResponseWriter, req *http.Request) {
-		r, ok := open(w)
-		if !ok {
-			return
-		}
-		q := req.URL.Query()
-		var recs []nreg.Record
-		switch {
-		case q.Get("subject") != "":
-			recs = r.About(q.Get("subject"))
-		case q.Get("object") != "":
-			recs = r.ByObject(q.Get("object"))
-		case q.Get("signer") != "":
-			recs = r.BySigner(q.Get("signer"))
-		case q.Get("predicate") != "":
-			recs = r.ByPredicate(q.Get("predicate"))
-		}
-		writeJSON(w, map[string]any{"records": envsOf(recs)})
-	})
-	mux.HandleFunc("/sync", func(w http.ResponseWriter, req *http.Request) {
-		r, ok := open(w)
-		if !ok {
-			return
-		}
-		since, _ := strconv.Atoi(req.URL.Query().Get("since"))
-		recs := r.Records(since)
-		if recs == nil {
-			recs = []nreg.Record{}
-		}
-		writeJSON(w, syncResp{Records: recs, Max: r.MaxSeq()})
-	})
-	return mux
-}
-
 func envsOf(recs []nreg.Record) []core.Envelope {
 	out := make([]core.Envelope, 0, len(recs))
 	for _, rec := range recs {
 		out = append(out, rec.Envelope)
 	}
 	return out
-}
-
-func nektonHTTPMirror(local *nreg.Registry, peer string) error {
-	resp, err := http.Get(fmt.Sprintf("%s/sync?since=%d", peer, local.PeerCursor(peer)))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("peer %s: %s", peer, resp.Status)
-	}
-	var sr syncResp
-	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
-		return err
-	}
-	envs := make([]core.Envelope, 0, len(sr.Records))
-	for _, rec := range sr.Records {
-		envs = append(envs, rec.Envelope)
-	}
-	added, skipped := settleAdd(local.Add, envs)
-	if err := local.SetPeerCursor(peer, sr.Max); err != nil {
-		return err
-	}
-	fmt.Printf("mirrored %s: %d new, %d skipped; registry holds %d claim(s)\n", peer, added, skipped, local.Len())
-	return nil
 }

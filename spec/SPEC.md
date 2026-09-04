@@ -40,22 +40,35 @@ executes**.
 This specification defines:
 
 - the **canonicalization** and **content-addressing** rules by which record identity is computed
-  (Clause 5);
+  (Clause 5); <!-- scope:in canonicalization -->
 - the **plankton** result format - `FileRef`, `Foton`, action key, potentials, optional environment -
-  and its wire form (Clause 6);
+  and its wire form (Clause 6); <!-- scope:in plankton-format -->
 - the **nekton** attestation format - `Ref`, `TermRef`, `Claim`, and the scope/seed/chain grammar -
-  and its wire form (Clause 7);
-- the shared **signature and identity** model (Clause 8);
+  and its wire form (Clause 7); <!-- scope:in nekton-format -->
+- the shared **signature and identity** model (Clause 8), including where external verification
+  material - identity and time evidence produced by other schemes - attaches (Clause 8.1);
+  <!-- scope:in signing-model --> <!-- scope:in verification-material -->
 - **reproduction and normalization** semantics (Clause 9) and **tool/environment qualification**
-  (Clause 10);
+  (Clause 10); <!-- scope:in reproduction --> <!-- scope:in tool-qualification -->
 - **registry resolution** and the completeness/validity distinction (Clause 11), **federation and
   aggregation** (Clause 12), and **conformance** (Clause 15).
+  <!-- scope:in registry-resolution --> <!-- scope:in federation -->
 
 The following are **out of scope** (implementation choices; no patent commitment attaches):
-specific transports and hosting (git, GitHub, HTTP, object stores); specific signing backends
-(Sigstore, RSA/nanopublication, a particular transparency log); specific tools, executors, and
-cockpits; and the reference source code (licensed separately, Apache-2.0). See
-`../community-specification/02-scope.md`.
+specific transports and hosting (git, GitHub, HTTP, object stores) <!-- scope:out transports -->;
+specific signing backends (Sigstore, RSA/nanopublication, a particular transparency log, an eIDAS
+trust service) <!-- scope:out signing-backends --> and the evaluation of any evidence they produce
+<!-- scope:out evidence-evaluation -->; **document-rendered signature forms** such as signed PDFs,
+which sign a rendering rather than the record and are therefore projections (Clause 14, and 8.1)
+<!-- scope:out document-rendered -->; specific tools, executors, and cockpits
+<!-- scope:out tools-and-cockpits -->; and the reference source code (licensed separately,
+Apache-2.0) <!-- scope:out reference-code -->.
+
+The **patent** Scope of this Working Group - what the Community Specification License commits - is
+defined by `../community-specification/02-scope.md`, not by this clause. The two are deliberately
+kept in step and `scripts/check-scope-drift.sh` fails CI if they diverge, but they answer different
+questions: this clause says what *this document* specifies, that file says what the commitment
+covers.
 
 A conforming implementation MUST NOT require any particular cockpit, executor, transport, or hosting
 provider, and MUST NOT execute the protocols, normalizers, or tools that records describe.
@@ -83,7 +96,13 @@ provider, and MUST NOT execute the protocols, normalizers, or tools that records
 - **scope / seed** - the structural chain grammar for accountable claim ordering (Clause 7.4).
 - **spectrum** - the object that defines a tool or environment by a reference foton set (Clause 10).
 - **reproduction level** - L0 byte-identical / L1 canonical-identical / L2 within-tolerance (Clause 9).
+- **kernel** - an implementation of the record layer itself: canonicalization, identity, storage,
+  indexing, resolution and verification. Requirements addressed to "a conforming kernel" bind that
+  layer, whether it ships as a library or behind a command-line tool. A *cockpit* (a tool that
+  drives a kernel), an *executor* and an *aggregator* are not kernels.
 - **aggregator** - a discovery index over records; not a store and not a trust anchor (Clause 12).
+- **verification material** - external evidence *about* a record - who signed it, or that it existed
+  by a given time - bound to the record by its content address and opaque to the kernel (Clause 8.1).
 
 ## 4 Conventions
 
@@ -340,7 +359,11 @@ PAE = "DSSEv1 " + len(payloadType) + " " + payloadType + " " + len(payload) + " 
   verifies. `verify` MUST report the **verifying** key's keyid on success (and SHOULD flag a declared
   keyid that differs from it); a reader MUST NOT present an unverified declared keyid as authoritative.
 - A conforming kernel MUST be able to verify a signature on demand (`verify`, which succeeds if **any**
-  of an envelope's signatures verifies) and MUST NOT itself produce signatures. It does **not** verify
+  of an envelope's signatures verifies). It MUST NOT sign on **ingest**, MUST NOT hold or manage signing
+  keys, and MUST NOT add a signature its caller did not ask for. Offering a signing helper to a caller
+  that holds its own key is permitted and expected; a kernel SHOULD additionally expose the two halves
+  separately - the bytes to be signed, and a seal that takes a signature back - so that a caller signing
+  in a browser, a smartcard or an HSM never hands the kernel a private key at all. It does **not** verify
   signatures on **ingest**: the wire carries a `keyid`, not the key, so ingest cannot check a signature
   - it rejects *unsigned* claims (§7.2) but stores signed ones unverified. Trust is conferred only by an
   explicit `verify` against a key the consumer chooses (trust policy, below). An index / `show` entry
@@ -360,6 +383,56 @@ PAE = "DSSEv1 " + len(payloadType) + " " + payloadType + " " + len(payload) + " 
   omitting the label.)
 - **Trust policy** - *which* keys/identities count, for which predicates/contexts - is OUT of the
   kernel (a cockpit/consumer concern).
+
+### 8.1 Attached verification material *(0.1 - new)*
+
+The DSSE signature proves that *some key* signed the payload. It does not carry what a reader needs to
+decide **whose key that was**, nor that the record existed at a given time. A short-lived Sigstore
+certificate, a transparency-log inclusion proof, an X.509 chain from an organisation's PKI, a
+qualified certificate under eIDAS, an RFC 3161 timestamp token - §8 and §13 both call for these, and
+none of them has anywhere to live. This clause gives them one.
+
+```
+VerificationMaterial := { subject:   "sha256:<hex>",
+                          scheme:    <token>,
+                          mediaType: <media type>,
+                          material:  base64(<the scheme's own artifact>) }
+```
+
+- **`subject` MUST be the record's content address** - a foton id or a claim id. Because a claim id is
+  `sha256(canon(Statement))` and the envelope's `payload` *is* those canonical bytes, a scheme that
+  signs bytes MUST sign the canonical Statement bytes. The binding is then **structural**: the digest
+  the external scheme committed to *is* the record's identity. It MUST NOT rest on a filename, on a
+  particular serialization of the envelope, or on co-location.
+- **The kernel MUST NOT interpret or verify `material`.** This is the §8 posture exactly: stored is not
+  verified. A kernel carries verification material as opaque bytes; evaluating it - and deciding which
+  issuers, trust lists or identities count - is a consumer concern, like trust policy.
+- **Presence, absence, or invalidity MUST NOT affect the record's validity or resolvability** (§11).
+  Verification material is evidence *about* a record, never a precondition of it. A registry that
+  cannot read a material MUST still resolve the record.
+- **Several are permitted per record**, and they answer different questions: an identity witness
+  (*who stands behind this*), a time witness (*that it existed by then*), and a legally qualified
+  signature are independent and MAY coexist.
+- **An unrecognised `scheme` MUST be carried, not rejected.** Refusing unknown evidence would make the
+  set of schemes a protocol version, which is precisely what this clause exists to avoid.
+
+Initial scheme tokens (the list is open; registration is out of scope for 0.1):
+
+| `scheme` | typical `mediaType` | answers |
+|---|---|---|
+| `sigstore-bundle` | `application/vnd.dev.sigstore.bundle.v1+json` | who (OIDC identity via Fulcio) |
+| `rekor-entry` | `application/json` | when (transparency-log inclusion, §13) |
+| `rfc3161` | `application/timestamp-reply` | when (qualified timestamp) |
+| `cms-detached` | `application/pkcs7-signature` | who (X.509: organisation PKI, smartcard, detached CAdES) |
+| `jades` | `application/jose+json` | who (the eIDAS JSON signature form) |
+| `pgp-detached` | `application/pgp-signature` | who |
+
+**Document-rendered signature forms (e.g. PAdES / signed PDFs) are OUT of scope.** They sign a
+*rendered* representation of a record, and the relationship between that rendering and the canonical
+bytes is not content-addressed - a second representation free to drift from the first. §14 already
+draws this line for publication projections and requires an explicit provenance reference rather than
+assumed hash equality. A signed document is therefore a §14 projection, and its signature stands over
+the projection, not over the record.
 
 ## 9 Reproduction and normalization
 
@@ -467,19 +540,61 @@ Records are immutable and content-addressed, so replication is a conflict-free s
 - **Byte pinning is OPTIONAL** and lives outside the kernel: a mirror MAY fetch a referenced file's
   bytes, verify against the hash (5.6), and re-serve them. Fetched bytes MUST be rejected if their hash
   differs from the request.
-- Minimum federation surface (binding MAY vary; HTTP(S) is the reference): plankton
-  `producer?hash=`, `uses?hash=`, `sync?since=`, optional `blob?hash=`; nekton `claims?subject=`,
-  `claims?object=`, `claims?signer=`, `claims?predicate=`, `claim?id=`, `sync?since=`.
+- **Minimum federation surface.** A federating implementation MUST offer these QUERIES, and the
+  answers MUST be in the wire form below. **How they are carried is not specified** - a transport is
+  an implementation choice (§1), and this clause is about what is asked and what comes back:
+
+  | query | answers |
+  |---|---|
+  | `producer(hash)` | the foton(s) whose OUTPUT is `hash` |
+  | `uses(hash)` | the foton(s) whose INPUT is `hash` |
+  | `sync(since)` | records with a local sequence above `since`, in append order, with the new cursor |
+  | `blob(hash)` *(optional)* | the pinned bytes for `hash`, if this participant holds them |
+  | `claims(subject\|object\|signer\|predicate)` | the claims matching that axis |
+  | `claim(id)` | the one claim with that id, or a distinct not-held answer |
+
+  A `claim(id)` for a record the participant does not hold MUST be distinguishable from a record it
+  holds with nothing to say - "we do not have it" and "we have nothing about it" are different
+  answers, and a reader acts differently on each. An unrecognised or absent query parameter MUST be
+  an error, never an empty result: an empty answer to a malformed question is a successful wrong
+  answer.
+
+  **The sequence.** `seq` is a participant's own numbering of the records it holds. It is LOCAL -
+  two participants holding the same records may number them differently, and a cursor is only ever
+  meaningful against the participant that issued it - but it MUST satisfy three properties, because
+  a peer's only guarantee is that asking again with the returned cursor loses nothing:
+
+  1. **Issued once.** A record's sequence MUST NOT change once the record has been answered for.
+  2. **Newer is higher.** A record first held after a cursor was issued MUST be numbered above it.
+  3. **Independent of content.** The sequence MUST NOT be derived from the record's identity, its
+     hash, or any ordering a record's author can influence. Otherwise a participant who can write a
+     record - a git merge is a supported transport (§11) - can choose one that reorders the store
+     and pushes an existing record back under a peer's cursor, where that peer will never ask for it
+     again.
+
+  A sequence need not be dense, and gaps carry no meaning: a record dropped, refused, or never
+  indexed may still have consumed a number. Only the ordering is normative.
+
+  **Wire form.** `sync` answers `{ "records": [ { "seq", "fotonId"|"claimId", "envelope" } ... ],
+  "max": <cursor> }`; the record queries answer `{ "records": [ <envelope> ... ] }`. Envelopes are
+  as in §8. Conformance fixtures for these answers live in `../reference/testdata/federation/`.
+
+  *An HTTP(S) binding - `GET /sync?since=`, `GET /claim?id=` and so on - is one realization and is
+  described in Annex C. It is informative: an implementation carrying these queries over anything
+  else is equally conforming. The reference implementation answers `sync(since)` over **stdout**
+  (`plankton records --json --since N`, `nekton records --json --since N`), which is why the fixtures
+  are generated from that command rather than written by hand.*
 
 ## 13 Long-term verifiability  *(0.1 - subject to change)*
 
 For a record to remain verifiable long after signing, it should carry what durable verification needs.
 When a short-lived signing certificate is used (e.g. Sigstore-Fulcio), the transparency-log inclusion
 proof (e.g. Rekor) SHOULD be carried **inside the record**, so that verification a year later does not
-depend on the certificate still being valid or an external service still answering. *(Scenario 3. The
-reference `kton anchor` currently prints the Rekor inclusion proof to stdout but does not yet embed it
-in the record, and there is no offline re-verification of a saved proof; the on-record encoding is
-being specified and is expected to change before v1.)*
+depend on the certificate still being valid or an external service still answering. The on-record encoding is
+§8.1: an inclusion proof is verification material with `scheme: "rekor-entry"`, bound to the record by
+its content address like any other. *(Scenario 3. The reference `kton anchor` currently verifies the
+proof and prints it to stdout without storing it, and there is no offline re-verification of a saved
+proof; both are open.)*
 
 ## 14 Publication projections  *(informative)*
 
@@ -510,7 +625,11 @@ A conforming implementation MUST:
 4. index and resolve records per Clauses 11–12, including the completeness/validity distinction (11);
 5. enforce the scope/seed/chain grammar (7.4) and reject unsigned claims (7.2) and forged `genesis`
    (7.4);
-6. refuse partial spectrum fulfilment (10) and ill-formed reproduction claims lacking a level (9).
+6. refuse partial spectrum fulfilment (10) and ill-formed reproduction claims lacking a level (9);
+7. if it carries verification material (8.1) - which is OPTIONAL to produce and OPTIONAL to carry -
+   not reject an unrecognised `scheme`, not treat its absence or invalidity as affecting a record's
+   validity or resolvability, and not report a record as verified on the strength of material it did
+   not itself evaluate.
 
 The conformance vectors are frozen with deterministic test keys and regenerated by
 `../reference/testdata/gen`; CI fails on drift. Additional behavioral scenarios (canonicalization
@@ -542,6 +661,37 @@ Licensing identifiers: SPDX. Publication: nanopublication / Trusty URI (Clause 1
 used by *examples* (not the protocol) - EDAM/SWO/STATO/OBI, Cell Ontology, HGNC, SEPIO/micropublication
 for evidence - are application vocabulary, not normative kton terms. The full reuse ↔ native mapping and
 the reserved `gxp:*` set are in [`vocabulary.md`](vocabulary.md).
+
+## Annex C *(informative)* - an HTTP binding for Clause 12
+
+One realization of the §12 queries, and the one the reference client speaks. Nothing here is
+normative: an implementation carrying the same queries and the same wire form over another transport
+conforms equally.
+
+```
+GET /producer?hash=<content hash>          -> { "records": [ <envelope> ... ] }
+GET /uses?hash=<content hash>              -> { "records": [ <envelope> ... ] }
+GET /sync?since=<cursor>                   -> { "records": [ ... ], "max": <cursor> }
+GET /blob?hash=<content hash>              -> the bytes, or 404; 400 if not a content hash
+GET /claims?subject=|object=|signer=|predicate=  -> { "records": [ <envelope> ... ] }
+GET /claim?id=<claim id>                   -> { "records": [ <envelope> ] }, or 404 if not held
+GET /material?subject=<record id>          -> { "subject", "material": [ ... ] }   (§8.1)
+```
+
+A malformed or missing parameter answers 400. A record this participant does not hold answers 404.
+Both are distinct from an empty `records` list, which means "held, nothing matches".
+
+The reference implementation ships the **client** for this binding (`kton mirror`) and no server: a
+specification of a protocol is not a place to distribute a network service, and a server that binds
+a port has security obligations - authentication, transport security, rate limiting, request bounds -
+that belong to a deployment rather than to a reference. Writing one over the table above is a small
+amount of code in any language, and `../reference/testdata/federation/` fixes the bytes it must
+produce.
+
+It does answer §12 over a different binding: `plankton records --json --since N` and
+`nekton records --json --since N` return exactly the `sync(since)` document above on stdout. A server
+over HTTP is then a shell around that, which is what "the transport is not specified" means in
+practice.
 
 ## Annex B *(informative)* - scenario → clause map
 

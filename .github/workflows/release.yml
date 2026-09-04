@@ -6,10 +6,6 @@ name: release
 # before publishing. This is the one-step install path a stranger uses ("download, run") - no Go
 # toolchain, no vanity-import setup required. (`go install kton.dev/...@latest` additionally needs
 # kton.dev to serve a go-import meta redirect; the binaries below do not.)
-#
-# It also ships `graph.wasm` - the kernel compiled for the browser - so a page can verify records
-# without a Go toolchain and without vendoring a binary somebody built on their laptop. See
-# kton/reference/web/graph/README.md for the recipe and what the artifact exports.
 
 on:
   push:
@@ -69,52 +65,3 @@ jobs:
           files: |
             ${{ env.ASSET }}
             ${{ env.ASSET }}.sha256
-
-  # The browser build. Separate from the matrix above: it is one artifact for every platform, and it
-  # is the one a consumer CANNOT build for themselves without a Go toolchain - which is the whole
-  # reason to ship it. `-trimpath` is not optional here: without it the binary embeds the CI runner's
-  # checkout path, so the same source would hash differently on every machine and the sha256 below
-  # would attest to nothing.
-  wasm:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      - name: build graph.wasm and pair it with its wasm_exec.js
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          ( cd kton/reference && GOOS=js GOARCH=wasm go build -trimpath -o "$GITHUB_WORKSPACE/dist/graph.wasm" ./web/graph )
-          # wasm_exec.js is the Go runtime's OWN loader shim and is toolchain-specific: a mismatched
-          # copy fails at instantiation. Take it from the very toolchain that produced the .wasm
-          # rather than naming a version and hoping the consumer matches it. Go moved the file in
-          # 1.24 (misc/wasm -> lib/wasm), so look in both.
-          goroot="$(go env GOROOT)"
-          if   [ -f "$goroot/lib/wasm/wasm_exec.js"  ]; then cp "$goroot/lib/wasm/wasm_exec.js"  dist/
-          elif [ -f "$goroot/misc/wasm/wasm_exec.js" ]; then cp "$goroot/misc/wasm/wasm_exec.js" dist/
-          else echo "wasm_exec.js not found under $goroot" >&2; exit 1; fi
-          cd dist
-          sha256sum graph.wasm    | tee graph.wasm.sha256
-          sha256sum wasm_exec.js  | tee wasm_exec.js.sha256
-          # The recipe travels WITH the artifact: the exact toolchain plus the exact command is what
-          # makes the hash above re-derivable by a stranger.
-          { echo "go:      $(go version)"; echo "target:  GOOS=js GOARCH=wasm";
-            echo "command: (cd kton/reference && GOOS=js GOARCH=wasm go build -trimpath -o graph.wasm ./web/graph)";
-            echo "source:  ${GITHUB_REPOSITORY}@${GITHUB_SHA}";
-            echo; cat graph.wasm.sha256 wasm_exec.js.sha256; } > graph.wasm.buildinfo
-          cat graph.wasm.buildinfo
-
-      - name: attach to the draft release
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          generate_release_notes: true
-          files: |
-            dist/graph.wasm
-            dist/graph.wasm.sha256
-            dist/wasm_exec.js
-            dist/wasm_exec.js.sha256
-            dist/graph.wasm.buildinfo

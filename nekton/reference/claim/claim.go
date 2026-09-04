@@ -197,6 +197,21 @@ func (st *Statement) Validate(p *Predicate) error {
 	if len(st.Subject) == 0 {
 		return fmt.Errorf("claim has no subject (SPEC §7.2 requires one)")
 	}
+	// Counting the subjects is not enough: an ENTRY that names nothing is a claim about nothing.
+	// `subject: [{}]` and `subject: [{"name":"f.csv"}]` both had length 1 and passed, so a statement
+	// whose subject had silently lost its digest was signed, indexed, and verified clean - while
+	// `about <hash>` could never find it, because it is about no hash. A name is a label, not an
+	// identity: in a content-addressed substrate the identity is the digest or the URI.
+	//
+	// Checked HERE rather than only at authoring, because this is the gate every claim passes -
+	// including one arriving by mirror or by a git merge, which bypass the spec parser entirely.
+	for i, sub := range st.Subject {
+		if sub.Key() == "" {
+			return fmt.Errorf("claim subject[%d] names nothing: it has neither a `digest` nor a `uri` "+
+				"(SPEC §7.3). A subject without one of those is a statement about nothing - it would "+
+				"sign and verify, and no `about <hash>` query could ever reach it", i)
+		}
+	}
 	if p == nil || p.Predicate.Key() == "" {
 		return fmt.Errorf("claim has no predicate term (SPEC §7.2)")
 	}

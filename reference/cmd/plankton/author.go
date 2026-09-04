@@ -11,7 +11,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 	"strings"
 
 	"kton.dev/plankton/core"
+	"kton.dev/plankton/foton"
 	"kton.dev/plankton/registry"
 )
 
@@ -56,11 +56,52 @@ func keyidOf(s string) (string, error) {
 }
 
 // keygen writes <name>.key (hex Ed25519 seed) and <name>.pub (hex public key).
-func keygen(name string) error {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return err
+// keygen writes <name>.key (the 32-byte seed, hex) and <name>.pub (the public key, hex).
+//
+// --seed makes the identity a function of its input instead of the entropy pool. That matters for
+// the same reason --when does (#42): the public key is inside every signed payload - example 07
+// even mints an identity IRI from sha256(pub) - so a random key per run moves every record id, and
+// a corpus or a snapshot can never be rebuilt to the same bytes. A hand-written seed was already
+// accepted as a .key; what was missing was any way back to the .pub hex that verify, --trust-keys
+// and the viewer key directories need.
+//
+// A --seed key is exactly as strong as the seed behind it. Use it for fixtures and reproducible
+// corpora, not for an identity that signs anything anyone must trust.
+func keygen(args []string) error {
+	var name, seedHex string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--seed":
+			i++
+			seedHex = arg(args, i)
+		default:
+			if strings.HasPrefix(args[i], "--") {
+				return fmt.Errorf("unknown flag %q", args[i])
+			}
+			name = args[i]
+		}
 	}
+	if name == "" {
+		return fmt.Errorf("usage: %s keygen <name> [--seed <64-hex>]", "plankton")
+	}
+
+	var pub ed25519.PublicKey
+	var priv ed25519.PrivateKey
+	if seedHex == "" {
+		var err error
+		if pub, priv, err = ed25519.GenerateKey(rand.Reader); err != nil {
+			return err
+		}
+	} else {
+		seed, err := hex.DecodeString(strings.TrimSpace(seedHex))
+		if err != nil || len(seed) != ed25519.SeedSize {
+			return fmt.Errorf("--seed must be %d hex-encoded bytes (%d hex chars), got %q",
+				ed25519.SeedSize, ed25519.SeedSize*2, seedHex)
+		}
+		priv = ed25519.NewKeyFromSeed(seed)
+		pub = priv.Public().(ed25519.PublicKey)
+	}
+
 	if err := os.WriteFile(name+".key", []byte(hex.EncodeToString(priv.Seed())), 0o600); err != nil {
 		return err
 	}
@@ -68,6 +109,22 @@ func keygen(name string) error {
 		return err
 	}
 	fmt.Printf("keypair %s  keyid=%s\n", name, keyidHex(pub))
+	return nil
+}
+
+// pubkey prints the public key hex for a private key, so an identity written by hand (or carried as
+// a bare seed) can still produce the .pub that verify and --trust-keys read.
+func pubkey(arg string) error {
+	txt := arg
+	if b, err := os.ReadFile(arg); err == nil {
+		txt = string(b)
+	}
+	seed, err := hex.DecodeString(strings.TrimSpace(txt))
+	if err != nil || len(seed) != ed25519.SeedSize {
+		return fmt.Errorf("not a %d-byte hex seed (a .key file or the hex itself): %q", ed25519.SeedSize, arg)
+	}
+	pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	fmt.Println(hex.EncodeToString(pub))
 	return nil
 }
 
@@ -86,11 +143,10 @@ func loadPriv(path string) (ed25519.PrivateKey, error) {
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 
-type fileSpec struct {
-	Path string   `json:"path"`
-	Hash string   `json:"hash"`
-	URI  []string `json:"uri,omitempty"` // CARRIED (spec §6.1): fetch location(s); excluded from the foton id
-}
+// The spec types and the payload assembly moved to kton.dev/plankton/foton so that every authoring
+// path - this CLI, a cockpit, an executor publishing a run it just performed - goes through one
+// implementation. The old names stay as aliases: nothing else in this package moves.
+type fileSpec = foton.FileSpec
 
 // splitKV splits "left=right" on the FIRST '=' (so a URI's own '=' stays in the value).
 func splitKV(s string) (string, string, bool) {
@@ -100,41 +156,7 @@ func splitKV(s string) (string, string, bool) {
 	return "", "", false
 }
 
-// authorSpec is the small JSON a cockpit hands to `plankton author`. plankton authors ONLY
-// fotons (reproducible results). Attestations about results - verdicts, environment-
-// qualification, reviews, votes - are signed claims in the nekton layer (`nekton claim`), not
-// here. `predicate` is accepted only as "foton" (or empty) for backward compatibility.
-type authorSpec struct {
-	Predicate string     `json:"predicate"` // "" | "foton" only
-	Inputs    []fileSpec `json:"inputs"`
-	Outputs   []fileSpec `json:"outputs"`
-	Protocol  *struct {
-		Kind       string         `json:"kind"`
-		Descriptor map[string]any `json:"descriptor"`
-	} `json:"protocol"`
-}
-
-func bareHash(h string) string {
-	if i := strings.IndexByte(h, ':'); i >= 0 {
-		return h[i+1:]
-	}
-	return h
-}
-
-func subjectsOf(fs []fileSpec) []any {
-	out := make([]any, 0, len(fs))
-	for _, f := range fs {
-		m := map[string]any{
-			"name":   f.Path,
-			"digest": map[string]any{"sha256": bareHash(f.Hash)},
-		}
-		if len(f.URI) > 0 {
-			m["uri"] = f.URI // CARRIED (spec §6.1): a fetch hint; not part of the foton id
-		}
-		out = append(out, m)
-	}
-	return out
-}
+type authorSpec = foton.Spec
 
 // author builds an in-toto Statement per the spec, signs a DSSE envelope, and writes it.
 // Byte-compatible with the Python spike (canonical JSON + PAE + Ed25519), so the same
@@ -144,8 +166,8 @@ func author(specPath, keyPath, outPath string) error {
 	if err != nil {
 		return err
 	}
-	var spec authorSpec
-	if err := json.Unmarshal(raw, &spec); err != nil {
+	spec, err := foton.ParseSpec(raw)
+	if err != nil {
 		return err
 	}
 	priv, err := loadPriv(keyPath)
@@ -165,8 +187,8 @@ func authorConvenience(args []string) error {
 	kind := "script"
 	addFlag := false
 	strict := false
-	printID := false     // print ONLY the bare foton id to stdout (human lines go to stderr) - for scripting
-	locatedAuto := false // default a file://<abs> locator for every --in/--out that lacks an explicit --located
+	printID := false                 // print ONLY the bare foton id to stdout (human lines go to stderr) - for scripting
+	locatedAuto := false             // default a file://<abs> locator for every --in/--out that lacks an explicit --located
 	located := map[string][]string{} // logical path -> fetch URIs (CARRIED)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -308,10 +330,7 @@ func authorConvenience(args []string) error {
 	if envRef != "" {
 		desc["envRef"] = envRef
 	}
-	spec.Protocol = &struct {
-		Kind       string         `json:"kind"`
-		Descriptor map[string]any `json:"descriptor"`
-	}{Kind: kind, Descriptor: desc}
+	spec.Protocol = &foton.ProtocolSpec{Kind: kind, Descriptor: desc}
 	priv, ephemeral, err := signingKey(keyPath)
 	if err != nil {
 		return err
@@ -433,48 +452,23 @@ func signFoton(spec authorSpec, priv ed25519.PrivateKey, outPath string) error {
 	return os.WriteFile(outPath, b, 0o644)
 }
 
-// buildFotonEnv canonicalizes an authorSpec into a signed foton envelope and returns its JSON bytes.
+// buildFotonEnv signs the spec through the kernel and returns the envelope in the on-disk shape.
 // Shared by signFoton (writes a file) and the --add path (ingests directly, no intermediate file).
 func buildFotonEnv(spec authorSpec, priv ed25519.PrivateKey) ([]byte, error) {
-	if spec.Predicate != "" && spec.Predicate != "foton" {
-		return nil, fmt.Errorf("plankton authors only fotons; %q is an attestation - use `nekton claim` (nekton layer)", spec.Predicate)
-	}
-	if spec.Protocol == nil {
-		return nil, fmt.Errorf("foton spec needs a protocol")
-	}
-	refBytes, err := core.CanonValue(spec.Protocol.Descriptor)
+	env, _, err := foton.SignWith(spec, priv)
 	if err != nil {
 		return nil, err
 	}
-	st := map[string]any{
-		"_type":         "https://in-toto.io/Statement/v1",
-		"subject":       subjectsOf(spec.Outputs),
-		"predicateType": core.PredicateFoton,
-		"predicate": map[string]any{
-			"inputs": subjectsOf(spec.Inputs),
-			"protocol": map[string]any{
-				"kind":       spec.Protocol.Kind,
-				"ref":        core.HashBytes(refBytes),
-				"descriptor": spec.Protocol.Descriptor,
-			},
-			// CARRIED (not in the foton id / action key): the exact spec revision this was authored
-			// under, so a record is traceable to its protocol version. See core.SpecVersion.
-			"specVersion": core.SpecVersion,
-		},
-	}
-
-	payload, err := core.CanonValue(st)
-	if err != nil {
-		return nil, err
-	}
-	sig := ed25519.Sign(priv, core.PAE(core.PayloadType, payload))
-	env := map[string]any{
-		"payloadType": core.PayloadType,
-		"payload":     base64.StdEncoding.EncodeToString(payload),
+	// Marshalled through a map rather than the core.Envelope struct on purpose: a map marshals its
+	// keys alphabetically, which is the on-disk key order this command has always written. Emitting
+	// the struct instead would reorder the file (payloadType before payload) - harmless to any
+	// verifier, but a gratuitous diff in every committed .dsse.json and example snapshot.
+	return json.MarshalIndent(map[string]any{
+		"payloadType": env.PayloadType,
+		"payload":     env.Payload,
 		"signatures": []any{map[string]any{
-			"keyid": keyidHex(priv.Public().(ed25519.PublicKey)),
-			"sig":   base64.StdEncoding.EncodeToString(sig),
+			"keyid": env.Signatures[0].KeyID,
+			"sig":   env.Signatures[0].Sig,
 		}},
-	}
-	return json.MarshalIndent(env, "", "  ")
+	}, "", "  ")
 }

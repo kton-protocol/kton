@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"kton.dev/plankton/core"
 )
@@ -140,8 +139,8 @@ func envOr(key, def string) string {
 
 // annotate parses the CLI, resolves the template + aliases, builds a claimSpec, and signs it.
 func annotate(args []string) error {
-	var subject, foton, tmplName, out, by, keyPath, scope, prev, regDir string
-	addFlag := false
+	var subject, foton, tmplName, out, by, keyPath, scope, prev, regDir, when string
+	addFlag, printID := false, false
 	tdir := envOr("NEKTON_TEMPLATES", "./templates")
 	aliasesPath := envOr("NEKTON_ALIASES", "./aliases.json")
 	set := map[string]string{}
@@ -149,6 +148,8 @@ func annotate(args []string) error {
 		switch args[i] {
 		case "--add":
 			addFlag = true
+		case "--print-id":
+			printID = true
 		case "--registry":
 			i++
 			regDir = arg(args, i)
@@ -161,6 +162,9 @@ func annotate(args []string) error {
 		case "--prev":
 			i++
 			prev = arg(args, i)
+		case "--when":
+			i++
+			when = arg(args, i)
 		case "--template":
 			i++
 			tmplName = arg(args, i)
@@ -319,14 +323,18 @@ func annotate(args []string) error {
 		by = "key:" + keyidHex(priv.Public().(ed25519.PublicKey))
 	}
 	if ephemeral {
-		fmt.Printf("annotate: signer    keyid=%s (ephemeral - unlinkable; use --sign for attribution)\n", keyidHex(priv.Public().(ed25519.PublicKey)))
+		humanOut(printID)("annotate: signer    keyid=%s (ephemeral - unlinkable; use --sign for attribution)\n", keyidHex(priv.Public().(ed25519.PublicKey)))
 	}
 
+	stamp, err := whenOr(when)
+	if err != nil {
+		return err
+	}
 	spec := claimSpec{
 		Subject:   []subjSpec{subj},
 		Predicate: aliases.resolve(t.Predicate),
 		By:        by,
-		When:      time.Now().UTC().Format(time.RFC3339),
+		When:      stamp,
 		Scope:     scope, // optional: place this claim in a (sub)nekton scope
 		Prev:      prev,  // the previous claim id in the scope (or the seed id for the first link)
 	}
@@ -353,20 +361,32 @@ func annotate(args []string) error {
 		out = "claim." + strings.ReplaceAll(tmplName, "/", "-") + ".dsse.json"
 	}
 
-	fmt.Printf("annotate: template %s  predicate %s\n", tmplName, spec.Predicate)
+	msg := humanOut(printID)
+	msg("annotate: template %s  predicate %s\n", tmplName, spec.Predicate)
 	if spec.Context != "" {
-		fmt.Printf("annotate: context   %s\n", spec.Context)
+		msg("annotate: context   %s\n", spec.Context)
 	}
-	fmt.Printf("annotate: subject   %s\n", subject)
+	msg("annotate: subject   %s\n", subject)
 	if spec.Scope != "" {
-		fmt.Printf("annotate: scope     %s\n", spec.Scope)
+		msg("annotate: scope     %s\n", spec.Scope)
 		prevShown := spec.Prev
 		if prevShown == "" {
 			prevShown = "(none)"
 		}
-		fmt.Printf("annotate: prev      %s\n", prevShown)
+		msg("annotate: prev      %s\n", prevShown)
 	}
-	return signClaim(spec, priv, out, addFlag, regDir)
+	if err := signClaim(spec, priv, out, addFlag, regDir, printID); err != nil {
+		// The bare-term refusal (claim/spec.go) is right, but the case that actually triggers it is
+		// almost always a MISSING alias file: the template resolved through an empty alias map and
+		// came out as its own short name. The message describes the symptom and points at the
+		// template, so that is where people go looking - one reader nearly filed it as a kernel
+		// finding. The kernel deliberately does not know the path; the CLI does, so say it here.
+		if strings.Contains(err.Error(), "bare term with no vocabulary") {
+			return fmt.Errorf("%w\n(aliases resolved from %q - set NEKTON_ALIASES or --aliases if that is not your alias file)", err, aliasesPath)
+		}
+		return err
+	}
+	return nil
 }
 
 // listTemplates prints every template in the templates dir with its predicate and any aliases.
@@ -388,9 +408,24 @@ func listTemplates(args []string) error {
 			i++
 			showName = arg(args, i)
 		default:
-			if !strings.HasPrefix(args[i], "--") {
-				showName = args[i]
+			if strings.HasPrefix(args[i], "--") {
+				return fmt.Errorf("unknown flag %q", args[i])
 			}
+			// `templates` has NO subcommands. This used to take any positional as a template name and
+			// let the LAST one win, which produced three bad outcomes at once: `templates ls` reported
+			// `no template "ls"`, reading as a misspelled name rather than an unknown verb; the
+			// documented `templates show <name>` appeared to work only because <name> overwrote
+			// `show`, so any word would have done; and `templates HUHU <name>` behaved identically.
+			// Anyone spot-checking docs/cli.md against the binary therefore had it CONFIRMED (#46).
+			switch args[i] {
+			case "ls", "list", "show", "search", "pull", "push", "add", "rm", "remove":
+				return fmt.Errorf("`nekton templates` has no subcommand %q - it lists templates, or shows one with --show <name>.\n"+
+					"`nekton man` is the command surface this build actually has", args[i])
+			}
+			if showName != "" {
+				return fmt.Errorf("`nekton templates` takes at most one template name, got %q and %q", showName, args[i])
+			}
+			showName = args[i]
 		}
 	}
 	aliases := loadAliases(aliasesPath)

@@ -16,15 +16,34 @@ import (
 	"kton.dev/nekton/claim"
 )
 
+// whenOr returns an explicit --when, or the wall clock when none was given. `when` is COVERED by
+// the claim id, so on a seed it is an input to a permanent identifier: seeding the same scope with
+// the same key from the same inputs twice used to open two different scopes (#42). An explicit
+// --when is what makes a corpus rebuildable to the same ids.
+//
+// It is validated here rather than only at ingest: a bad timestamp that is caught after signing has
+// already been signed, and the signature is over the garbage.
+func whenOr(when string) (string, error) {
+	if when == "" {
+		return time.Now().UTC().Format(time.RFC3339), nil
+	}
+	if _, err := time.Parse(time.RFC3339, when); err != nil {
+		return "", fmt.Errorf("--when %q is not RFC 3339 (want e.g. 2026-07-16T00:00:00Z): %v", when, err)
+	}
+	return when, nil
+}
+
 // seed creates + signs a scope-genesis statement and prints the scope id (its claim id), which
 // scoped claims then reference via --scope. A seed carries genesis:true and no prev (SPEC §7.4).
 func seed(args []string) error {
-	var name, by, parent, keyPath, out, regDir string
-	addFlag := false
+	var name, by, parent, keyPath, out, regDir, when string
+	addFlag, printID := false, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--add":
 			addFlag = true
+		case "--print-id":
+			printID = true
 		case "--registry":
 			i++
 			regDir = arg(args, i)
@@ -34,6 +53,9 @@ func seed(args []string) error {
 		case "--parent":
 			i++
 			parent = arg(args, i)
+		case "--when":
+			i++
+			when = arg(args, i)
 		case "--sign":
 			i++
 			keyPath = arg(args, i)
@@ -57,11 +79,15 @@ func seed(args []string) error {
 	if by == "" {
 		by = "key:" + keyidHex(priv.Public().(ed25519.PublicKey))
 	}
+	stamp, err := whenOr(when)
+	if err != nil {
+		return err
+	}
 	body := map[string]any{
 		"scope":   name,
 		"genesis": true,
 		"by":      by,
-		"when":    time.Now().UTC().Format(time.RFC3339),
+		"when":    stamp,
 	}
 	if parent != "" {
 		if strings.HasPrefix(parent, "sha256:") {
@@ -78,17 +104,19 @@ func seed(args []string) error {
 	if out == "" && !addFlag {
 		out = "seed." + strings.ReplaceAll(name, "/", "-") + ".dsse.json"
 	}
-	fmt.Printf("seed scope %q", name)
+	msg := humanOut(printID)
+	msg("seed scope %q", name)
 	if parent != "" {
-		fmt.Printf(" (parent %s)", parent)
+		msg(" (parent %s)", parent)
 	}
-	fmt.Println()
-	// signClaim prints "claim <id> ..." - that <id> IS the scope id to pass as --scope.
-	if err := signClaim(spec, priv, out, addFlag, regDir); err != nil {
+	msg("\n")
+	// signClaim prints "claim <id> ..." - that <id> IS the scope id to pass as --scope. Under
+	// --print-id it is the only thing on stdout, so `SCOPE=$(nekton seed x --sign k --print-id)`.
+	if err := signClaim(spec, priv, out, addFlag, regDir, printID); err != nil {
 		return err
 	}
-	fmt.Println("  ^ this claim id is the SCOPE id.")
-	fmt.Println("    --scope <thisId> on EVERY claim in the scope (it never changes).")
-	fmt.Println("    --prev  = this id for the FIRST claim, then the PREVIOUS claim's id for each next one.")
+	msg("  ^ this claim id is the SCOPE id.\n")
+	msg("    --scope <thisId> on EVERY claim in the scope (it never changes).\n")
+	msg("    --prev  = this id for the FIRST claim, then the PREVIOUS claim's id for each next one.\n")
 	return nil
 }

@@ -67,16 +67,21 @@ PLANKTON_DIR=B plankton mirror ./A                 # B overlays A's metadata, no
 PLANKTON_DIR=B plankton producer <hash>            # B now resolves lineage locally
 ```
 
-**Network** federation is a cockpit concern - see `../kton/`:
+**Network** federation is a cockpit concern, and this repository carries neither half of it: no
+server (#83) and, since #101, no client either. SPEC Clause 12 makes the queries and the wire form
+normative and leaves the **transport** unspecified (Annex C describes one HTTP binding,
+informatively). A protocol reference is about bytes - not about which other protocol carries them
+somewhere.
+
+What it does ship is the answer itself, on stdout, which is the binding a cockpit reads:
 
 ```
-PLANKTON_DIR=A kton serve plankton :8799           # A serves its graph over HTTP
-PLANKTON_DIR=B kton mirror plankton http://A:8799  # B pulls A's metadata over the network
-PLANKTON_DIR=B kton mirror plankton --pin http://A # …and pins the verified bytes
+plankton records --json --since 0                  # the Clause 12 sync answer, verbatim
+PLANKTON_DIR=B plankton mirror ./A                 # overlay a peer directory, no network
 PLANKTON_DIR=B kton pin input.csv                  # pin bytes locally (optional blobstore)
 ```
 
-Mirrored envelopes (local or network) keep their **original signatures** and re-verify against
+Mirrored envelopes keep their **original signatures** and re-verify against
 the original author key - you trust the signature, not the host. Re-mirroring is idempotent
 (set reconciliation of an append-only, content-addressed log). Pinned bytes are **verified
 against their hash** on fetch and read; a mirror that pinned is itself a byte source. Pinning
@@ -85,9 +90,11 @@ lives in the optional `blobstore/` - the kernel still stores no bytes.
 ## Scope (Phase 0 + Phase 1)
 
 In: the kernel data model, canonical hashing, action key, DSSE verify, the four hash indexes,
-lineage/discovery/reuse queries, a CLI (Phase 0); the **HTTP federation API + `sync` +
-mirroring** (Phase 1). Out (later phases): **byte pinning** during mirror, Sigstore-keyless /
-transparency-log identity, a real KV/LSM backend, structured executors and adapters. Per
+lineage/discovery/reuse queries, a CLI (Phase 0); the **Clause 12 query set + `sync` + mirroring**
+(Phase 1) - answered on stdout by `records`, with no network transport of any kind, in either
+direction. Shipped since: **byte pinning** (`kton pin`), Sigstore anchoring
+with the verified entry stored as §8.1 material (`kton anchor --store`). Out (later phases): a real
+KV/LSM backend, structured executors and adapters, key lifecycle and revocation. Per
 `../spec/SPEC.md` §10, execution / byte storage / UI are never the kernel.
 
 ## Known v0 limitations

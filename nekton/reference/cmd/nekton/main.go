@@ -20,20 +20,42 @@ const usage = `nekton - signed-claim commitment substrate (reference)
 
 usage:
   nekton keygen <name>                                generate a signing identity (<name>.key/.pub)
+      --seed <64-hex>                                 derive it from a seed, not the entropy pool, so a corpus or
+                                                      snapshot rebuilds to the same record ids (fixtures only:
+                                                      the key is only as strong as its seed)
+  nekton pubkey <key.key|hex>                         print the public key hex (what verify/--trust-keys read)
   nekton keyid <key.pub|key.key|hex>                  print the keyid shown as by=key:<id> (map key -> signer)
   nekton seed <scope-name> --sign key.key [--add] [--registry D]  open a (sub)nekton scope; prints its scope id
+      --print-id         print ONLY the bare id on stdout, human lines to stderr
+                         (same contract as plankton author --print-id): ID=$(nekton seed … --print-id)
+      --when <RFC3339>   pin the genesis timestamp. The scope id COVERS it, so this is what makes
+                         a rebuilt corpus land on the same scope ids (default: now)
         [--by ID] [--parent <parentSeedId>] [-o out]      (scoped claims chain under it via --scope/--prev)
   nekton claim <spec.json> <key.key> [<out.dsse>] [--add] [--registry D]  author + sign a claim; --add ingests directly
+      a subject in the spec is named with hash: "sha256:<hex>" - NOT with the digest map of the
+      signed statement; an unknown field is refused, never dropped
   nekton annotate <subj|--foton F> --template <name> [--add] [--registry D]  author + sign a claim from a TEMPLATE
+      --print-id         print ONLY the bare id on stdout, human lines to stderr
+                         (same contract as plankton author --print-id): ID=$(nekton annotate … --print-id)
+      --when <RFC3339>   pin the claim timestamp; the claim id covers it (default: now)
         --set k=v ... --sign key.key [--by ID] [-o out]   (aliases + auto timestamp; no jq/openssl)
   nekton templates [--show <name>]                    list templates + aliases; --show prints a template's fields
-  nekton show <claim.dsse.json|sha256:id>             print a claim: subject, predicate, statement, signer
-  nekton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
+  nekton show <claim.dsse.json|sha256:id> [--json]             print a claim: subject, predicate, statement, signer
+  nekton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature AND the
+                                                      structure ingest requires (envelope FILE or a
                                                       registry id; pubkey: a .pub file or the hex)
+                                                      exit 0 genuine+storable, 1 tampered, 2 wrong
+                                                      key, 3 genuine but ingest would refuse it
+  nekton records [--json] [--since N]                  every claim WITH its signed envelope: the
+                                                      SPEC §12 sync(since) answer, over stdout
+  nekton attach <sha256:id> --scheme S --file F [--media M]   bind external evidence to a record (SPEC §8.1):
+                                                      a Sigstore bundle, a Rekor entry, an RFC 3161 token, an
+                                                      X.509/CAdES or eIDAS signature. Stored, NEVER evaluated.
+  nekton material <sha256:id> [--json]                what evidence is attached to a record
   nekton add <envelope.dsse.json> [--registry D]      ingest a signed claim (D or NEKTON_DIR)
-  nekton about <subject>                              claims about a subject (hash "sha256:..." or uri)
-  nekton by <signer|predicate|object> <value>         claims by signer keyid / predicate (template/CURIE/IRI) / object
-  nekton head <scope-id>                              the tip of a scope's chain (publish/anchor it to seal history)
+  nekton about <subject> [--json]                     claims about a subject (hash "sha256:..." or uri)
+  nekton by <signer|predicate|object> <value> [--json]  claims by signer keyid / predicate (template/CURIE/IRI) / object
+  nekton head <scope-id> [--json]                              the tip of a scope's chain (publish/anchor it to seal history)
   nekton export [--title T] [out]                     serialize claims as JSON (for the Navigator join)
   nekton export --nanopub <claim.dsse.json> [-o out]  render a claim to its nanopublication (RDF/TriG) face
   nekton nanopublish <claim.dsse.json> [--rsa key.pem] [--creator IRI] [-o out]  RSA-sign it + mint a Trusty URI
@@ -136,13 +158,48 @@ func printClaims(recs []registry.Record) {
 	}
 }
 
+// printClaimsJSON emits the records VERBATIM - {claimId, envelope}, the same shape the registry
+// stores and `add` accepts. Nothing is projected, ranked or interpreted: the caller decodes the
+// payload exactly as the kernel does. The prose form above answers "which records, roughly"; a
+// consumer of the claim axis needs the body, because a claim's meaning IS its body - the object it
+// relates to does not appear in the rendered line at all.
+func printClaimsJSON(recs []registry.Record) error {
+	type rec struct {
+		ClaimID  string        `json:"claimId"`
+		Envelope core.Envelope `json:"envelope"`
+	}
+	out := make([]rec, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, rec{ClaimID: r.ClaimID, Envelope: r.Envelope})
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
+}
+
+// takeJSON pulls a --json flag out of the argument list, returning the rest.
+func takeJSON(args []string) ([]string, bool) {
+	rest, asJSON := make([]string, 0, len(args)), false
+	for _, a := range args {
+		if a == "--json" {
+			asJSON = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return rest, asJSON
+}
+
 func run(cmd string, args []string) error {
 	switch cmd { // help/version in COMMAND position (not just as a flag) should not be "unknown command"
 	case "--help", "-h", "help":
 		fmt.Print(usage)
 		return nil
 	case "--version", "-v", "version":
-		fmt.Println("nekton 0.1 (reference)")
+		fmt.Println("nekton 0.2 (reference)")
 		return nil
 	}
 	for _, a := range args {
@@ -156,10 +213,16 @@ func run(cmd string, args []string) error {
 		fmt.Print(manPage)
 		return nil
 	case "keygen":
+		return keygen(args)
+
+	case "pubkey":
+		// Recover the .pub hex from a private key. Needed because an identity can be written by hand
+		// (a bare 32-byte seed is a valid .key), and verify / --trust-keys / the viewer key dirs all
+		// read the public half.
 		if len(args) != 1 {
-			return fmt.Errorf("usage: nekton keygen <name>")
+			return fmt.Errorf("usage: nekton pubkey <key.key|hex>")
 		}
-		return keygen(args[0])
+		return pubkey(args[0])
 
 	case "keyid":
 		// Map a key file/hex to the keyid shown as `by=key:<id>` on claims, so you can tell WHICH signer
@@ -176,11 +239,13 @@ func run(cmd string, args []string) error {
 
 	case "claim":
 		var pos []string
-		addFlag, regDir := false, ""
+		addFlag, regDir, printID := false, "", false
 		for i := 0; i < len(args); i++ {
 			switch args[i] {
 			case "--add":
 				addFlag = true
+			case "--print-id":
+				printID = true
 			case "--registry":
 				i++
 				if i < len(args) {
@@ -192,13 +257,13 @@ func run(cmd string, args []string) error {
 		}
 		// out is optional when --add is given (ingest directly, no file)
 		if len(pos) < 2 || (len(pos) < 3 && !addFlag) {
-			return fmt.Errorf("usage: nekton claim <spec.json> <key.key> [<out.dsse.json>] [--add] [--registry <dir>]")
+			return fmt.Errorf("usage: nekton claim <spec.json> <key.key> [<out.dsse.json>] [--add] [--registry <dir>] [--print-id]")
 		}
 		out := ""
 		if len(pos) >= 3 {
 			out = pos[2]
 		}
-		return authorClaim(pos[0], pos[1], out, addFlag, regDir)
+		return authorClaim(pos[0], pos[1], out, addFlag, regDir, printID)
 
 	case "seed":
 		return seed(args)
@@ -211,6 +276,17 @@ func run(cmd string, args []string) error {
 
 	case "show":
 		return showClaim(args)
+
+	case "records":
+		// The §12 sync(since) query, over stdout rather than HTTP (#85).
+		return records(args)
+
+	case "attach":
+		// SPEC §8.1: bind external evidence to a record by its CONTENT ADDRESS, never by filename.
+		return attachMaterial(args)
+
+	case "material":
+		return listMaterial(args)
 
 	case "verify":
 		if len(args) != 2 {
@@ -248,6 +324,23 @@ func run(cmd string, args []string) error {
 			if suppliedKeyid != signerKeyid {
 				fmt.Printf("                 NOTE: the envelope declares keyid %s, which differs from the verifying key; the declared field is unauthenticated and must not be trusted.\n", signerKeyid)
 			}
+			// A valid signature says WHO signed these bytes. It does not say the claim is one the
+			// substrate will accept. `add` runs a structural gate (SPEC §7.2/§7.3) that verify never
+			// did, so a claim about NOTHING - a subject naming neither a digest nor a uri - printed a
+			// clean bill of health here and was refused at ingest. Anyone who verified a file and did
+			// not then add it believed it was good.
+			//
+			// Exit 3, not 1 or 0: the signature verdict keeps its meaning (1 = invalid/tampered,
+			// 2 = wrong key), and 0 still means "this claim is genuine AND storable".
+			if st, _, perr := claim.ParseEnvelope(env); perr == nil {
+				p, _ := st.ParsePredicate()
+				if serr := st.Validate(p); serr != nil {
+					fmt.Printf("structure:       INVALID - %v\n", serr)
+					fmt.Println("                 the signature is genuine; the claim is still one `add` refuses.")
+					os.Exit(3)
+				}
+				fmt.Println("structure:       VALID - the fields SPEC §7.2/§7.3 require are present")
+			}
 			return nil
 		case suppliedKeyid != signerKeyid:
 			fmt.Println("signature:       UNVERIFIED - WRONG KEY: this key did not sign the record")
@@ -260,25 +353,67 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "add":
-		regDir, envPath := "", ""
+		// Accepts MORE THAN ONE path on purpose: registry.Open replays the whole log to rebuild its
+		// indexes, so a shell loop over N files costs N replays - quadratic, and measurably unusable
+		// on a real corpus (2.2 s per record at 1k already stored). Bulk arrival is the normal case
+		// for this substrate, not an edge case: federation hands you a set, an executor publishes a
+		// batch of runs, a consumer imports a corpus someone handed over. Open once, then ingest.
+		regDir := ""
+		var paths []string
 		for i := 0; i < len(args); i++ {
 			if args[i] == "--registry" && i+1 < len(args) {
 				i++
 				regDir = args[i]
-			} else if envPath == "" {
-				envPath = args[i]
 			} else {
-				return fmt.Errorf("usage: nekton add <envelope.dsse.json> [--registry <dir>]")
+				paths = append(paths, args[i])
 			}
 		}
-		if envPath == "" {
-			return fmt.Errorf("usage: nekton add <envelope.dsse.json> [--registry <dir>]")
+		if len(paths) == 0 {
+			return fmt.Errorf("usage: nekton add <envelope.dsse.json>... [--registry <dir>]")
 		}
-		env, err := readEnvelope(envPath)
+		r, err := registry.Open(regOrDefault(regDir))
 		if err != nil {
 			return err
 		}
-		r, err := registry.Open(regOrDefault(regDir))
+		if len(paths) > 1 {
+			// A record rejected ON ITS MERITS does not wedge the import: it is named, counted, and
+			// the rest still lands - the same call federation's Mirror already makes. A LOCAL
+			// persistence failure is different (transient, and skipping it would silently drop a
+			// valid record), so that aborts. Either way the exit is non-zero when anything was
+			// refused: a partial import that reports success is how a corpus quietly loses records.
+			added, present := 0, 0
+			var refused []string
+			for _, p := range paths {
+				env, err := readEnvelope(p)
+				if err != nil {
+					refused = append(refused, fmt.Sprintf("%s: %v", p, err))
+					continue
+				}
+				_, isNew, err := r.Add(env)
+				if err != nil {
+					// nekton's registry draws no transient/merit line the way plankton's ErrPersist
+					// does, so every failure is reported by name and the exit is non-zero - the
+					// caller decides what to do, rather than the import deciding silently.
+					refused = append(refused, fmt.Sprintf("%s: %v", p, err))
+					continue
+				}
+				if isNew {
+					added++
+				} else {
+					present++
+				}
+			}
+			for _, m := range refused {
+				fmt.Fprintln(os.Stderr, "refused: "+m)
+			}
+			fmt.Printf("indexed %d claims, %d already present, %d refused  (registry now holds %d)\n",
+				added, present, len(refused), r.Len())
+			if len(refused) > 0 {
+				return fmt.Errorf("%d of %d record(s) refused", len(refused), len(paths))
+			}
+			return nil
+		}
+		env, err := readEnvelope(paths[0])
 		if err != nil {
 			return err
 		}
@@ -294,34 +429,44 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "about":
+		args, asJSON := takeJSON(args)
 		if len(args) != 1 {
-			return fmt.Errorf("usage: nekton about <subject>  (hash \"sha256:...\" or uri)")
+			return fmt.Errorf("usage: nekton about <subject> [--json]  (hash \"sha256:...\" or uri)")
 		}
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
+		}
+		if asJSON {
+			return printClaimsJSON(r.About(args[0]))
 		}
 		printClaims(r.About(args[0]))
 		return nil
 
 	case "by":
+		args, asJSON := takeJSON(args)
 		if len(args) != 2 {
-			return fmt.Errorf("usage: nekton by <signer|predicate|object> <value>")
+			return fmt.Errorf("usage: nekton by <signer|predicate|object> <value> [--json]")
 		}
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
 		}
+		var recs []registry.Record
 		switch args[0] {
 		case "signer":
-			printClaims(r.BySigner(keyidFromArg(args[1])))
+			recs = r.BySigner(keyidFromArg(args[1]))
 		case "predicate":
-			printClaims(r.ByPredicate(resolvePredicateArg(args[1])))
+			recs = r.ByPredicate(resolvePredicateArg(args[1]))
 		case "object":
-			printClaims(r.ByObject(args[1]))
+			recs = r.ByObject(args[1])
 		default:
 			return fmt.Errorf("by <signer|predicate|object> <value>")
 		}
+		if asJSON {
+			return printClaimsJSON(recs)
+		}
+		printClaims(recs)
 		return nil
 
 	case "nanopublish":
@@ -369,7 +514,11 @@ func run(cmd string, args []string) error {
 		}
 		peer := args[0]
 		if strings.HasPrefix(peer, "http://") || strings.HasPrefix(peer, "https://") {
-			return fmt.Errorf("network peer %s - use: kton mirror nekton %s", peer, peer)
+			return fmt.Errorf("network peer %s - this repository carries no network transport.\n"+
+				"  Mirror a local registry directory here; reaching a peer across a network is a\n"+
+				"  cockpit capability. SPEC §12 leaves the transport unspecified: the queries and\n"+
+				"  the wire form are normative, the binding is not, and `nekton records --json --since N`\n"+
+				"  answers sync(since) over stdout.", peer)
 		}
 		if fi, err := os.Stat(peer); err != nil || !fi.IsDir() {
 			return fmt.Errorf("peer registry %q does not exist (nothing to mirror)", peer)
@@ -419,10 +568,11 @@ func run(cmd string, args []string) error {
 		// head transitively commits to the whole chain; publishing or `kton anchor`-ing it makes
 		// every prior edit in the scope tamper-evident. This is the only chain-query the kernel
 		// offers - resolution/walking beyond the tip is a consumer/cockpit concern.
-		if len(args) != 1 {
-			return fmt.Errorf("usage: nekton head <scope-id>  (the seed/scope id, sha256:...)")
+		headArgs, headJSON := takeJSON(args)
+		if len(headArgs) != 1 {
+			return fmt.Errorf("usage: nekton head <scope-id> [--json]  (the seed/scope id, sha256:...)")
 		}
-		scope := args[0]
+		scope := headArgs[0]
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
@@ -430,6 +580,18 @@ func run(cmd string, args []string) error {
 		heads, chainLen, ok := r.Heads(scope)
 		if !ok {
 			return fmt.Errorf("no such scope %s (not a seed ingested in registry %s)", scope, dir())
+		}
+		if headJSON {
+			// The head is what a consumer anchors or publishes, so it must be readable as data. Both
+			// caveats travel with it as FIELDS rather than as prose a reader may skip: `unresolved`
+			// (a withheld MIDDLE claim leaves later ones unreachable, so this tip is provisional) and
+			// `branched` (each head then commits only to its own branch). `sealed` is deliberately
+			// absent - a withheld LATER claim is undetectable in-band, and no field here could say so
+			// honestly. That is settled by matching a published/anchored head, not by this command.
+			return printJSONOut(map[string]any{
+				"scope": scope, "heads": heads, "chainLength": chainLen,
+				"branched": len(heads) > 1, "unresolved": r.Unresolved(scope),
+			})
 		}
 		// A withheld MIDDLE claim leaves later claims (possibly the real sealed head) unresolvable, so
 		// the resolved tip below is only PROVISIONAL. Never present a truncated chain as sealed in silence.

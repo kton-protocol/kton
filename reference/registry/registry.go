@@ -56,10 +56,13 @@ type Registry struct {
 
 	fotonByID map[string]Record // fotonID -> record
 	foton     map[string]*core.Foton
-	byOutput  map[string][]string // output hash -> []fotonID
-	byInput   map[string][]string // input hash  -> []fotonID
-	byAction  map[string][]string // action key  -> []fotonID
-	peers     map[string]int      // peer url -> last remote seq pulled
+	// Verification material (SPEC §8.1), indexed by the subject it is about. Deliberately NOT part
+	// of a Record: presence, absence or invalidity must not touch validity or resolvability (§11).
+	material map[string][]VerificationMaterial
+	byOutput map[string][]string // output hash -> []fotonID
+	byInput  map[string][]string // input hash  -> []fotonID
+	byAction map[string][]string // action key  -> []fotonID
+	peers    map[string]int      // peer url -> last remote seq pulled
 }
 
 // Open loads (or creates) a registry rooted at dir, replaying its log.
@@ -73,14 +76,15 @@ func openAt(dir string, create bool) (*Registry, error) {
 		dir:        dir,
 		objectsDir: filepath.Join(dir, "objects"),
 		peersPath:  filepath.Join(dir, "peers.json"),
-		seen:      map[string]bool{},
-		keyIdx:    map[string]int{},
-		fotonByID: map[string]Record{},
-		foton:     map[string]*core.Foton{},
-		byOutput:  map[string][]string{},
-		byInput:   map[string][]string{},
-		byAction:  map[string][]string{},
-		peers:     map[string]int{},
+		seen:       map[string]bool{},
+		keyIdx:     map[string]int{},
+		fotonByID:  map[string]Record{},
+		foton:      map[string]*core.Foton{},
+		material:   map[string][]VerificationMaterial{},
+		byOutput:   map[string][]string{},
+		byInput:    map[string][]string{},
+		byAction:   map[string][]string{},
+		peers:      map[string]int{},
 	}
 	if create {
 		if err := os.MkdirAll(r.objectsDir, 0o755); err != nil {
@@ -106,6 +110,7 @@ func openAt(dir string, create bool) (*Registry, error) {
 		return nil, err
 	}
 	sort.Strings(paths)
+	loaded := make([]objectFile, 0, len(paths))
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
 		if err != nil {
@@ -120,8 +125,27 @@ func openAt(dir string, create bool) (*Registry, error) {
 			r.degraded++
 			continue
 		}
-		r.apply(Record{Seq: r.maxSeq + 1, FotonID: of.FotonID, Envelope: of.Envelope})
+		loaded = append(loaded, of)
 	}
+	// Number the records from objects/.seq, offering the ids in the stable sorted-path order above
+	// rather than in apply order. The positions come off disk, so one already handed to a peer can
+	// never move - which is what stops a planted record whose hash sorts EARLY from shifting every
+	// later record down and pushing it back under a peer's cursor (AUD-02).
+	ids := make([]string, 0, len(loaded))
+	for _, of := range loaded {
+		k, _ := recordKey(of.Envelope, of.FotonID)
+		ids = append(ids, k)
+	}
+	seqs, err := r.resolveSeqs(ids, create)
+	if err != nil {
+		return nil, err
+	}
+	for i, of := range loaded {
+		r.apply(Record{Seq: seqs[ids[i]], FotonID: of.FotonID, Envelope: of.Envelope})
+	}
+	// Verification material is read AFTER the records and never feeds into them: §8.1 requires that
+	// its presence, absence or invalidity leave validity and resolvability untouched.
+	r.material = readMaterial(r.objectsDir)
 	if b, err := os.ReadFile(r.peersPath); err == nil {
 		_ = json.Unmarshal(b, &r.peers)
 	}
@@ -152,6 +176,7 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 		keyIdx:    map[string]int{},
 		fotonByID: map[string]Record{},
 		foton:     map[string]*core.Foton{},
+		material:  map[string][]VerificationMaterial{},
 		byOutput:  map[string][]string{},
 		byInput:   map[string][]string{},
 		byAction:  map[string][]string{},
@@ -196,15 +221,41 @@ func (r *Registry) apply(rec Record) {
 			r.degraded++
 			return
 		}
+		// The rest of what Add enforces, applied HERE too (AUD-09). The read path re-derived the id
+		// and stopped, so a record that Add refuses was fully indexed if it arrived by any other
+		// route - and both packages document git merge as a supported federation transport, which
+		// bypasses Add entirely. Every ingest-gate finding was therefore re-openable through a path
+		// the design endorses: a forged protocol.ref made `show` print `command: EVIL` and
+		// `records --json` re-serve it to peers.
+		//
+		// Skipped and counted, not fatal: one planted file must not disable reads over every good
+		// record (the corrupt-poisons-read lesson), and `--strict` already refuses to answer over a
+		// degraded read for callers who need the loud form.
+		if !rec.Envelope.HasSignature() {
+			fmt.Fprintf(os.Stderr, "warning: skipping record %s: it carries no signature (SPEC §8; Add refuses these at ingest)\n", rec.FotonID)
+			r.degraded++
+			return
+		}
+		if err := f.CheckProtocolRef(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping record %s: %v\n", rec.FotonID, err)
+			r.degraded++
+			return
+		}
 	}
 	key, _ := recordKey(rec.Envelope, rec.FotonID)
 	if i, ok := r.keyIdx[key]; ok {
 		// The identity is already present. A same-id TWIN (same covered payload, different signatures - two
 		// independent producers, or a corrupt copy planted first) does NOT let first-seen win: UNION the two
 		// envelopes' well-formed signatures into one record (red-team round 10, RED-2). The result is
-		// order-INDEPENDENT - a later mirror of a good source heals a corrupt twin AND a second genuine
-		// producer's signature is retained, so `producer`/`reproductions` see every signer. `verify` still
-		// adjudicates each signature cryptographically.
+		// order-independent FOR IDENTICAL BYTES - a later mirror of a good source heals a corrupt twin
+		// and a second genuine producer's signature is retained, so `producer`/`reproductions` see
+		// every signer. `verify` still adjudicates each signature cryptographically.
+		//
+		// It is NOT order-independent when two records share an id but carry different payloads
+		// (different `uri`, say - carried, not covered). unionSignatures refuses those, so which
+		// carried variant is stored depends on ingest order. That is a known limitation, stated
+		// rather than papered over: the alternative was attaching a signature to bytes its owner
+		// never signed, which is what this used to do (#93).
 		old := r.records[i].Envelope
 		if merged, changed := unionSignatures(old, rec.Envelope); changed {
 			r.records[i].Envelope = merged
@@ -275,21 +326,23 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 		// survive, order-independent - red-team round 10, RED-2), then let apply() union it in memory.
 		// Subsumes the old heal-a-corrupt-twin case (union keeps only well-formed signatures).
 		if i, ok := r.keyIdx[key]; ok {
-			old := r.records[i].Envelope
-			if merged, changed := unionSignatures(old, env); changed {
-				rec := Record{Seq: r.records[i].Seq, FotonID: fotonID, Envelope: merged}
-				if err := r.writeObject(key, rec); err != nil {
-					return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
-				}
-				r.apply(rec)
+			merged, err := r.persistRecord(key, fotonID, env)
+			if err != nil {
+				return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 			}
+			r.apply(Record{Seq: r.records[i].Seq, FotonID: fotonID, Envelope: merged})
 		}
 		return fotonID, false, nil
 	}
-	rec := Record{Seq: r.maxSeq + 1, FotonID: fotonID, Envelope: env}
-	if err := r.writeObject(key, rec); err != nil {
+	merged, err := r.persistRecord(key, fotonID, env)
+	if err != nil {
 		return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 	}
+	seqs, serr := r.resolveSeqs([]string{key}, true)
+	if serr != nil {
+		return "", false, fmt.Errorf("%w: %v", ErrPersist, serr)
+	}
+	rec := Record{Seq: seqs[key], FotonID: fotonID, Envelope: merged}
 	r.apply(rec)
 	return fotonID, true, nil
 }
@@ -439,11 +492,98 @@ func (r *Registry) PeerCursor(url string) int { return r.peers[url] }
 // SetPeerCursor records the last remote seq pulled from a peer and persists it.
 func (r *Registry) SetPeerCursor(url string, seq int) error {
 	r.peers[url] = seq
-	b, err := json.MarshalIndent(r.peers, "", "  ")
-	if err != nil {
-		return err
+	// peers.json is ONE file every mirror mutates, so two concurrent mirrors would otherwise lose one
+	// another's cursor - and a lost cursor is a silently re-fetched or silently skipped range.
+	return r.withLock(".peers.lock", func() error {
+		on := map[string]int{}
+		if b, err := os.ReadFile(r.peersPath); err == nil {
+			_ = json.Unmarshal(b, &on)
+		}
+		for k, v := range r.peers {
+			if v > on[k] {
+				on[k] = v
+			}
+		}
+		b, err := json.MarshalIndent(on, "", "  ")
+		if err != nil {
+			return err
+		}
+		return atomicWrite(r.peersPath, b)
+	})
+}
+
+// persistRecord is the ONE write path for an object, and the only place a signature union is
+// decided. It takes a per-object lock, RE-READS what is on disk, unions against THAT, and writes.
+//
+// Re-reading under the lock is the whole point. The union used to merge against this process's
+// in-memory copy, so two processes co-signing one record each merged their own signature into a
+// stale view and the second atomic rename discarded the first's. Atomic rename makes each write
+// indivisible; it does nothing for a read-modify-write spanning two of them
+// (`concurrency-races`, red-team, VULNERABLE on every run until now).
+//
+// The lock is per object file, not store-wide: two writers only contend when they touch the same
+// record, and a bulk ingest of distinct records has no conflict to serialize.
+// resolveSeqs returns the durable federation position of every record key, issuing one to any key
+// that does not have one yet (SPEC §12; see core.SeqMap for why the numbering lives beside the
+// records rather than inside them - the on-disk record must stay byte-identical across peers or a
+// git merge of two registries stops being conflict-free). persist=false is the read-only source
+// path: it numbers in memory and writes nothing, because a read MUST NOT mutate what it reads.
+func (r *Registry) resolveSeqs(keys []string, persist bool) (map[string]int, error) {
+	p := filepath.Join(r.dir, seqFileName)
+	m := core.ReadSeqMap(p)
+	need := false
+	for _, k := range keys {
+		if _, ok := m.Seq[k]; !ok && k != "" {
+			need = true
+			break
+		}
 	}
-	return os.WriteFile(r.peersPath, b, 0o644)
+	if !need || !persist {
+		m.Assign(keys) // in-memory only: nothing new to record, or a read-only source
+		return m.Seq, nil
+	}
+	var out map[string]int
+	err := r.withLock(".seq.lock", func() error {
+		m := core.ReadSeqMap(p) // re-read under the lock: another process may have issued positions
+		if m.Assign(keys) {
+			if err := core.WriteSeqMap(p, m); err != nil {
+				return err
+			}
+		}
+		out = m.Seq
+		return nil
+	})
+	return out, err
+}
+
+// seqFileName is the store-local federation numbering (SPEC §12). It sits NEXT TO peers.json, not
+// inside objects/: it has exactly peers.json's character - local bookkeeping about federation, not
+// content - and keeping it out of objects/ means the record tree a git federation ships stays
+// records only, with nothing in it that two stores would legitimately disagree about.
+const seqFileName = ".seq"
+
+func (r *Registry) persistRecord(key, fotonID string, env core.Envelope) (core.Envelope, error) {
+	merged := env
+	err := r.withLock(".obj-"+strings.NewReplacer("/", "_", ":", "_").Replace(key)+".lock", func() error {
+		p := objectPath(r.objectsDir, key)
+		if b, rerr := os.ReadFile(p); rerr == nil {
+			var of objectFile
+			if json.Unmarshal(b, &of) == nil && of.Envelope.Payload != "" {
+				if m, _ := unionSignatures(of.Envelope, merged); len(m.Signatures) > 0 {
+					merged = m
+				}
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		b, err := json.MarshalIndent(objectFile{FotonID: fotonID, Envelope: merged}, "", "  ")
+		if err != nil {
+			return err
+		}
+		return atomicWrite(p, b)
+	})
+	return merged, err
 }
 
 // Len reports the number of indexed fotons.
@@ -538,10 +678,27 @@ func sigEntryWellFormed(keyid, sig string) bool {
 // id covers only the covered projection - so two independent PRODUCERS of an identical computation are
 // ONE foton with TWO signatures, not two rival records where ingest/source order decides which signer
 // survives (red-team round 10, RED-2). The union is deterministic (dedup by keyid+sig, sorted), hence
-// order-independent (SPEC §12 conflict-free union), and it subsumes prefer-valid-twin: only well-formed
+// order-independent for identical bytes (SPEC §12 conflict-free union; differing payloads are refused
+// above and are order-DEPENDENT in which variant is kept), and it subsumes prefer-valid-twin: only well-formed
 // signatures enter the set, so a corrupt twin ingested first is healed by a later good one. Returns the
 // merged envelope and whether it differs from `old` (whether a rewrite/reindex is needed).
 func unionSignatures(old, incoming core.Envelope) (core.Envelope, bool) {
+	// A signature stands over PAE(payloadType, payload). Unioning across DIFFERENT payloads therefore
+	// attaches a signature to bytes it never signed - and the identity of a record does not cover
+	// everything the payload carries, so two honest producers can collide here: same foton id,
+	// different `uri` (carried, not covered, §6.1), different signed bytes.
+	//
+	// The old code kept the FIRST payload and unioned both signature sets. Demonstrated result: the
+	// stored record carried the attacker's locator, the signature list held BOTH keyids, and
+	// `plankton verify` with the honest producer's key answered WRONG KEY. The honest producer
+	// appeared as an endorser of someone else's payload, and `records --json` republished it.
+	//
+	// So: never merge across differing bytes. The stored record stays as it is and the caller says
+	// so. One of the two carried-field variants wins, which is a real limitation and an honest one -
+	// what is NOT acceptable is a keyid attached to bytes its owner did not sign.
+	if old.PayloadType != incoming.PayloadType || old.Payload != incoming.Payload {
+		return old, false
+	}
 	type sk struct{ k, s string }
 	seen := map[sk]bool{}
 	cur := old.Signatures[:0:0]

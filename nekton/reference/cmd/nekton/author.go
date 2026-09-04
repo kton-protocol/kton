@@ -53,11 +53,52 @@ func keyidOf(s string) (string, error) {
 	return "", fmt.Errorf("not an Ed25519 public key or .key seed: %q", s)
 }
 
-func keygen(name string) error {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return err
+// keygen writes <name>.key (the 32-byte seed, hex) and <name>.pub (the public key, hex).
+//
+// --seed makes the identity a function of its input instead of the entropy pool. That matters for
+// the same reason --when does (#42): the public key is inside every signed payload - example 07
+// even mints an identity IRI from sha256(pub) - so a random key per run moves every record id, and
+// a corpus or a snapshot can never be rebuilt to the same bytes. A hand-written seed was already
+// accepted as a .key; what was missing was any way back to the .pub hex that verify, --trust-keys
+// and the viewer key directories need.
+//
+// A --seed key is exactly as strong as the seed behind it. Use it for fixtures and reproducible
+// corpora, not for an identity that signs anything anyone must trust.
+func keygen(args []string) error {
+	var name, seedHex string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--seed":
+			i++
+			seedHex = arg(args, i)
+		default:
+			if strings.HasPrefix(args[i], "--") {
+				return fmt.Errorf("unknown flag %q", args[i])
+			}
+			name = args[i]
+		}
 	}
+	if name == "" {
+		return fmt.Errorf("usage: %s keygen <name> [--seed <64-hex>]", "nekton")
+	}
+
+	var pub ed25519.PublicKey
+	var priv ed25519.PrivateKey
+	if seedHex == "" {
+		var err error
+		if pub, priv, err = ed25519.GenerateKey(rand.Reader); err != nil {
+			return err
+		}
+	} else {
+		seed, err := hex.DecodeString(strings.TrimSpace(seedHex))
+		if err != nil || len(seed) != ed25519.SeedSize {
+			return fmt.Errorf("--seed must be %d hex-encoded bytes (%d hex chars), got %q",
+				ed25519.SeedSize, ed25519.SeedSize*2, seedHex)
+		}
+		priv = ed25519.NewKeyFromSeed(seed)
+		pub = priv.Public().(ed25519.PublicKey)
+	}
+
 	if err := os.WriteFile(name+".key", []byte(hex.EncodeToString(priv.Seed())), 0o600); err != nil {
 		return err
 	}
@@ -65,6 +106,22 @@ func keygen(name string) error {
 		return err
 	}
 	fmt.Printf("keypair %s  keyid=%s\n", name, keyidHex(pub))
+	return nil
+}
+
+// pubkey prints the public key hex for a private key, so an identity written by hand (or carried as
+// a bare seed) can still produce the .pub that verify and --trust-keys read.
+func pubkey(arg string) error {
+	txt := arg
+	if b, err := os.ReadFile(arg); err == nil {
+		txt = string(b)
+	}
+	seed, err := hex.DecodeString(strings.TrimSpace(txt))
+	if err != nil || len(seed) != ed25519.SeedSize {
+		return fmt.Errorf("not a %d-byte hex seed (a .key file or the hex itself): %q", ed25519.SeedSize, arg)
+	}
+	pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	fmt.Println(hex.EncodeToString(pub))
 	return nil
 }
 
@@ -136,7 +193,7 @@ func subjectsOf(ss []subjSpec) []any { return claim.SubjectsOf(ss) }
 func bareHash(h string) string       { return claim.BareHash(h) }
 
 // authorClaim builds an in-toto Statement per SPEC §7.3, signs a DSSE envelope, and writes it.
-func authorClaim(specPath, keyPath, outPath string, addFlag bool, regDir string) error {
+func authorClaim(specPath, keyPath, outPath string, addFlag bool, regDir string, printID bool) error {
 	raw, err := os.ReadFile(specPath)
 	if err != nil {
 		return err
@@ -152,7 +209,7 @@ func authorClaim(specPath, keyPath, outPath string, addFlag bool, regDir string)
 	if err != nil {
 		return err
 	}
-	return signClaim(spec, priv, outPath, addFlag, regDir)
+	return signClaim(spec, priv, outPath, addFlag, regDir, printID)
 }
 
 // buildClaimEnv canonicalizes a claimSpec into a signed in-toto Statement (SPEC §7.3) and returns the
@@ -181,9 +238,14 @@ func buildClaimEnv(spec claimSpec, priv ed25519.PrivateKey) ([]byte, string, err
 }
 
 // signClaim builds the claim, writes the envelope to outPath (unless --add was given without an
-// explicit -o), and optionally ingests it into a registry. Shared by `nekton claim` and `nekton
-// annotate`.
-func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag bool, regDir string) error {
+// explicit -o), and optionally ingests it into a registry. Shared by `nekton claim`, `nekton
+// annotate` and `nekton seed`.
+//
+// printID follows `plankton author --print-id` exactly (main.go:33): the ONLY thing on stdout is the
+// bare claim id, every human line goes to stderr. Without it a caller has to parse an identifier out
+// of prose - the cockpit was anchoring on the "indexed claim" line, a dependency on output
+// formatting that nothing guaranteed and no test protected (#56).
+func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag bool, regDir string, printID bool) error {
 	b, id, err := buildClaimEnv(spec, priv)
 	if err != nil {
 		return err
@@ -201,7 +263,8 @@ func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag 
 	if !writeFile {
 		dest = "(no -o file written; ingested via --add below)"
 	}
-	fmt.Printf("claim %s  keyid=%s  %s\n", id, keyidHex(priv.Public().(ed25519.PublicKey)), dest)
+	msg := humanOut(printID)
+	msg("claim %s  keyid=%s  %s\n", id, keyidHex(priv.Public().(ed25519.PublicKey)), dest)
 	if addFlag {
 		var env core.Envelope
 		if err := json.Unmarshal(b, &env); err != nil {
@@ -216,10 +279,23 @@ func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag 
 			return err
 		}
 		if isNew {
-			fmt.Printf("indexed claim %s  (registry now holds %d claims)\n", rid, r.Len())
+			msg("indexed claim %s  (registry now holds %d claims)\n", rid, r.Len())
 		} else {
-			fmt.Printf("already present: claim %s\n", rid)
+			msg("already present: claim %s\n", rid)
 		}
 	}
+	if printID {
+		fmt.Println(id)
+	}
 	return nil
+}
+
+// humanOut returns the writer for human-readable lines: stderr when the caller asked for a bare id
+// on stdout, stdout otherwise. One helper so `claim`, `annotate` and `seed` cannot drift apart on
+// which stream a line lands in - a flag that behaves differently on sibling commands is its own trap.
+func humanOut(printID bool) func(string, ...any) {
+	if printID {
+		return func(format string, a ...any) { fmt.Fprintf(os.Stderr, format, a...) }
+	}
+	return func(format string, a ...any) { fmt.Printf(format, a...) }
 }

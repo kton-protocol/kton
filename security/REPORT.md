@@ -1,10 +1,17 @@
 # kton red-team — findings report
 
-*Rendered from 28 attack records in the signed kton graph by `provenance/render_report.py` — re-run to regenerate.*
+*Originally rendered from 28 attack records in the signed kton graph. The renderer
+(`provenance/render_report.py`), the signed claims and `keys/` are NOT in this repository, so this
+file cannot be regenerated or verified from here and is maintained by hand. Until the graph is
+published, read it as prose - the executable part of this suite is `check.sh`, which prints how
+much of the engagement it actually runs.*
 
-## Posture: **24/26 spectrum members fulfilled** → NOT SECURE (2 open)
+## Posture: **27/29 spectrum members fulfilled** → NOT SECURE (2 open)
 
-24 closed · 2 open · 2 accepted boundary. Each attack is a signed `plankton` foton pinning a runnable PoC (`attacks/<id>.sh`); theory, vulnerable/fixed commits are signed `nekton` claims. Verify any: `nekton verify <claim>.json keys/redteam.pub`.
+27 closed · 2 open · 2 accepted boundary. Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
+vulnerable/fixed commits as signed `nekton` claims. Those claims and the `keys/` directory are not in this
+repository, so `nekton verify` cannot be run against them from here - `redteam.pub` alone verifies nothing.
+10 of the 28 PoCs are executable and run in `check.sh`; the rest are records, not reproductions.
 
 ## By vulnerability class
 | class | count |
@@ -118,12 +125,77 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **fixed at (reproduction now fails):** pk [`b625b1f`](https://github.com/gitmick/plankton/commit/b625b1f)
 - **PoC:** [`attacks/co-signer-drop.sh`](attacks/co-signer-drop.sh)
 
-### `concurrency-races` — ORANGE · ✅ closed
+### `union-across-payloads` — RED · ✅ closed
+- **class:** `signature-attached-to-bytes-it-did-not-sign`
+- **theory:** A foton id covers inputs/outputs/protocol; `uri` is **carried, not covered** (§6.1). So
+  two honest producers publishing the same computation with different locators collide: same id,
+  different signed bytes. The store kept the FIRST payload and unioned BOTH signature sets — and a
+  signature stands over `PAE(payloadType, payload)`, so the second producer's signature then hung on
+  bytes it never signed.
+- **demonstrated:** the stored record carried the attacker's locator, the signature list held both
+  keyids, and `plankton verify` with the honest producer's key answered **WRONG KEY**. The honest
+  producer was presented as an endorser of someone else's payload, and `records --json` republished
+  it to every peer. Ingesting in the opposite order produced a different object file, contradicting
+  the code's own "order-INDEPENDENT" comment.
+- **fixed at:** #93 — never merge across differing bytes, on both kernels. One carried variant wins,
+  which is order-dependent and now *said so* in the code rather than denied by it. What is not
+  acceptable is a keyid attached to bytes its owner did not sign.
+- **PoC:** [`attacks/union-across-payloads.sh`](attacks/union-across-payloads.sh) — gated. It checks
+  the signature count *and* that every stored signature verifies against a key we hold, because a
+  count alone would pass whenever the two payloads happened to match.
+
+### `read-path-ungated` — RED · ✅ closed
+- **class:** `ingest-gate-not-on-the-read-path`
+- **theory:** The read path applied none of the gates `Add` enforces. A record ingest refuses was
+  fully indexed if it arrived by any other route — and both kernels document git merge as a
+  supported federation transport, which bypasses `Add` entirely. Every ingest-gate finding in this
+  report was therefore re-openable through a path the design endorses.
+- **demonstrated:** the exact record the GATED `when-unvalidated` attack proves is rejected —
+  `"when":"whenever-you-like"` — appended to a store file by hand was indexed and returned by
+  `nekton about`. On plankton, a record with its signature removed was indexed and re-served by
+  `records --json` to peers.
+- **fixed at:** #91 — `index`/`apply` run the same gates, skipping and naming what they refuse.
+  Skipped rather than fatal: one planted file must not disable reads over every good record
+  (`corrupt-poisons-read`), and `--strict` is the loud form.
+- **PoC:** [`attacks/read-path-ungated.sh`](attacks/read-path-ungated.sh) — gated. Its first draft
+  grepped the human output for the bad timestamp and reported PREVENTED against the *vulnerable*
+  binary, because the prose form does not print `when` that way. It counts structurally now. That
+  near-miss is worth recording: it is the same defect this suite already carries once, in
+  `corrupt-poisons-read`.
+
+### `scope-path-traversal` — RED · ✅ closed
+- **class:** `path-from-unvalidated-input`
+- **theory:** A claim's `scope` is a free-form string in a signed payload, and the store derived a
+  filename from it without validation. `scope: "sha256:../../../tmp/x"` made nekton create and
+  append to a file anywhere the process could write; ingesting the same claim twice then sent it
+  through `rewriteSubnekton`, which atomically replaced that file with only the attacker's record,
+  destroying whatever else it held. Reachable from a hostile peer: `kton mirror nekton` feeds peer
+  envelopes straight to `Add`, and ingest does not verify signatures (§8), so any key suffices.
+- **why it survived:** the same class was found and fixed in the blobstore (#79) — validate before
+  deriving a path — and left standing in the store layout added by #41. One kernel learned the
+  lesson and the other did not.
+- **fixed at:** #87 — a scope must be a canonical content hash before it can name a file, and the
+  result is proven to stay under the store root. One guarded derivation now serves both the record
+  file and its verification material, so the two cannot drift apart again.
+- **PoC:** [`attacks/scope-path-traversal.sh`](attacks/scope-path-traversal.sh) — gated. Verified to
+  report VULNERABLE against the pre-fix binary and PREVENTED after.
+
+### `concurrency-races` — ORANGE · ✅ closed (and once recorded closed in error)
 - **class:** `concurrency-nonatomic`
-- **theory:** Concurrent same-file writers corrupted objects and dropped a co-signature (non-atomic os.WriteFile). Fixed: atomic temp+rename + locked union-write.
+- **theory:** Concurrent same-file writers corrupted objects and dropped a co-signature (non-atomic os.WriteFile).
+- **status:** Closed in two halves, years apart in effort. `af3cefa` made each write atomic
+  (temp+rename), ending the torn-object half — and this entry then claimed a "locked union-write"
+  that did not exist. Atomic rename makes each write indivisible; it does nothing for a
+  read-modify-write spanning two of them, so two processes co-signing one record each merged into a
+  stale in-memory view and the second rename discarded the first's signature. The union now takes a
+  per-object lock and RE-READS from disk under it (#77). The lock is per object file, not
+  store-wide: writers contend only on the same record, and a bulk ingest of distinct records has
+  nothing to serialize.
 - **vulnerable at:** pk [`a687723`](https://github.com/gitmick/plankton/commit/a687723)
-- **fixed at (reproduction now fails):** pk [`af3cefa`](https://github.com/gitmick/plankton/commit/af3cefa)
-- **PoC:** [`attacks/concurrency-races.sh`](attacks/concurrency-races.sh)
+- **atomic write at:** pk [`af3cefa`](https://github.com/gitmick/plankton/commit/af3cefa)
+- **PoC:** [`attacks/concurrency-races.sh`](attacks/concurrency-races.sh) — gated. It was a stub
+  printing a sentence and no verdict, which is exactly why the gate could not see this for as long
+  as it did; made executable first, then fixed.
 
 ### `corrupt-poisons-read` — ORANGE · ✅ closed
 - **class:** `read-face-brittle`
