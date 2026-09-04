@@ -204,6 +204,26 @@ func (r *Registry) apply(rec Record) {
 			r.degraded++
 			return
 		}
+		// The rest of what Add enforces, applied HERE too (AUD-09). The read path re-derived the id
+		// and stopped, so a record that Add refuses was fully indexed if it arrived by any other
+		// route - and both packages document git merge as a supported federation transport, which
+		// bypasses Add entirely. Every ingest-gate finding was therefore re-openable through a path
+		// the design endorses: a forged protocol.ref made `show` print `command: EVIL` and
+		// `records --json` re-serve it to peers.
+		//
+		// Skipped and counted, not fatal: one planted file must not disable reads over every good
+		// record (the corrupt-poisons-read lesson), and `--strict` already refuses to answer over a
+		// degraded read for callers who need the loud form.
+		if !rec.Envelope.HasSignature() {
+			fmt.Fprintf(os.Stderr, "warning: skipping record %s: it carries no signature (SPEC §8; Add refuses these at ingest)\n", rec.FotonID)
+			r.degraded++
+			return
+		}
+		if err := f.CheckProtocolRef(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping record %s: %v\n", rec.FotonID, err)
+			r.degraded++
+			return
+		}
 	}
 	key, _ := recordKey(rec.Envelope, rec.FotonID)
 	if i, ok := r.keyIdx[key]; ok {

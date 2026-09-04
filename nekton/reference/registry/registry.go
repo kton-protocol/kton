@@ -398,6 +398,23 @@ func (r *Registry) index(rec Record) {
 			fmt.Fprintf(os.Stderr, "warning: skipping planted claim: stored id %s but its envelope derives %s\n", rec.ClaimID, derived)
 			return
 		}
+		// The rest of what Add enforces, applied HERE too (AUD-09). The read path re-derived the id
+		// and stopped, so a claim Add refuses was fully indexed if it arrived by any other route -
+		// and this package documents git merge as a supported federation transport, which bypasses
+		// Add entirely. Concretely: the exact record the GATED `when-unvalidated` attack proves is
+		// rejected - `"when":"whenever-you-like"` - was indexed and printed as an ordinary claim
+		// once appended to a store file by hand. The PoC only ever exercised the CLI ingest path.
+		if !rec.Envelope.HasSignature() {
+			fmt.Fprintf(os.Stderr, "warning: skipping claim %s: it carries no signature (SPEC §8; Add refuses these at ingest)\n", rec.ClaimID)
+			return
+		}
+		if p, perr := st.ParsePredicate(); perr != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, perr)
+			return
+		} else if verr := st.Validate(p); verr != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, verr)
+			return
+		}
 	}
 	if r.seen[rec.ClaimID] {
 		return

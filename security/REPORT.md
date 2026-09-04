@@ -6,9 +6,9 @@ file cannot be regenerated or verified from here and is maintained by hand. Unti
 published, read it as prose - the executable part of this suite is `check.sh`, which prints how
 much of the engagement it actually runs.*
 
-## Posture: **25/27 spectrum members fulfilled** → NOT SECURE (2 open)
+## Posture: **26/28 spectrum members fulfilled** → NOT SECURE (2 open)
 
-25 closed · 2 open · 2 accepted boundary. Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
+26 closed · 2 open · 2 accepted boundary. Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
 vulnerable/fixed commits as signed `nekton` claims. Those claims and the `keys/` directory are not in this
 repository, so `nekton verify` cannot be run against them from here - `redteam.pub` alone verifies nothing.
 10 of the 28 PoCs are executable and run in `check.sh`; the rest are records, not reproductions.
@@ -124,6 +124,25 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **vulnerable at:** pk [`0aa44b8`](https://github.com/gitmick/plankton/commit/0aa44b8)
 - **fixed at (reproduction now fails):** pk [`b625b1f`](https://github.com/gitmick/plankton/commit/b625b1f)
 - **PoC:** [`attacks/co-signer-drop.sh`](attacks/co-signer-drop.sh)
+
+### `read-path-ungated` — RED · ✅ closed
+- **class:** `ingest-gate-not-on-the-read-path`
+- **theory:** The read path applied none of the gates `Add` enforces. A record ingest refuses was
+  fully indexed if it arrived by any other route — and both kernels document git merge as a
+  supported federation transport, which bypasses `Add` entirely. Every ingest-gate finding in this
+  report was therefore re-openable through a path the design endorses.
+- **demonstrated:** the exact record the GATED `when-unvalidated` attack proves is rejected —
+  `"when":"whenever-you-like"` — appended to a store file by hand was indexed and returned by
+  `nekton about`. On plankton, a record with its signature removed was indexed and re-served by
+  `records --json` to peers.
+- **fixed at:** #91 — `index`/`apply` run the same gates, skipping and naming what they refuse.
+  Skipped rather than fatal: one planted file must not disable reads over every good record
+  (`corrupt-poisons-read`), and `--strict` is the loud form.
+- **PoC:** [`attacks/read-path-ungated.sh`](attacks/read-path-ungated.sh) — gated. Its first draft
+  grepped the human output for the bad timestamp and reported PREVENTED against the *vulnerable*
+  binary, because the prose form does not print `when` that way. It counts structurally now. That
+  near-miss is worth recording: it is the same defect this suite already carries once, in
+  `corrupt-poisons-read`.
 
 ### `scope-path-traversal` — RED · ✅ closed
 - **class:** `path-from-unvalidated-input`
