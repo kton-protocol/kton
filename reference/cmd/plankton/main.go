@@ -79,12 +79,13 @@ usage:
   plankton mirror <local-registry-dir>                overlay a peer registry by hash (local, no network)
   plankton man                                        print the embedded manual page (roff)
 
-federation over the NETWORK (mirroring a URL peer), transparency-log anchoring, and byte
-pinning are NOT kernel operations - the kernel opens no ports and needs no network. They
-live in the cockpit: see 'kton mirror', 'kton anchor', 'kton pin', 'kton blob', 'kton
-fetch'. Nothing in this repository serves a port at all: records --json --since N is the
-SPEC §12 sync answer on stdout, and a server over it is a deployment's job. Local
-overlay-by-hash (above) stays here: it is pure federation.
+transparency-log anchoring, locator dereferencing and byte pinning are NOT kernel
+operations - the kernel opens no ports and needs no network. They live in the cockpit:
+see 'kton anchor', 'kton fetch', 'kton pin', 'kton blob'. Federation over a NETWORK is in
+neither: this repository ships no server and, since #101, no client - the transport is a
+cockpit's job. What it ships is the answer, on stdout: records --json --since N is the
+SPEC §12 sync document verbatim. Local overlay-by-hash (above) stays here: it is a data
+operation, not a transport.
 
 env:
   PLANKTON_DIR   registry directory (default ./plankton-data)
@@ -930,7 +931,11 @@ func run(cmd string, args []string) error {
 		}
 		peer := args[0]
 		if strings.HasPrefix(peer, "http://") || strings.HasPrefix(peer, "https://") {
-			return fmt.Errorf("network peer %s - use: kton mirror plankton %s", peer, peer)
+			return fmt.Errorf("network peer %s - this repository carries no network transport.\n"+
+				"  Mirror a local registry directory here; reaching a peer across a network is a\n"+
+				"  cockpit capability. SPEC §12 leaves the transport unspecified: the queries and\n"+
+				"  the wire form are normative, the binding is not, and `plankton records --json --since N`\n"+
+				"  answers sync(since) over stdout.", peer)
 		}
 		if fi, err := os.Stat(peer); err != nil || !fi.IsDir() {
 			return fmt.Errorf("peer registry %q does not exist (nothing to mirror)", peer)

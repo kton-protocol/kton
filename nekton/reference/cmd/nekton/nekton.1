@@ -156,8 +156,10 @@ Render a claim (or a seed) to its nanopublication (RDF/TriG) face.
 .TP
 .B nekton mirror \fIlocal-registry-dir\fR
 Overlay a peer's claims by hash (local, no network) - how a session receives a subnekton
-commons. For a URL peer use
-.BR "kton mirror" .
+commons. A URL peer is refused: reaching one is a transport, and this repository carries no
+transport. See
+.B nekton records --json --since
+for the Clause 12 sync answer a cockpit reads.
 To author a scoped/chained claim you must first mirror the registry holding its scope seed and every
 \fBprev\fR ancestor: \fBadd\fR refuses a claim whose \fBprev\fR does not resolve locally.
 .TP

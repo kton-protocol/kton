@@ -21,7 +21,6 @@ import (
 
 	"encoding/json"
 
-	"kton.dev/kton/federation"
 	"kton.dev/nekton/claim"
 	nreg "kton.dev/nekton/registry"
 	"kton.dev/plankton/blobstore"
@@ -77,7 +76,7 @@ func fetch(hash string, trustKeysDir string, allowLocal bool) error {
 	}
 	locs = verified
 
-	bs, err := blobstore.Open(filepath.Join(planktonDir(), federation.BlobsSubdir))
+	bs, err := blobstore.Open(filepath.Join(planktonDir(), blobsSubdir))
 	if err != nil {
 		return err
 	}
