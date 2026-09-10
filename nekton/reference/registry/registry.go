@@ -309,25 +309,42 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 			return nil, fmt.Errorf("source %q is not an accessible registry (does the directory exist?)", d)
 		}
 	}
-	u, err := openAt(dirs[0], false)
-	if err != nil {
-		return nil, err
-	}
 	if len(dirs) == 1 {
-		return u, nil
+		return openAt(dirs[0], false)
 	}
+
+	// Every source's RAW records are collected first, then settled TOGETHER.
+	//
+	// This used to open dirs[0] normally - which SETTLED it alone and DROPPED whatever did not
+	// resolve - and then settle only the remaining sources against that finished view. A scoped
+	// child held in A whose seed lives in B was therefore dropped before B had even been read, and
+	// reversing the argument order changed the answer: child_first=false, seed_first=true (AUD-02).
+	// A union whose result depends on argument order is not a union, and §11-§12 promise a
+	// conflict-free set union. Settling once over everything makes the operation commutative.
+	u := newRegistry(dirs[0])
 	var pending []Record
-	for _, d := range dirs[1:] {
-		src, err := openAt(d, false)
+	for _, d := range dirs {
+		objects := filepath.Join(d, "objects")
+		if err := checkStoreFormat(d, objects); err != nil {
+			return nil, err
+		}
+		recs, err := readStore(objects)
 		if err != nil {
 			return nil, err
 		}
-		for _, rec := range src.RawRecords() {
-			rec.Seq = 0 // a foreign store's positions are meaningless here; settle appends them
+		for _, rec := range recs {
+			rec.Seq = 0 // a source's own positions mean nothing in a union view; settle numbers them
 			pending = append(pending, rec)
 		}
+		// Material is merged from EVERY source, and independently of settling. §8.1 says a record's
+		// validity never depends on its material; the converse has to hold too - already-carried
+		// evidence must not disappear because it happened to arrive in the second source (AUD-11).
+		mergeMaterial(u.material, readAllMaterial(objects))
 	}
-	u.dropped += u.settle(pending)
+	u.dropped = u.settle(pending)
+	if b, err := os.ReadFile(u.peersPath); err == nil {
+		_ = json.Unmarshal(b, &u.peers)
+	}
 	return u, nil
 }
 
@@ -335,8 +352,10 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 // never MkdirAll's the store - a read must not MUTATE the source it reads, and a read-only peer would
 // otherwise fail the mkdir with "permission denied". A missing objects dir then reads as an empty
 // registry.
-func openAt(dir string, create bool) (*Registry, error) {
-	r := &Registry{
+// newRegistry allocates an EMPTY registry rooted at dir. Factored out of openAt so OpenUnion can
+// build a union view without first loading - and silently settling - one of its sources.
+func newRegistry(dir string) *Registry {
+	return &Registry{
 		dir:         dir,
 		objectsDir:  filepath.Join(dir, "objects"),
 		peersPath:   filepath.Join(dir, "peers.json"),
@@ -352,19 +371,52 @@ func openAt(dir string, create bool) (*Registry, error) {
 		material:    map[string][]VerificationMaterial{},
 		peers:       map[string]int{},
 	}
+}
+
+// checkStoreFormat refuses a store this build cannot read. An unreadable store must never be
+// mistaken for an empty one - a verification tool answering "nothing is recorded" where the truthful
+// answer is "I cannot read this" is the most dangerous thing it can do.
+func checkStoreFormat(dir, objectsDir string) error {
+	format, err := readStoreFormat(objectsDir)
+	if err != nil {
+		return err
+	}
+	if format > StoreFormat {
+		return fmt.Errorf("nekton store at %s is layout format %d, this build reads format %d.\n"+
+			"Upgrade nekton instead of reading it with this build: an unreadable store must not be\n"+
+			"mistaken for an empty one.", dir, format, StoreFormat)
+	}
+	return nil
+}
+
+// mergeMaterial folds src into dst, skipping an attachment dst already carries. Two sources holding
+// the same evidence must not double it, and an UNKNOWN scheme is carried rather than filtered - the
+// kernel evaluates no material (§8.1) and therefore cannot judge which schemes matter.
+func mergeMaterial(dst, src map[string][]VerificationMaterial) {
+	for subject, ms := range src {
+		have := map[VerificationMaterial]bool{}
+		for _, m := range dst[subject] {
+			have[m] = true
+		}
+		for _, m := range ms {
+			if have[m] {
+				continue
+			}
+			have[m] = true
+			dst[subject] = append(dst[subject], m)
+		}
+	}
+}
+
+func openAt(dir string, create bool) (*Registry, error) {
+	r := newRegistry(dir)
 	if create {
 		if err := os.MkdirAll(r.objectsDir, 0o755); err != nil {
 			return nil, err
 		}
 	}
-	format, err := readStoreFormat(r.objectsDir)
-	if err != nil {
+	if err := checkStoreFormat(dir, r.objectsDir); err != nil {
 		return nil, err
-	}
-	if format > StoreFormat {
-		return nil, fmt.Errorf("nekton store at %s is layout format %d, this build reads format %d.\n"+
-			"Upgrade nekton instead of reading it with this build: an unreadable store must not be\n"+
-			"mistaken for an empty one.", dir, format, StoreFormat)
 	}
 	if create {
 		if err := writeStoreFormat(r.objectsDir); err != nil {
@@ -415,6 +467,12 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 		var next []Record
 		for _, rec := range pending {
 			if r.seen[rec.ClaimID] {
+				// A same-payload TWIN from another source. A claim id covers the PAYLOAD only, so two
+				// independent signers of identical bytes are ONE claim with TWO signatures - which is
+				// exactly what Add does at ingest. settle used to `continue` here, so reading A,B kept
+				// only A's signer and reading B,A kept only B's: which co-signature survived depended
+				// on argument order, and BySigner could not find the other one (AUD-03).
+				r.mergeTwinInMemory(rec)
 				continue
 			}
 			st, _, err := claim.ParseEnvelope(rec.Envelope)
@@ -554,6 +612,33 @@ func (r *Registry) reindexSigners(idx int, before, after core.Envelope) {
 		}
 		had[s.KeyID] = true
 		r.bySigner[s.KeyID] = append(r.bySigner[s.KeyID], idx)
+	}
+}
+
+// mergeTwinInMemory unions a same-payload twin's signatures into the record already held, WITHOUT
+// writing anything. settle runs on READ paths - replay and OpenUnion - and a read must never mutate
+// the store it reads, least of all a peer's.
+//
+// unionSignatures still refuses to merge across DIFFERENT payload bytes (#93), so a record whose
+// carried fields differ cannot have a signature attached to bytes its owner never signed. That
+// prohibition is the point and is preserved here.
+func (r *Registry) mergeTwinInMemory(rec Record) {
+	old, ok := r.claimByID[rec.ClaimID]
+	if !ok {
+		return
+	}
+	merged, changed := unionSignatures(old.Envelope, rec.Envelope)
+	if !changed {
+		return
+	}
+	updated := Record{Seq: old.Seq, ClaimID: old.ClaimID, Envelope: merged}
+	r.claimByID[rec.ClaimID] = updated
+	for i := range r.records {
+		if r.records[i].ClaimID == rec.ClaimID {
+			r.records[i] = updated
+			r.reindexSigners(i, old.Envelope, merged)
+			break
+		}
 	}
 }
 
