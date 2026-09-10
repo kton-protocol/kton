@@ -26,6 +26,38 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Fixed — a union is now commutative (external audit, step 2)
+
+- **A multi-source read gave a different answer depending on argument order** (AUD-02, AUD-03,
+  AUD-11). §11–§12 promise a conflict-free set union, and an operation whose result depends on the
+  order of its arguments is not one. Three separate ways it did:
+
+  | | before | after |
+  |---|---|---|
+  | a scoped child in A whose seed is in B | `child_first=false, seed_first=true` | held either way |
+  | the same claim signed by two parties | 1 signature; which signer survived depended on order | 2 signatures either way |
+  | material attached in the second source | lost (plankton: lost even to an **empty** second source) | merged from every source |
+
+  **AUD-02:** `OpenUnion` opened `dirs[0]` normally — which *settled it alone* and **dropped**
+  whatever did not resolve — and then settled only the remaining sources against that finished
+  view. A's unresolved child was therefore discarded before B had even been read. Every source's
+  raw records are now collected first and settled **together**, once.
+
+  **AUD-03:** `settle` skipped a claim id it had already seen. A claim id covers the **payload**
+  only, so two independent signers of identical bytes are one claim with two signatures — which is
+  what `Add` already did at ingest. The union now merges them in memory (never writing: a read must
+  not mutate a source), and refreshes the signer index so `BySigner` finds both. `unionSignatures`
+  still refuses to merge across **differing** payload bytes, which is the point and is preserved.
+
+  **AUD-11:** plankton allocated an empty material map for a union and never filled it; nekton kept
+  only the first source's. Material is now merged from every source, deduplicated by attachment, and
+  independently of settling — §8.1 says a record's validity never depends on its material, and the
+  converse has to hold too.
+
+  Regression tests walk **all six permutations** of a three-link chain across three stores, both
+  orders of a co-signed twin, and material in every source position including empty and duplicate
+  sources — each verified to fail without its fix.
+
 ### Fixed — identities and truthful failures (external audit, step 1)
 
 - **`keygen` no longer overwrites an identity, and no longer inherits a file's permissions**
@@ -106,6 +138,38 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
+
+### Fixed — a union is now commutative (external audit, step 2)
+
+- **A multi-source read gave a different answer depending on argument order** (AUD-02, AUD-03,
+  AUD-11). §11–§12 promise a conflict-free set union, and an operation whose result depends on the
+  order of its arguments is not one. Three separate ways it did:
+
+  | | before | after |
+  |---|---|---|
+  | a scoped child in A whose seed is in B | `child_first=false, seed_first=true` | held either way |
+  | the same claim signed by two parties | 1 signature; which signer survived depended on order | 2 signatures either way |
+  | material attached in the second source | lost (plankton: lost even to an **empty** second source) | merged from every source |
+
+  **AUD-02:** `OpenUnion` opened `dirs[0]` normally — which *settled it alone* and **dropped**
+  whatever did not resolve — and then settled only the remaining sources against that finished
+  view. A's unresolved child was therefore discarded before B had even been read. Every source's
+  raw records are now collected first and settled **together**, once.
+
+  **AUD-03:** `settle` skipped a claim id it had already seen. A claim id covers the **payload**
+  only, so two independent signers of identical bytes are one claim with two signatures — which is
+  what `Add` already did at ingest. The union now merges them in memory (never writing: a read must
+  not mutate a source), and refreshes the signer index so `BySigner` finds both. `unionSignatures`
+  still refuses to merge across **differing** payload bytes, which is the point and is preserved.
+
+  **AUD-11:** plankton allocated an empty material map for a union and never filled it; nekton kept
+  only the first source's. Material is now merged from every source, deduplicated by attachment, and
+  independently of settling — §8.1 says a record's validity never depends on its material, and the
+  converse has to hold too.
+
+  Regression tests walk **all six permutations** of a three-link chain across three stores, both
+  orders of a co-signed twin, and material in every source position including empty and duplicate
+  sources — each verified to fail without its fix.
 
 ### Fixed — identities and truthful failures (external audit, step 1)
 
@@ -257,6 +321,38 @@ build reading a format it does not know refuses loudly instead of reporting an e
   `reproduces` claim records and which the exit code cannot distinguish.
 - **`kton fetch --allow-local`** (#81) — see Security.
 
+### Fixed — a union is now commutative (external audit, step 2)
+
+- **A multi-source read gave a different answer depending on argument order** (AUD-02, AUD-03,
+  AUD-11). §11–§12 promise a conflict-free set union, and an operation whose result depends on the
+  order of its arguments is not one. Three separate ways it did:
+
+  | | before | after |
+  |---|---|---|
+  | a scoped child in A whose seed is in B | `child_first=false, seed_first=true` | held either way |
+  | the same claim signed by two parties | 1 signature; which signer survived depended on order | 2 signatures either way |
+  | material attached in the second source | lost (plankton: lost even to an **empty** second source) | merged from every source |
+
+  **AUD-02:** `OpenUnion` opened `dirs[0]` normally — which *settled it alone* and **dropped**
+  whatever did not resolve — and then settled only the remaining sources against that finished
+  view. A's unresolved child was therefore discarded before B had even been read. Every source's
+  raw records are now collected first and settled **together**, once.
+
+  **AUD-03:** `settle` skipped a claim id it had already seen. A claim id covers the **payload**
+  only, so two independent signers of identical bytes are one claim with two signatures — which is
+  what `Add` already did at ingest. The union now merges them in memory (never writing: a read must
+  not mutate a source), and refreshes the signer index so `BySigner` finds both. `unionSignatures`
+  still refuses to merge across **differing** payload bytes, which is the point and is preserved.
+
+  **AUD-11:** plankton allocated an empty material map for a union and never filled it; nekton kept
+  only the first source's. Material is now merged from every source, deduplicated by attachment, and
+  independently of settling — §8.1 says a record's validity never depends on its material, and the
+  converse has to hold too.
+
+  Regression tests walk **all six permutations** of a three-link chain across three stores, both
+  orders of a co-signed twin, and material in every source position including empty and duplicate
+  sources — each verified to fail without its fix.
+
 ### Fixed — identities and truthful failures (external audit, step 1)
 
 - **`keygen` no longer overwrites an identity, and no longer inherits a file's permissions**
@@ -387,6 +483,38 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Fixed — a union is now commutative (external audit, step 2)
+
+- **A multi-source read gave a different answer depending on argument order** (AUD-02, AUD-03,
+  AUD-11). §11–§12 promise a conflict-free set union, and an operation whose result depends on the
+  order of its arguments is not one. Three separate ways it did:
+
+  | | before | after |
+  |---|---|---|
+  | a scoped child in A whose seed is in B | `child_first=false, seed_first=true` | held either way |
+  | the same claim signed by two parties | 1 signature; which signer survived depended on order | 2 signatures either way |
+  | material attached in the second source | lost (plankton: lost even to an **empty** second source) | merged from every source |
+
+  **AUD-02:** `OpenUnion` opened `dirs[0]` normally — which *settled it alone* and **dropped**
+  whatever did not resolve — and then settled only the remaining sources against that finished
+  view. A's unresolved child was therefore discarded before B had even been read. Every source's
+  raw records are now collected first and settled **together**, once.
+
+  **AUD-03:** `settle` skipped a claim id it had already seen. A claim id covers the **payload**
+  only, so two independent signers of identical bytes are one claim with two signatures — which is
+  what `Add` already did at ingest. The union now merges them in memory (never writing: a read must
+  not mutate a source), and refreshes the signer index so `BySigner` finds both. `unionSignatures`
+  still refuses to merge across **differing** payload bytes, which is the point and is preserved.
+
+  **AUD-11:** plankton allocated an empty material map for a union and never filled it; nekton kept
+  only the first source's. Material is now merged from every source, deduplicated by attachment, and
+  independently of settling — §8.1 says a record's validity never depends on its material, and the
+  converse has to hold too.
+
+  Regression tests walk **all six permutations** of a three-link chain across three stores, both
+  orders of a co-signed twin, and material in every source position including empty and duplicate
+  sources — each verified to fail without its fix.
 
 ### Fixed — identities and truthful failures (external audit, step 1)
 

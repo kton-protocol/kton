@@ -190,9 +190,34 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 		for _, rec := range r.records {
 			u.apply(Record{Seq: u.maxSeq + 1, FotonID: rec.FotonID, Envelope: rec.Envelope})
 		}
+		// Material is merged from EVERY source. The union used to allocate an empty map and never
+		// fill it, so one foton with one attachment had one item read alone and ZERO as soon as any
+		// second source was added - even an empty one (AUD-11). §8.1 says a record's validity never
+		// depends on its material; the converse has to hold too, or an advertised union API silently
+		// drops evidence its named sources hold.
+		mergeMaterial(u.material, r.material)
 		u.degraded += r.degraded // a skip in ANY source makes the union read incomplete
 	}
 	return u, nil
+}
+
+// mergeMaterial folds src into dst, skipping an attachment dst already carries. Two sources holding
+// the same evidence must not double it, and an UNKNOWN scheme is carried rather than filtered - the
+// kernel evaluates no material (§8.1) and so cannot judge which schemes matter.
+func mergeMaterial(dst, src map[string][]VerificationMaterial) {
+	for subject, ms := range src {
+		have := map[VerificationMaterial]bool{}
+		for _, m := range dst[subject] {
+			have[m] = true
+		}
+		for _, m := range ms {
+			if have[m] {
+				continue
+			}
+			have[m] = true
+			dst[subject] = append(dst[subject], m)
+		}
+	}
 }
 
 // Degraded reports how many records were skipped on load (corrupt, or a planted/mismatched id). A
