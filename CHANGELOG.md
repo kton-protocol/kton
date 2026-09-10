@@ -26,6 +26,55 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Fixed — the cursor contract (external audit, AUD-04)
+
+- **A change to a record that a peer is already past now reaches it, and the feed no longer hides
+  what the store holds.** Two failures, both measured, and neither was really a numbering problem:
+
+  **A co-signature reached nobody.** The subnekton was **rewritten in place**, so nothing was
+  appended, nothing got a position, and no cursor could notice. A subnekton is an append-only log
+  *because in nekton the order carries meaning* (`prev`, head, seal) — rewriting an entry erased the
+  record that anything had changed. A co-signature is now its own **line**, carrying the signature
+  set it arrived with; the reader unions lines that share a claim id, exactly as `Add` already
+  unioned a twin at ingest.
+
+  **A deferred claim reached nobody either.** A claim whose seed or `prev` is not held is persisted
+  and structurally valid — incomplete is not invalid (§11) — but it was absent from `Records()`, so
+  a peer never received it *at all*; and when the dependency later arrived and it resolved locally,
+  it entered the index at its **original** position, below every cursor already issued. The feed was
+  hiding a record the store was holding. `Records()` now answers from the store's lines, not from
+  the index: a deferred record is offered (and still answers no query here, joins no head, and
+  counts toward no scope).
+
+  A position is now issued against the **stored bytes** rather than the record's identity, so "a new
+  stored thing" and "a new position" are the same event, and a re-mirror of identical bytes is
+  idempotent for free. The two kernels then differ, correctly: nekton leaves the old line in place
+  and appends; plankton keeps one file per record and fotons are an *unordered* set of
+  content-addressed facts, so there is no order to preserve and the record simply takes the new
+  position.
+
+  `MaxSeq` now comes from the feed, not the index — it used to return a cursor that did not cover
+  what had just been delivered, so a peer would have been handed the same co-signature on every
+  sync, forever.
+
+- **§12 restated.** The normative properties belong to the **cursor's guarantee**, not to the
+  record: never decreases, newer-or-changed is higher, never derived from author-influenced content.
+  *"Issued once"* was an implementation detail masquerading as a promise and is gone; nothing it
+  guaranteed is lost. §12 also now says a participant MUST offer records it holds but cannot
+  resolve, and that how a change reaches a peer is the participant's business as long as rule 2
+  holds.
+
+- **The numbering carries an `epoch`** (`sync` answers `{records, max, epoch}`). If a store's
+  numbering is lost or replaced — a deleted counter, a restored backup, a rebuild — positions start
+  again from the beginning and a peer holding a high cursor would sit silently above everything it
+  is offered, receiving nothing, forever. A peer whose stored epoch differs MUST discard its cursor
+  and resync. A comment in `ReadSeqMap` used to assert that peers "just resync"; nothing in the wire
+  form made them, so that was a claim the protocol did not support.
+
+- `co-signer-drop` measured `max(signatures per stored line)` — the storage shape rather than the
+  finding, which is whether a co-signer can be **lost**. It now counts distinct signers surviving a
+  mirror *and* asks `by signer` for each, which is what the finding was about.
+
 ### Fixed — boundary and identity rules (external audit, step 3)
 
 - **Canonicalization is idempotent, and the number rule is on the value rather than the spelling**
@@ -202,6 +251,55 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
+
+### Fixed — the cursor contract (external audit, AUD-04)
+
+- **A change to a record that a peer is already past now reaches it, and the feed no longer hides
+  what the store holds.** Two failures, both measured, and neither was really a numbering problem:
+
+  **A co-signature reached nobody.** The subnekton was **rewritten in place**, so nothing was
+  appended, nothing got a position, and no cursor could notice. A subnekton is an append-only log
+  *because in nekton the order carries meaning* (`prev`, head, seal) — rewriting an entry erased the
+  record that anything had changed. A co-signature is now its own **line**, carrying the signature
+  set it arrived with; the reader unions lines that share a claim id, exactly as `Add` already
+  unioned a twin at ingest.
+
+  **A deferred claim reached nobody either.** A claim whose seed or `prev` is not held is persisted
+  and structurally valid — incomplete is not invalid (§11) — but it was absent from `Records()`, so
+  a peer never received it *at all*; and when the dependency later arrived and it resolved locally,
+  it entered the index at its **original** position, below every cursor already issued. The feed was
+  hiding a record the store was holding. `Records()` now answers from the store's lines, not from
+  the index: a deferred record is offered (and still answers no query here, joins no head, and
+  counts toward no scope).
+
+  A position is now issued against the **stored bytes** rather than the record's identity, so "a new
+  stored thing" and "a new position" are the same event, and a re-mirror of identical bytes is
+  idempotent for free. The two kernels then differ, correctly: nekton leaves the old line in place
+  and appends; plankton keeps one file per record and fotons are an *unordered* set of
+  content-addressed facts, so there is no order to preserve and the record simply takes the new
+  position.
+
+  `MaxSeq` now comes from the feed, not the index — it used to return a cursor that did not cover
+  what had just been delivered, so a peer would have been handed the same co-signature on every
+  sync, forever.
+
+- **§12 restated.** The normative properties belong to the **cursor's guarantee**, not to the
+  record: never decreases, newer-or-changed is higher, never derived from author-influenced content.
+  *"Issued once"* was an implementation detail masquerading as a promise and is gone; nothing it
+  guaranteed is lost. §12 also now says a participant MUST offer records it holds but cannot
+  resolve, and that how a change reaches a peer is the participant's business as long as rule 2
+  holds.
+
+- **The numbering carries an `epoch`** (`sync` answers `{records, max, epoch}`). If a store's
+  numbering is lost or replaced — a deleted counter, a restored backup, a rebuild — positions start
+  again from the beginning and a peer holding a high cursor would sit silently above everything it
+  is offered, receiving nothing, forever. A peer whose stored epoch differs MUST discard its cursor
+  and resync. A comment in `ReadSeqMap` used to assert that peers "just resync"; nothing in the wire
+  form made them, so that was a claim the protocol did not support.
+
+- `co-signer-drop` measured `max(signatures per stored line)` — the storage shape rather than the
+  finding, which is whether a co-signer can be **lost**. It now counts distinct signers surviving a
+  mirror *and* asks `by signer` for each, which is what the finding was about.
 
 ### Fixed — boundary and identity rules (external audit, step 3)
 
@@ -449,6 +547,55 @@ build reading a format it does not know refuses loudly instead of reporting an e
   `reproduces` claim records and which the exit code cannot distinguish.
 - **`kton fetch --allow-local`** (#81) — see Security.
 
+### Fixed — the cursor contract (external audit, AUD-04)
+
+- **A change to a record that a peer is already past now reaches it, and the feed no longer hides
+  what the store holds.** Two failures, both measured, and neither was really a numbering problem:
+
+  **A co-signature reached nobody.** The subnekton was **rewritten in place**, so nothing was
+  appended, nothing got a position, and no cursor could notice. A subnekton is an append-only log
+  *because in nekton the order carries meaning* (`prev`, head, seal) — rewriting an entry erased the
+  record that anything had changed. A co-signature is now its own **line**, carrying the signature
+  set it arrived with; the reader unions lines that share a claim id, exactly as `Add` already
+  unioned a twin at ingest.
+
+  **A deferred claim reached nobody either.** A claim whose seed or `prev` is not held is persisted
+  and structurally valid — incomplete is not invalid (§11) — but it was absent from `Records()`, so
+  a peer never received it *at all*; and when the dependency later arrived and it resolved locally,
+  it entered the index at its **original** position, below every cursor already issued. The feed was
+  hiding a record the store was holding. `Records()` now answers from the store's lines, not from
+  the index: a deferred record is offered (and still answers no query here, joins no head, and
+  counts toward no scope).
+
+  A position is now issued against the **stored bytes** rather than the record's identity, so "a new
+  stored thing" and "a new position" are the same event, and a re-mirror of identical bytes is
+  idempotent for free. The two kernels then differ, correctly: nekton leaves the old line in place
+  and appends; plankton keeps one file per record and fotons are an *unordered* set of
+  content-addressed facts, so there is no order to preserve and the record simply takes the new
+  position.
+
+  `MaxSeq` now comes from the feed, not the index — it used to return a cursor that did not cover
+  what had just been delivered, so a peer would have been handed the same co-signature on every
+  sync, forever.
+
+- **§12 restated.** The normative properties belong to the **cursor's guarantee**, not to the
+  record: never decreases, newer-or-changed is higher, never derived from author-influenced content.
+  *"Issued once"* was an implementation detail masquerading as a promise and is gone; nothing it
+  guaranteed is lost. §12 also now says a participant MUST offer records it holds but cannot
+  resolve, and that how a change reaches a peer is the participant's business as long as rule 2
+  holds.
+
+- **The numbering carries an `epoch`** (`sync` answers `{records, max, epoch}`). If a store's
+  numbering is lost or replaced — a deleted counter, a restored backup, a rebuild — positions start
+  again from the beginning and a peer holding a high cursor would sit silently above everything it
+  is offered, receiving nothing, forever. A peer whose stored epoch differs MUST discard its cursor
+  and resync. A comment in `ReadSeqMap` used to assert that peers "just resync"; nothing in the wire
+  form made them, so that was a claim the protocol did not support.
+
+- `co-signer-drop` measured `max(signatures per stored line)` — the storage shape rather than the
+  finding, which is whether a co-signer can be **lost**. It now counts distinct signers surviving a
+  mirror *and* asks `by signer` for each, which is what the finding was about.
+
 ### Fixed — boundary and identity rules (external audit, step 3)
 
 - **Canonicalization is idempotent, and the number rule is on the value rather than the spelling**
@@ -675,6 +822,55 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Fixed — the cursor contract (external audit, AUD-04)
+
+- **A change to a record that a peer is already past now reaches it, and the feed no longer hides
+  what the store holds.** Two failures, both measured, and neither was really a numbering problem:
+
+  **A co-signature reached nobody.** The subnekton was **rewritten in place**, so nothing was
+  appended, nothing got a position, and no cursor could notice. A subnekton is an append-only log
+  *because in nekton the order carries meaning* (`prev`, head, seal) — rewriting an entry erased the
+  record that anything had changed. A co-signature is now its own **line**, carrying the signature
+  set it arrived with; the reader unions lines that share a claim id, exactly as `Add` already
+  unioned a twin at ingest.
+
+  **A deferred claim reached nobody either.** A claim whose seed or `prev` is not held is persisted
+  and structurally valid — incomplete is not invalid (§11) — but it was absent from `Records()`, so
+  a peer never received it *at all*; and when the dependency later arrived and it resolved locally,
+  it entered the index at its **original** position, below every cursor already issued. The feed was
+  hiding a record the store was holding. `Records()` now answers from the store's lines, not from
+  the index: a deferred record is offered (and still answers no query here, joins no head, and
+  counts toward no scope).
+
+  A position is now issued against the **stored bytes** rather than the record's identity, so "a new
+  stored thing" and "a new position" are the same event, and a re-mirror of identical bytes is
+  idempotent for free. The two kernels then differ, correctly: nekton leaves the old line in place
+  and appends; plankton keeps one file per record and fotons are an *unordered* set of
+  content-addressed facts, so there is no order to preserve and the record simply takes the new
+  position.
+
+  `MaxSeq` now comes from the feed, not the index — it used to return a cursor that did not cover
+  what had just been delivered, so a peer would have been handed the same co-signature on every
+  sync, forever.
+
+- **§12 restated.** The normative properties belong to the **cursor's guarantee**, not to the
+  record: never decreases, newer-or-changed is higher, never derived from author-influenced content.
+  *"Issued once"* was an implementation detail masquerading as a promise and is gone; nothing it
+  guaranteed is lost. §12 also now says a participant MUST offer records it holds but cannot
+  resolve, and that how a change reaches a peer is the participant's business as long as rule 2
+  holds.
+
+- **The numbering carries an `epoch`** (`sync` answers `{records, max, epoch}`). If a store's
+  numbering is lost or replaced — a deleted counter, a restored backup, a rebuild — positions start
+  again from the beginning and a peer holding a high cursor would sit silently above everything it
+  is offered, receiving nothing, forever. A peer whose stored epoch differs MUST discard its cursor
+  and resync. A comment in `ReadSeqMap` used to assert that peers "just resync"; nothing in the wire
+  form made them, so that was a claim the protocol did not support.
+
+- `co-signer-drop` measured `max(signatures per stored line)` — the storage shape rather than the
+  finding, which is whether a co-signer can be **lost**. It now counts distinct signers surviving a
+  mirror *and* asks `by signer` for each, which is what the finding was about.
 
 ### Fixed — boundary and identity rules (external audit, step 3)
 

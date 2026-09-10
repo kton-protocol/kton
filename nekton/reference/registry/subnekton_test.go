@@ -206,14 +206,64 @@ func TestCoSignatureUnionInsideASubnekton(t *testing.T) {
 	if _, _, err := r.Add(envB); err != nil {
 		t.Fatal(err)
 	}
+	// A co-signature is APPENDED, not written over the existing entry. The subnekton is an
+	// append-only log because in nekton the order carries meaning (prev, head, seal); rewriting an
+	// entry in place erased the record that anything had changed, and with it the only thing a
+	// cursor could have noticed (AUD-04). So: seed + claim + co-signature = three lines.
 	sub := filepath.Join(dir, "objects", "scope", bare(scopeID)+".nekton.jsonl")
-	if n := lines(t, sub); n != 2 {
-		t.Errorf("subnekton holds %d records, want 2: a twin must MERGE, not add a rival line", n)
+	if n := lines(t, sub); n != 3 {
+		t.Errorf("subnekton holds %d lines, want 3 (seed, claim, co-signature) - a co-signature is "+
+			"an append, so the log records that it happened", n)
 	}
+	// Each LINE carries the signature set as it arrived - one apiece here. Merging is the READER's
+	// job, which is also what makes a mirror of either line alone converge to the same state.
+	twinLines := 0
 	for _, of := range readSubnekton(sub) {
-		if of.ClaimID == idA && len(of.Envelope.Signatures) != 2 {
-			t.Errorf("record carries %d signature(s), want 2", len(of.Envelope.Signatures))
+		if of.ClaimID == idA {
+			twinLines++
+			if len(of.Envelope.Signatures) != 1 {
+				t.Errorf("a stored line carries %d signature(s), want the 1 it arrived with", len(of.Envelope.Signatures))
+			}
 		}
+	}
+	if twinLines != 2 {
+		t.Errorf("%d line(s) carry the twin's claim id, want 2", twinLines)
+	}
+
+	// The RESOLVED record is the union, and it is what every query answers from.
+	rec, ok := r.Claim(idA)
+	if !ok {
+		t.Fatalf("claim %s not held", idA)
+	}
+	if n := len(rec.Envelope.Signatures); n != 2 {
+		t.Errorf("the resolved claim carries %d signature(s), want 2", n)
+	}
+	// And the co-signature has a position of its own, above the claim it co-signs - which is the
+	// whole point: a peer following the cursor now receives it.
+	var claimSeq, cosignSeq int
+	for _, f := range r.Records(0) {
+		if f.ClaimID != idA {
+			continue
+		}
+		if claimSeq == 0 || f.Seq < claimSeq {
+			claimSeq = f.Seq
+		}
+		if f.Seq > cosignSeq {
+			cosignSeq = f.Seq
+		}
+	}
+	if cosignSeq <= claimSeq {
+		t.Errorf("the co-signature is at position %d and the claim at %d - it needs a position ABOVE, "+
+			"or a peer already past the claim never learns of it", cosignSeq, claimSeq)
+	}
+
+	// Re-adding the same envelope must add nothing: no new line, no new position.
+	before := lines(t, sub)
+	if _, _, err := r.Add(envB); err != nil {
+		t.Fatal(err)
+	}
+	if after := lines(t, sub); after != before {
+		t.Errorf("re-adding an envelope we already hold grew the log from %d to %d lines", before, after)
 	}
 }
 

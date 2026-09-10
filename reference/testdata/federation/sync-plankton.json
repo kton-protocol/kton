@@ -1,4 +1,6 @@
 {
+  "epoch": "7f22ec22bb0cba21f2cf3c3119e12f1e",
+  "max": 1,
   "records": [
     {
       "seq": 1,
@@ -14,6 +16,5 @@
         ]
       }
     }
-  ],
-  "max": 1
+  ]
 }

@@ -46,7 +46,7 @@ func records(args []string) error {
 	if asJSON {
 		// `max` is the cursor to pass back next time - the registry's, not the last record's seq,
 		// so an empty batch still advances a caller past what it has seen.
-		return printJSONOut(map[string]any{"records": recs, "max": r.MaxSeq()})
+		return printJSONOut(map[string]any{"records": recs, "max": r.MaxSeq(), "epoch": r.Epoch()})
 	}
 	if len(recs) == 0 {
 		fmt.Printf("(none) - no records above cursor %d (registry cursor is %d)\n", since, r.MaxSeq())

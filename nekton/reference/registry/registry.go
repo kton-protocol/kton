@@ -59,6 +59,7 @@ func atomicWrite(path string, b []byte) error {
 func (r *Registry) resolveSeqs(ids []string, persist bool) (map[string]int, error) {
 	p := filepath.Join(r.dir, seqFileName)
 	m := core.ReadSeqMap(p)
+	r.epoch = m.Epoch
 	need := false
 	for _, id := range ids {
 		if _, ok := m.Seq[id]; !ok && id != "" {
@@ -73,6 +74,7 @@ func (r *Registry) resolveSeqs(ids []string, persist bool) (map[string]int, erro
 	var out map[string]int
 	err := r.withWriteLock(func() error {
 		m := core.ReadSeqMap(p) // re-read under the lock: another process may have issued positions
+		r.epoch = m.Epoch
 		if m.Assign(ids) {
 			if err := core.WriteSeqMap(p, m); err != nil {
 				return err
@@ -132,14 +134,32 @@ func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envel
 		return env, perr
 	}
 	err := r.withWriteLock(func() error {
+		// Union across EVERY line that carries this claim id - after this change there can be more
+		// than one, each recording a signature set as it arrived.
 		recs := readSubnekton(path)
-		for i, of := range recs {
+		held, found := core.Envelope{}, false
+		for _, of := range recs {
 			if of.ClaimID != id {
 				continue
 			}
-			m, _ := unionSignatures(of.Envelope, env)
-			merged, recs[i].Envelope = m, m
-			return rewriteSubnekton(path, recs) // an existing entry changed: rewrite the file
+			if !found {
+				held, found = of.Envelope, true
+				continue
+			}
+			held, _ = unionSignatures(held, of.Envelope)
+		}
+		if found {
+			m, changed := unionSignatures(held, env)
+			merged = m
+			if !changed {
+				return nil // already have every signature: writing a line would only grow the file
+			}
+			// APPEND, do not rewrite. The subnekton is append-only because in nekton the order
+			// carries meaning (prev, head, seal); rewriting an entry in place erased the record that
+			// anything had changed, and with it the only thing a cursor could have noticed (AUD-04).
+			// The line holds the envelope AS IT ARRIVED - the reader unions, which is what settle and
+			// Add already do for a twin.
+			return appendSubnekton(path, objectFile{ClaimID: id, Envelope: env})
 		}
 		// Not in the subnekton yet. A record an older build left at the flat path is the same claim:
 		// union with it and migrate it in, so no co-signature is lost crossing the layouts.
@@ -266,9 +286,23 @@ type Registry struct {
 	peersPath  string
 
 	records []Record
-	seen    map[string]bool // claim id -> present (idempotency)
-	maxSeq  int
-	dropped int // on-disk records dropped as orphans / chain-invalid on load (§7.4)
+	// feed is what §12's sync(since) answers from: every LINE the store holds that passed the
+	// structural gate, each with its own position, in the order they were written. It is
+	// deliberately NOT the index.
+	//
+	// Two things follow, and both were bugs before (AUD-04). A claim whose seed or prev is not held
+	// is persisted and structurally valid - incomplete is not invalid (§11) - so it is in the feed
+	// even though it answers no query; it used to be in neither, so a peer never received it at all,
+	// and when it later resolved locally it entered the index at its original position, below every
+	// cursor already issued. And a co-signature is its OWN line, so it has its own position and is
+	// delivered like anything else; the reader unions lines that share a claim id, exactly as `Add`
+	// unions a twin at ingest.
+	feed          []Record
+	deferredCount int
+	seen          map[string]bool // claim id -> present (idempotency)
+	maxSeq        int
+	epoch         string // the numbering this store's cursors belong to (core.SeqMap.Epoch)
+	dropped       int    // on-disk records dropped as orphans / chain-invalid on load (§7.4)
 
 	claimByID   map[string]Record
 	bySubject   map[string][]int // subject key (hash/uri) -> record indices
@@ -436,16 +470,16 @@ func openAt(dir string, create bool) (*Registry, error) {
 	// are offered in readStore's stable store order rather than settle's RESOLUTION order - the
 	// latter depends on what else is present, which is exactly how a planted record used to shift
 	// everything after it (AUD-02).
-	ids := make([]string, 0, len(pending))
+	keys := make([]string, 0, len(pending))
 	for _, rec := range pending {
-		ids = append(ids, rec.ClaimID)
+		keys = append(keys, core.EnvelopeKey(rec.Envelope))
 	}
-	seqs, err := r.resolveSeqs(ids, create)
+	seqs, err := r.resolveSeqs(keys, create)
 	if err != nil {
 		return nil, err
 	}
 	for i := range pending {
-		pending[i].Seq = seqs[pending[i].ClaimID]
+		pending[i].Seq = seqs[core.EnvelopeKey(pending[i].Envelope)]
 	}
 	r.dropped = r.settle(pending)
 	// Verification material is read AFTER settling and never feeds into it: §8.1 requires that its
@@ -473,6 +507,11 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 				// only A's signer and reading B,A kept only B's: which co-signature survived depended
 				// on argument order, and BySigner could not find the other one (AUD-03).
 				r.mergeTwinInMemory(rec)
+				// The line is in the STORE, so it is in the FEED. The index holds one unioned record
+				// per claim id; the feed holds the lines that produced it, each with its own
+				// position - that is what lets a peer past the original claim receive the
+				// co-signature (AUD-04) and union it for itself.
+				r.feed = append(r.feed, rec)
 				continue
 			}
 			st, _, err := claim.ParseEnvelope(rec.Envelope)
@@ -481,7 +520,12 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 			}
 			p, _ := st.ParsePredicate()
 			if err := r.checkChain(rec.ClaimID, st, p); err != nil {
-				next = append(next, rec) // not (yet) valid - defer to a later pass
+				if errors.Is(err, errUnresolved) {
+					next = append(next, rec) // INCOMPLETE, not invalid (§11) - defer to a later pass
+				}
+				// A structural violation is permanent: retrying it forever and then reporting it as
+				// an unresolved dependency describes the wrong problem, and serving it to a peer
+				// would hand on something we ourselves refuse.
 				continue
 			}
 			if rec.Seq == 0 {
@@ -490,6 +534,7 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 				rec.Seq = r.maxSeq + 1
 			}
 			r.index(rec)
+			r.feed = append(r.feed, rec)
 			progress = true
 		}
 		pending = next
@@ -505,6 +550,9 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 						}
 						r.unresolved[p.Scope]++
 					}
+					// Held, unresolvable, and still owed to a peer (see Records).
+					r.feed = append(r.feed, rec)
+					r.deferredCount++
 				}
 			}
 			return len(pending)
@@ -661,15 +709,22 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 		// statement are ONE claim with TWO signatures). The merge is deterministic, so any ingest/mirror
 		// order of the same sources converges to byte-identical signatures - no valid co-signature is
 		// dropped, and a corrupt twin is healed by a later good one. The claim's content (subject/
-		// predicate/object, chain position) is unchanged; only the stored envelope's signature set grows,
-		// so we rewrite it and index the record under any newly-added signer keyid.
+		// predicate/object, chain position) is unchanged; only the stored envelope's signature set grows.
+		//
+		// It is APPENDED as its own line, not written over the existing one. The subnekton is an
+		// append-only log because in nekton the ORDER carries meaning (prev, head, seal) - rewriting
+		// it in place erased the record of the change, which is precisely why no cursor could see it
+		// (AUD-04). As its own line it gets its own position and is delivered like anything else.
 		if old, ok := r.claimByID[id]; ok {
-			// A same-payload TWIN: persist the co-signature union under the lock (re-reading the current
-			// on-disk envelope), then refresh this process's in-memory view + signer index.
 			merged, err := r.persistClaim(id, scopeOf(st, id), env)
 			if err != nil {
 				return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 			}
+			if core.EnvelopeKey(merged) == core.EnvelopeKey(old.Envelope) {
+				return id, false, nil // nothing new: no line was written, so no position is issued
+			}
+			// The QUERY view keeps the record's own position - in a log where order means something,
+			// an existing entry does not move. The FEED gains the co-signature at the end.
 			rec := Record{Seq: old.Seq, ClaimID: id, Envelope: merged}
 			r.claimByID[id] = rec
 			for i := range r.records {
@@ -679,6 +734,11 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 					break
 				}
 			}
+			seqs, serr := r.resolveSeqs([]string{core.EnvelopeKey(env)}, true)
+			if serr != nil {
+				return "", false, fmt.Errorf("%w: %v", ErrPersist, serr)
+			}
+			r.feed = append(r.feed, Record{Seq: seqs[core.EnvelopeKey(env)], ClaimID: id, Envelope: env})
 		}
 		return id, false, nil
 	}
@@ -706,18 +766,23 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 	}
-	seqs, serr := r.resolveSeqs([]string{id}, true)
+	key := core.EnvelopeKey(merged)
+	seqs, serr := r.resolveSeqs([]string{key}, true)
 	if serr != nil {
 		return "", false, fmt.Errorf("%w: %v", ErrPersist, serr)
 	}
-	rec := Record{Seq: seqs[id], ClaimID: id, Envelope: merged}
+	rec := Record{Seq: seqs[key], ClaimID: id, Envelope: merged}
 	if chainErr != nil { // errUnresolved: persisted, awaiting its dependency
 		if p != nil && p.Scope != "" {
 			r.unresolved[p.Scope]++ // may be a withheld-middle successor -> `head` flags a truncation
 		}
+		// Out of every index, but IN the feed: a peer must be offered what we hold (see Records).
+		r.feed = append(r.feed, rec)
+		r.deferredCount++
 		return id, true, nil
 	}
 	r.index(rec)
+	r.feed = append(r.feed, rec)
 	return id, true, nil
 }
 
@@ -1147,9 +1212,23 @@ func readStore(objectsDir string) (recs []Record, hardErr error) {
 	return recs, nil
 }
 
+// Records answers §12's sync(since): everything this participant holds above the cursor, in
+// sequence order.
+//
+// DEFERRED records are included, and that is the point. A claim whose seed or prev is not held here
+// is persisted and structurally valid - incomplete is not invalid (SPEC §11) - but it used to be
+// absent from `records` and therefore from the feed, so a peer NEVER RECEIVED IT AT ALL. When the
+// missing dependency later arrived and the claim resolved locally, it entered the indexed set at its
+// ORIGINAL position, below every cursor already issued, and was never delivered either (AUD-04).
+// The feed was hiding a record the store was holding.
+//
+// Offering it is safe in exactly the sense §11 gives: federation is monotone, so handing a peer more
+// signed, structurally valid records can only add to what it can conclude. The peer defers it too,
+// and resolves it when it gets the dependency - the same thing we do. Withholding it is what loses
+// information.
 func (r *Registry) Records(since int) []Record {
 	var out []Record
-	for _, rec := range r.records {
+	for _, rec := range r.feed {
 		if rec.Seq > since {
 			out = append(out, rec)
 		}
@@ -1157,8 +1236,33 @@ func (r *Registry) Records(since int) []Record {
 	return out
 }
 
+// Deferred reports how many held records are still waiting for a dependency. They are served to
+// peers but answer no query here.
+func (r *Registry) Deferred() int { return r.deferredCount }
+
 // MaxSeq is the current local cursor.
-func (r *Registry) MaxSeq() int { return r.maxSeq }
+// Epoch identifies the numbering a cursor belongs to. A peer whose stored epoch differs from the one
+// in an answer MUST discard its cursor and resync from zero: the positions it holds were issued by a
+// numbering that no longer exists, and it would otherwise sit silently above everything it is
+// offered. See core.SeqMap.
+func (r *Registry) Epoch() string { return r.epoch }
+
+// MaxSeq is the cursor to hand back: the highest position in the FEED, not in the index.
+//
+// It used to come from the index, so a co-signature - which has a position but answers no query of
+// its own - was returned by Records(since) and then NOT covered by the cursor that came with it. The
+// peer would have stored the old cursor and been handed the same co-signature on every subsequent
+// sync, forever. Losing a record is worse than repeating one, but a cursor that does not cover what
+// was just delivered is simply not a cursor.
+func (r *Registry) MaxSeq() int {
+	max := r.maxSeq
+	for _, f := range r.feed {
+		if f.Seq > max {
+			max = f.Seq
+		}
+	}
+	return max
+}
 
 // Len reports the number of indexed claims.
 func (r *Registry) Len() int { return len(r.claimByID) }
