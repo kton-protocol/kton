@@ -24,6 +24,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"kton.dev/plankton/core"
@@ -59,12 +60,30 @@ type Spec struct {
 // UseNumber so a numeric descriptor value keeps its EXACT literal instead of being truncated
 // through float64 before signing - the descriptor rides into protocol.ref and therefore into the
 // foton id, so a silently rounded number would change what the record means.
+// ParseSpec decodes foton-spec JSON.
+//
+// UseNumber so a numeric descriptor value keeps its EXACT literal instead of being truncated
+// through float64 before signing.
+//
+// The two raw-bytes checks and DisallowUnknownFields all guard the same thing: a field that
+// disappears between what an author wrote and what gets signed (AUD-08). Duplicates and trailing
+// documents have to be caught on the raw bytes, because decoding keeps the last duplicate and stops
+// at the end of the first document. A misspelled `inputs`/`outputs`/`protocol` used to vanish
+// silently, producing a signed foton that was not the one described.
+//
+// The opaque `descriptor` stays fully extensible: it is a map[string]any, and DisallowUnknownFields
+// constrains only STRUCT targets, so any documented descriptor content is carried unchanged.
 func ParseSpec(raw []byte) (Spec, error) {
+	if err := core.CheckJSONDocument(raw); err != nil {
+		return Spec{}, fmt.Errorf("foton spec: %w", err)
+	}
 	var spec Spec
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(&spec); err != nil {
-		return Spec{}, err
+		return Spec{}, fmt.Errorf("foton spec: %w - a field this build does not know is refused "+
+			"rather than dropped, because a dropped field is signed away in silence", err)
 	}
 	return spec, nil
 }
@@ -95,6 +114,12 @@ func SubjectsOf(fs []FileSpec) []any {
 }
 
 // Validate rejects a spec this package will not sign.
+// Validate enforces the STRUCTURAL grammar a foton must satisfy before anything is signed or
+// indexed (SPEC §6.1, §6.3). It used to check only the predicate and the presence of a protocol, so
+// a signed foton with two different hashes at the same absolute input path was accepted AND indexed;
+// its action key then failed to compute, and the registry silently omitted the action-key index
+// while leaving the record queryable everywhere else (AUD-10). A structural violation must be
+// refused at the boundary, not turned into a missing index nobody is told about.
 func (spec Spec) Validate() error {
 	if spec.Predicate != "" && spec.Predicate != "foton" {
 		return fmt.Errorf("plankton authors only fotons; %q is an attestation - use `nekton claim` (nekton layer)", spec.Predicate)
@@ -102,7 +127,93 @@ func (spec Spec) Validate() error {
 	if spec.Protocol == nil {
 		return fmt.Errorf("foton spec needs a protocol")
 	}
+	if err := validateFiles("input", spec.Inputs, true); err != nil {
+		return err
+	}
+	return validateFiles("output", spec.Outputs, false)
+}
+
+// validateFiles checks one slot list. dedupePaths is true for inputs only: the §6.3 action key is a
+// {relpath -> hash} map, so two inputs at one path cannot both be in the computation's identity -
+// a silent last-wins would erase an input and let a 2-input foton falsely reuse a 1-input result.
+// Outputs are not in the action key, so they carry no such ambiguity.
+func validateFiles(kind string, fs []FileSpec, dedupePaths bool) error {
+	seen := map[string]string{}
+	for i, f := range fs {
+		// A BOUND slot must carry a hash this substrate can actually resolve. `sha256:garbage` used
+		// to be signed and indexed.
+		if f.Hash != "" {
+			if _, ok := core.NormalizeContentHash(f.Hash); !ok {
+				return fmt.Errorf("%s[%d] %q: %q is not a sha256 content hash (SPEC §5.1)", kind, i, f.Path, f.Hash)
+			}
+		}
+		// A path is a location INSIDE the work tree, and it is structural: it goes into the action
+		// key. An absolute path, or one that escapes upward, describes a different machine's
+		// filesystem rather than a reproducible computation (SPEC §6.1).
+		if f.Path != "" {
+			if filepath.IsAbs(f.Path) || strings.HasPrefix(f.Path, "/") || strings.HasPrefix(f.Path, `\`) {
+				return fmt.Errorf("%s[%d] path %q is absolute; a foton's paths are relative to the "+
+					"work tree (SPEC §6.1)", kind, i, f.Path)
+			}
+			if p := filepath.ToSlash(filepath.Clean(f.Path)); p == ".." || strings.HasPrefix(p, "../") {
+				return fmt.Errorf("%s[%d] path %q escapes the work tree (SPEC §6.1)", kind, i, f.Path)
+			}
+		}
+		if !dedupePaths || f.Path == "" {
+			continue
+		}
+		key := filepath.ToSlash(filepath.Clean(f.Path))
+		if prev, dup := seen[key]; dup && prev != f.Hash {
+			return fmt.Errorf("two inputs share path %q with different hashes (%s, %s) - the action "+
+				"key is a {path -> hash} map and could hold only one, so an input would silently "+
+				"vanish from the computation's identity (SPEC §6.3)", f.Path, prev, f.Hash)
+		}
+		seen[key] = f.Hash
+	}
 	return nil
+}
+
+// normalized returns spec with every BOUND hash in canonical form (SPEC §5.1). This is the ONE
+// representation every identity is computed from.
+//
+// FotonID used to take the supplied hash strings verbatim while the signing path normalized them on
+// the way through the in-toto subject, so an accepted UPPERCASE input hash produced two different
+// ids for the same spec (AUD-09):
+//
+//	helper: sha256:c51f96efe9abb55724b8d9c5fd17c13b48693c915771de9f11885cf86e15bb46
+//	signed: sha256:409fdf21bd0e10859bd7fb43fb3a40fd7d56a165f8aa1cff5db7f04dac47313a
+//
+// A cockpit or executor that precomputes a result id then holds a reference that does not resolve to
+// the record it goes on to sign - and that helper is part of the public authoring API extracted for
+// exactly such integrations.
+func (spec Spec) normalized() (Spec, error) {
+	if err := spec.Validate(); err != nil {
+		return Spec{}, err
+	}
+	out := spec
+	out.Inputs = normalizeFiles(spec.Inputs)
+	out.Outputs = normalizeFiles(spec.Outputs)
+	return out, nil
+}
+
+// normalizeFiles copies the slice - a caller's Spec must not be mutated by asking for its id - and
+// canonicalizes every bound hash. An UNBOUND slot (no hash) is left alone: a path-only slot is a
+// legitimate "potential" (SPEC §6.1), not an error.
+func normalizeFiles(fs []FileSpec) []FileSpec {
+	if fs == nil {
+		return nil
+	}
+	out := make([]FileSpec, len(fs))
+	copy(out, fs)
+	for i := range out {
+		if out[i].Hash == "" {
+			continue
+		}
+		if norm, ok := core.NormalizeContentHash(out[i].Hash); ok {
+			out[i].Hash = norm
+		}
+	}
+	return out
 }
 
 // StatementPayload canonicalizes a Spec into the in-toto Statement bytes that get signed (SPEC
@@ -110,12 +221,15 @@ func (spec Spec) Validate() error {
 // DERIVED from the descriptor here, so a caller can never decouple the recorded ref from the actual
 // protocol.
 func StatementPayload(spec Spec) ([]byte, error) {
-	if err := spec.Validate(); err != nil {
-		return nil, err
-	}
-	ref, err := core.ComputeProtocolRef(spec.Protocol.Descriptor)
+	// The SAME normalized representation FotonID uses, so the precomputed id and the id of the
+	// record actually signed cannot disagree (AUD-09).
+	spec, err := spec.normalized()
 	if err != nil {
 		return nil, err
+	}
+	ref, cerr := core.ComputeProtocolRef(spec.Protocol.Descriptor)
+	if cerr != nil {
+		return nil, cerr
 	}
 	st := map[string]any{
 		"_type":         "https://in-toto.io/Statement/v1",
@@ -139,7 +253,8 @@ func StatementPayload(spec Spec) ([]byte, error) {
 // FotonID is the content address of the foton the spec describes (SPEC §6.3) - over the COVERED
 // fields only, so it does not depend on the carried `uri` hints or on the envelope.
 func FotonID(spec Spec) (string, error) {
-	if err := spec.Validate(); err != nil {
+	spec, err := spec.normalized()
+	if err != nil {
 		return "", err
 	}
 	f := core.Foton{Protocol: core.Protocol{Kind: spec.Protocol.Kind, Descriptor: spec.Protocol.Descriptor}}

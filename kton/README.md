@@ -9,13 +9,18 @@ into a kernel package; delete `kton` and each operation is still runnable direct
 The kernels must stay minimal enough to compile to **WebAssembly**: no `net/http`, no ports.
 So everything that opens a socket or reaches the network is kept *out* of them and lives here:
 
-- **network federation** - `serve` (the HTTP federation API) and mirroring a **URL** peer;
 - **transparency-log anchoring** - Rekor (`anchor`), via the `sigstore/` package;
-- **byte pinning** - the optional `blobstore` (`pin`/`blob`), used to re-serve verified bytes.
+- **locator dereferencing** - `fetch`: resolve content over HTTP(S) via signed `located-at` claims,
+  verify the bytes against their hash, and pin them.
 
-Pure, local federation stays in the kernels: `plankton mirror <dir>` / `nekton mirror <dir>`
-overlay a peer registry off the filesystem by hash - no server, no port. `kton mirror` adds the
-**network** peer (and can also read a local dir, as the federation console).
+Network **federation** is in neither: `serve` went in #83 and the HTTP federation client in #101 -
+the latter had no caller anywhere. §12 fixes the queries and the wire form and leaves the transport
+unspecified, and `plankton records --json --since N` answers `sync(since)` on stdout, which is what
+a cockpit reads. Local overlay-by-hash federation stays in the kernels: `plankton mirror <dir>` /
+`nekton mirror <dir>` read a peer registry off the filesystem - no server, no port.
+
+`pin`/`blob` moved to plankton (#102): pinning needs no address, only a hash. The spellings here
+still work and print a deprecation note.
 
 ## Dependency direction
 
@@ -42,7 +47,10 @@ env: PLANKTON_DIR (default ./plankton-data), NEKTON_DIR (default ./nekton-data)
 
 ## Build & test
 
+The module root is `kton/reference/`, not this directory - the commands below assume you are in it:
+
 ```
+cd reference
 go build -o kton ./cmd/kton
-go test ./...     # federation tests reuse the plankton kernel's frozen vectors
+go test ./...
 ```
