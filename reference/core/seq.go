@@ -1,11 +1,38 @@
 package core
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
 )
+
+// EnvelopeKey is what a FEDERATION POSITION is issued against: the stored bytes, not the record's
+// identity.
+//
+// A record's identity covers its payload, so two stored envelopes can share it - a co-signature is
+// the same claim with a signature added. Keying a position by identity gave both one number, so the
+// co-signature had no position of its own and no cursor could deliver it (AUD-04). Keying by the
+// envelope makes "a new stored thing" and "a new position" the same event, and a re-mirror of
+// identical bytes idempotent for free.
+//
+// The hash is only a MAP KEY and never becomes the number - that always comes from the durable
+// counter, so nothing an author can influence affects the ordering (SPEC §12).
+//
+// The two kernels then differ, and correctly so. A subnekton is an append-only log because in nekton
+// ORDER CARRIES MEANING (prev, head, seal): the old line stays, keeps its position, and the
+// co-signature gets a new one at the end. A plankton store holds one file per record and fotons are
+// an unordered set of content-addressed facts: there is no order to preserve, so the record simply
+// takes the new position. Same rule, different stores.
+func EnvelopeKey(env Envelope) string {
+	b, err := json.Marshal(env)
+	if err != nil {
+		return ""
+	}
+	return HashBytes(b)
+}
 
 // SeqMap is a store's LOCAL federation numbering: record id -> the position a peer's cursor
 // compares against (SPEC §12, `sync(since)`).
@@ -26,8 +53,19 @@ import (
 // already seen fell back to or below the cursor that peer had stored, never to be delivered again.
 // Two hash attempts were enough to hide a record from a peer permanently (AUD-02).
 type SeqMap struct {
-	Next int            `json:"next"` // the next position to hand out; only ever grows
-	Seq  map[string]int `json:"seq"`  // record id -> position
+	// Epoch identifies THIS numbering. If the numbering is ever lost or replaced - a deleted or
+	// unreadable .seq, a restored backup, a store rebuilt from scratch - positions start again from
+	// the beginning, and a peer holding cursor 40 would sit silently above everything it is offered
+	// and receive nothing, forever.
+	//
+	// A cursor is only meaningful against the numbering that issued it, so the answer carries the
+	// epoch and a peer whose stored epoch differs MUST discard its cursor and resync from zero. That
+	// is the only thing that turns a silent stall into a loud one. Nothing in the wire form used to
+	// carry a reset signal at all, so the claim that "peers just resync" was a claim the protocol did
+	// not support (AUD-04).
+	Epoch string         `json:"epoch"`
+	Next  int            `json:"next"` // the next position to hand out; only ever grows
+	Seq   map[string]int `json:"seq"`  // stored-envelope key -> position
 }
 
 // ReadSeqMap loads the numbering. A missing, empty or unparseable file reads as an EMPTY map, not
@@ -35,14 +73,17 @@ type SeqMap struct {
 // and peers re-sync from the start - noisy, never wrong. Refusing to open the store instead would
 // turn one bad byte in local bookkeeping into a total outage.
 func ReadSeqMap(path string) SeqMap {
-	m := SeqMap{Seq: map[string]int{}}
+	m := SeqMap{Seq: map[string]int{}, Epoch: newEpoch()}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return m
 	}
 	var on SeqMap
 	if json.Unmarshal(b, &on) != nil || on.Seq == nil {
-		return m
+		return m // unreadable: a FRESH epoch, so peers are told to start over rather than stall
+	}
+	if on.Epoch == "" {
+		on.Epoch = newEpoch() // written before epochs existed
 	}
 	for _, n := range on.Seq {
 		if n >= on.Next {
@@ -75,6 +116,16 @@ func (m *SeqMap) Assign(ids []string) bool {
 		changed = true
 	}
 	return changed
+}
+
+// newEpoch is a random label, not a counter or a timestamp: it only ever has to DIFFER from the one
+// before it, and a clock that goes backwards or a counter that restarts at 0 would both fail at that.
+func newEpoch() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "0"
+	}
+	return hex.EncodeToString(b)
 }
 
 // WriteSeqMap persists the numbering atomically (temp + rename), sorted so the file is stable in a

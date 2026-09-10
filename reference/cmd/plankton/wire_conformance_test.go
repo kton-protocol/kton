@@ -32,7 +32,8 @@ func TestRecordsJSONEmitsTheFixtureWireForm(t *testing.T) {
 			FotonID  string          `json:"fotonId"`
 			Envelope json.RawMessage `json:"envelope"`
 		} `json:"records"`
-		Max int `json:"max"`
+		Max   int    `json:"max"`
+		Epoch string `json:"epoch"`
 	}
 	if err := json.Unmarshal(raw, &want); err != nil {
 		t.Fatalf("the conformance vector is not the documented shape: %v", err)
@@ -67,7 +68,8 @@ func TestRecordsJSONEmitsTheFixtureWireForm(t *testing.T) {
 			FotonID  string          `json:"fotonId"`
 			Envelope json.RawMessage `json:"envelope"`
 		} `json:"records"`
-		Max int `json:"max"`
+		Max   int    `json:"max"`
+		Epoch string `json:"epoch"`
 	}
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("records --json is not parseable as the wire form: %v\n%s", err, out)
@@ -75,6 +77,16 @@ func TestRecordsJSONEmitsTheFixtureWireForm(t *testing.T) {
 
 	if len(got.Records) != len(want.Records) {
 		t.Fatalf("records = %d, want %d", len(got.Records), len(want.Records))
+	}
+	// `epoch` must be PRESENT but is deliberately not compared: it identifies the numbering that
+	// issued these cursors and is random per store (SPEC §12). A conforming implementation emits an
+	// epoch, not this one - a peer needs it to notice that a numbering was replaced and that its
+	// stored cursor is meaningless.
+	if got.Epoch == "" {
+		t.Error("records --json carries no epoch; a peer cannot tell a renumbered store from a quiet one")
+	}
+	if want.Epoch == "" {
+		t.Error("the conformance vector carries no epoch - regenerate it")
 	}
 	if got.Max != want.Max {
 		t.Errorf("max = %d, want %d - the cursor is what a peer persists and passes back as --since",

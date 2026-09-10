@@ -59,7 +59,7 @@ func records(args []string) error {
 		// `max` is the cursor to pass back as --since next time. It is the registry's max, not the
 		// last record's seq: a caller must advance past what it has SEEN, and an empty batch still
 		// moves the cursor forward.
-		return printJSON(map[string]any{"records": recs, "max": r.MaxSeq()})
+		return printJSON(map[string]any{"records": recs, "max": r.MaxSeq(), "epoch": r.Epoch()})
 	}
 	if len(recs) == 0 {
 		fmt.Printf("(none) - no records above cursor %d (registry cursor is %d)\n", since, r.MaxSeq())

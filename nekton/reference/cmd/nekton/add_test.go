@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -122,14 +123,25 @@ func TestCoSignerTwinUnion(t *testing.T) {
 		if ok, _ := rec.Envelope.Verify(pubB); !ok {
 			t.Errorf("order %d: signer B does not verify against the unioned envelope", i)
 		}
-		b, err := storedRecord(filepath.Join(dir, "reg", order[0]+"-first"), id)
-		if err != nil {
-			t.Fatal(err)
+		// Order-independence is asserted on the RESOLVED state, not on the file.
+		//
+		// A subnekton is an APPEND-ONLY log, because in nekton the order carries meaning (prev,
+		// head, seal). A co-signature is therefore a new LINE, not a rewrite of the existing one -
+		// which is what gives it a position of its own and lets a cursor deliver it (AUD-04). Two
+		// peers that received A-then-B and B-then-A hold the same lines in a different order, so the
+		// FILES differ by construction and comparing their first line asserts the wrong thing.
+		//
+		// What must be order-independent is what the store MEANS: the same claim, carrying the same
+		// set of signatures, whichever order they arrived in.
+		sigs := make([]string, 0, len(rec.Envelope.Signatures))
+		for _, sg := range rec.Envelope.Signatures {
+			sigs = append(sigs, sg.KeyID+" "+sg.Sig)
 		}
-		objBytes[i] = b
+		sort.Strings(sigs)
+		objBytes[i] = []byte(id + "\n" + strings.Join(sigs, "\n"))
 	}
 	if string(objBytes[0]) != string(objBytes[1]) {
-		t.Errorf("stored object is NOT order-independent:\n A-first: %s\n B-first: %s", objBytes[0], objBytes[1])
+		t.Errorf("the resolved claim is NOT order-independent:\n A-first: %s\n B-first: %s", objBytes[0], objBytes[1])
 	}
 }
 

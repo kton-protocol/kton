@@ -31,6 +31,28 @@ if [ "${na:-0}" != 1 ] || [ "${nb:-0}" != 1 ] || [ -z "$ka" ] || [ "$ka" = "$kb"
 fi
 
 NEKTON_DIR=m nekton mirror rA >/dev/null 2>&1; NEKTON_DIR=m nekton mirror rB >/dev/null 2>&1
-n=$(nekton_records m | jq -s 'map(.envelope.signatures|length)|max // 0')
-echo "signatures on the mirrored claim: ${n:-0} (expected 2 - one per independent signer)"
-if [ "${n:-0}" -ge 2 ]; then echo "VERDICT: PREVENTED"; else echo "VERDICT: VULNERABLE"; fi
+
+# Measure the RESOLVED state, not one line of the file.
+#
+# A subnekton is an append-only log, so a co-signature is its own line carrying the signature it
+# arrived with, and the union is the READER's job (that is what gives it a position and lets a
+# cursor deliver it - AUD-04). Reading `max(signatures per line)` therefore measures the storage
+# shape, not the finding: it went red the day the shape changed, exactly as this PoC's own header
+# warns about the pre-#41 glob. What the finding is about is whether a co-signer can be LOST, so
+# ask the two questions a consumer actually asks.
+kA=$(nekton keyid a.pub 2>/dev/null | tr -d '[:space:]')
+kB=$(nekton keyid b.pub 2>/dev/null | tr -d '[:space:]')
+distinct=$(nekton_records m | jq -s '[.[].envelope.signatures[]?.keyid] | unique | length')
+foundA=$(NEKTON_DIR=m nekton by signer "$kA" 2>/dev/null | grep -c "sha256:")
+foundB=$(NEKTON_DIR=m nekton by signer "$kB" 2>/dev/null | grep -c "sha256:")
+
+if [ -z "$kA" ] || [ -z "$kB" ] || [ "$kA" = "$kB" ]; then
+  echo "setup failed: could not read two distinct signer keyids ($kA / $kB)"
+  echo "VERDICT: INCONCLUSIVE"; exit 0
+fi
+echo "distinct signers surviving the mirror: ${distinct:-0} (expected 2); \`by\` finds A=$foundA B=$foundB (expected 1 each)"
+if [ "${distinct:-0}" -ge 2 ] && [ "${foundA:-0}" -ge 1 ] && [ "${foundB:-0}" -ge 1 ]; then
+  echo "VERDICT: PREVENTED"
+else
+  echo "VERDICT: VULNERABLE"
+fi

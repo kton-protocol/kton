@@ -3,10 +3,13 @@
 The answers a §12 query must produce, as bytes. §12 fixes the **queries and the wire form**; how
 they are carried is an implementation choice (Annex C describes one HTTP binding).
 
-These exist because the reference implementation ships a federation **client and no server** (#83).
-A client tested against its own server proves only that the two agree with each other; tested
-against a fixed document it proves it implements the format. A second implementation can serve
-these and a third can consume them.
+These exist because the reference implementation ships **neither half** of the HTTP binding: no
+server (#83) and no client (#101). Testing a client against your own server proves only that the two
+agree with each other; a fixed document proves you implement the format. A second implementation can
+serve these and a third can consume them.
+
+`plankton records --json` is checked against this file by
+`../../cmd/plankton/wire_conformance_test.go`, in the producing direction.
 
 | file | the query it answers |
 |---|---|
@@ -25,3 +28,7 @@ plankton keygen k --seed "$(printf fixture | sha256sum | cut -d' ' -f1)"
 plankton author --cmd "mean in.txt out.txt" --in in.txt --out out.txt --sign k.key --add
 plankton records --json > sync-plankton.json
 ```
+
+**`epoch` is not frozen.** It identifies the numbering that issued the cursors in this answer and is
+random per store (SPEC §12), so regenerating produces a different one. A conforming implementation
+must emit *an* epoch, not *this* epoch: everything else in the file is byte-exact.

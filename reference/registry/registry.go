@@ -52,7 +52,8 @@ type Registry struct {
 	seen     map[string]bool // recordKey -> present (idempotency)
 	keyIdx   map[string]int  // recordKey -> index in records (for twin resolution)
 	maxSeq   int
-	degraded int // records skipped on load (corrupt or planted-id): a read over this store is INCOMPLETE
+	epoch    string // the numbering this store's cursors belong to (core.SeqMap.Epoch)
+	degraded int    // records skipped on load (corrupt or planted-id): a read over this store is INCOMPLETE
 
 	fotonByID map[string]Record // fotonID -> record
 	foton     map[string]*core.Foton
@@ -133,8 +134,7 @@ func openAt(dir string, create bool) (*Registry, error) {
 	// later record down and pushing it back under a peer's cursor (AUD-02).
 	ids := make([]string, 0, len(loaded))
 	for _, of := range loaded {
-		k, _ := recordKey(of.Envelope, of.FotonID)
-		ids = append(ids, k)
+		ids = append(ids, core.EnvelopeKey(of.Envelope))
 	}
 	seqs, err := r.resolveSeqs(ids, create)
 	if err != nil {
@@ -293,6 +293,12 @@ func (r *Registry) apply(rec Record) {
 		old := r.records[i].Envelope
 		if merged, changed := unionSignatures(old, rec.Envelope); changed {
 			r.records[i].Envelope = merged
+			if rec.Seq > r.records[i].Seq {
+				r.records[i].Seq = rec.Seq // the stored bytes changed: it is newer than it was
+				if rec.Seq > r.maxSeq {
+					r.maxSeq = rec.Seq
+				}
+			}
 			if rec.FotonID != "" {
 				r.fotonByID[rec.FotonID] = r.records[i]
 				if f != nil {
@@ -373,7 +379,21 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 			if err != nil {
 				return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 			}
-			r.apply(Record{Seq: r.records[i].Seq, FotonID: fotonID, Envelope: merged})
+			// The stored bytes changed, so this is a new stored thing and takes a NEW position.
+			// A plankton store keeps one file per record and fotons are an unordered set of
+			// content-addressed facts - there is no order here to preserve, which is why the record
+			// simply moves up rather than (as in nekton) leaving its old entry in place. Without
+			// this, a co-signature was invisible to every peer past the record's cursor (AUD-04).
+			seq := r.records[i].Seq
+			ek := core.EnvelopeKey(merged)
+			if ek != core.EnvelopeKey(r.records[i].Envelope) {
+				seqs, serr := r.resolveSeqs([]string{ek}, true)
+				if serr != nil {
+					return "", false, fmt.Errorf("%w: %v", ErrPersist, serr)
+				}
+				seq = seqs[ek]
+			}
+			r.apply(Record{Seq: seq, FotonID: fotonID, Envelope: merged})
 		}
 		return fotonID, false, nil
 	}
@@ -381,11 +401,12 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 	}
-	seqs, serr := r.resolveSeqs([]string{key}, true)
+	ek := core.EnvelopeKey(merged)
+	seqs, serr := r.resolveSeqs([]string{ek}, true)
 	if serr != nil {
 		return "", false, fmt.Errorf("%w: %v", ErrPersist, serr)
 	}
-	rec := Record{Seq: seqs[key], FotonID: fotonID, Envelope: merged}
+	rec := Record{Seq: seqs[ek], FotonID: fotonID, Envelope: merged}
 	r.apply(rec)
 	return fotonID, true, nil
 }
@@ -457,6 +478,12 @@ func (r *Registry) Records(since int) []Record {
 
 // MaxSeq is the current local cursor.
 func (r *Registry) MaxSeq() int { return r.maxSeq }
+
+// Epoch identifies the numbering a cursor belongs to. A peer whose stored epoch differs from the one
+// in an answer MUST discard its cursor and resync from zero: the positions it holds were issued by a
+// numbering that no longer exists, and it would otherwise sit silently above everything it is
+// offered and receive nothing, forever. See core.SeqMap.
+func (r *Registry) Epoch() string { return r.epoch }
 
 // Producer returns foton ids whose output is hash (the lineage join, spec §11).
 func (r *Registry) Producer(hash string) []string { return r.byOutput[hash] }
@@ -574,6 +601,7 @@ func (r *Registry) SetPeerCursor(url string, seq int) error {
 func (r *Registry) resolveSeqs(keys []string, persist bool) (map[string]int, error) {
 	p := filepath.Join(r.dir, seqFileName)
 	m := core.ReadSeqMap(p)
+	r.epoch = m.Epoch
 	need := false
 	for _, k := range keys {
 		if _, ok := m.Seq[k]; !ok && k != "" {
@@ -588,6 +616,7 @@ func (r *Registry) resolveSeqs(keys []string, persist bool) (map[string]int, err
 	var out map[string]int
 	err := r.withLock(".seq.lock", func() error {
 		m := core.ReadSeqMap(p) // re-read under the lock: another process may have issued positions
+		r.epoch = m.Epoch
 		if m.Assign(keys) {
 			if err := core.WriteSeqMap(p, m); err != nil {
 				return err

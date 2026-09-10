@@ -571,13 +571,14 @@ Records are immutable and content-addressed, so replication is a conflict-free s
   an error, never an empty result: an empty answer to a malformed question is a successful wrong
   answer.
 
-  **The sequence.** `seq` is a participant's own numbering of the records it holds. It is LOCAL -
-  two participants holding the same records may number them differently, and a cursor is only ever
-  meaningful against the participant that issued it - but it MUST satisfy three properties, because
-  a peer's only guarantee is that asking again with the returned cursor loses nothing:
+  **The sequence.** `seq` is a participant's own numbering of what it holds. It is LOCAL: two
+  participants holding the same records may number them differently, how a participant numbers is
+  its own business, and a cursor is only ever meaningful against the participant that issued it.
+  What is normative is the GUARANTEE a peer gets, not the mechanism:
 
-  1. **Issued once.** A record's sequence MUST NOT change once the record has been answered for.
-  2. **Newer is higher.** A record first held after a cursor was issued MUST be numbered above it.
+  1. **Never decreases.** A record already answered for MUST NOT be renumbered downward.
+  2. **Newer is higher.** Anything first held after a cursor was issued - **or whose stored bytes
+     have changed since** - MUST be numbered above it.
   3. **Independent of content.** The sequence MUST NOT be derived from the record's identity, its
      hash, or any ordering a record's author can influence. Otherwise a participant who can write a
      record - a git merge is a supported transport (§11) - can choose one that reorders the store
@@ -587,8 +588,27 @@ Records are immutable and content-addressed, so replication is a conflict-free s
   A sequence need not be dense, and gaps carry no meaning: a record dropped, refused, or never
   indexed may still have consumed a number. Only the ordering is normative.
 
+  **What must be in the answer.** A participant MUST offer every record it holds that satisfies the
+  cursor, including one that is **persisted but unresolved** - a claim whose scope seed or `prev` it
+  does not hold. Such a record is incomplete, not invalid (§11); it answers no query at the
+  participant that holds it, but withholding it loses information, because federation is monotone and
+  the receiver may hold the very dependency that resolves it. A participant that withholds unresolved
+  records and later resolves one locally can never deliver it: it was never offered while unresolved,
+  and once resolved it sits at a position below every cursor already issued.
+
+  A change to a record that has already been answered for - a co-signature added to it - MUST reach a
+  peer that is past it. How is the participant's business: a store whose records carry an order of
+  their own (a hash chain) records the change as a new entry and leaves the existing one in place; a
+  store of unordered content-addressed records may simply renumber. Either satisfies rule 2.
+
+  **The epoch.** `sync` answers carry an `epoch` identifying the numbering that issued the cursor. If
+  a participant's numbering is lost or replaced - a deleted counter, a restored backup, a store
+  rebuilt - positions start again from the beginning, and a peer holding a high cursor would sit
+  silently above everything it is offered and receive nothing, forever. A peer whose stored epoch
+  differs from the one in an answer MUST discard its cursor and resync from zero.
+
   **Wire form.** `sync` answers `{ "records": [ { "seq", "fotonId"|"claimId", "envelope" } ... ],
-  "max": <cursor> }`; the record queries answer `{ "records": [ <envelope> ... ] }`. Envelopes are
+  "max": <cursor>, "epoch": <string> }`; the record queries answer `{ "records": [ <envelope> ... ] }`. Envelopes are
   as in §8. Conformance fixtures for these answers live in `../reference/testdata/federation/`.
 
   *An HTTP(S) binding - `GET /sync?since=`, `GET /claim?id=` and so on - is one realization and is
