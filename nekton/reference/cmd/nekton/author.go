@@ -66,11 +66,14 @@ func keyidOf(s string) (string, error) {
 // corpora, not for an identity that signs anything anyone must trust.
 func keygen(args []string) error {
 	var name, seedHex string
+	force := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--seed":
 			i++
 			seedHex = arg(args, i)
+		case "--force":
+			force = true
 		default:
 			if strings.HasPrefix(args[i], "--") {
 				return fmt.Errorf("unknown flag %q", args[i])
@@ -79,7 +82,7 @@ func keygen(args []string) error {
 		}
 	}
 	if name == "" {
-		return fmt.Errorf("usage: %s keygen <name> [--seed <64-hex>]", "nekton")
+		return fmt.Errorf("usage: nekton keygen <name> [--seed <64-hex>] [--force]")
 	}
 
 	var pub ed25519.PublicKey
@@ -99,11 +102,17 @@ func keygen(args []string) error {
 		pub = priv.Public().(ed25519.PublicKey)
 	}
 
-	if err := os.WriteFile(name+".key", []byte(hex.EncodeToString(priv.Seed())), 0o600); err != nil {
+	// core.WriteKeyFile refuses to overwrite an identity and creates with the mode it asks for -
+	// os.WriteFile's mode applies only to a NEW file, so an existing 0644 key file kept 0644 and
+	// took the new private seed (AUD-01). The public half is written second, and a failure there
+	// removes the private half rather than leaving a keypair whose public key nobody has.
+	if err := core.WriteKeyFile(name+".key", []byte(hex.EncodeToString(priv.Seed())), 0o600, force); err != nil {
 		return err
 	}
-	if err := os.WriteFile(name+".pub", []byte(hex.EncodeToString(pub)), 0o644); err != nil {
-		return err
+	if err := core.WriteKeyFile(name+".pub", []byte(hex.EncodeToString(pub)), 0o644, force); err != nil {
+		os.Remove(name + ".key")
+		return fmt.Errorf("wrote %s.key but could not write %s.pub, so the private half was removed\n"+
+			"  rather than left without its public key: %w", name, name, err)
 	}
 	fmt.Printf("keypair %s  keyid=%s\n", name, keyidHex(pub))
 	return nil

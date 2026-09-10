@@ -583,7 +583,7 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 			// on-disk envelope), then refresh this process's in-memory view + signer index.
 			merged, err := r.persistClaim(id, scopeOf(st, id), env)
 			if err != nil {
-				return "", false, err
+				return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 			}
 			rec := Record{Seq: old.Seq, ClaimID: id, Envelope: merged}
 			r.claimByID[id] = rec
@@ -619,11 +619,11 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	// object (this process just had not SEEN it), so a plain clobber here would drop its co-signature.
 	merged, err := r.persistClaim(id, scopeOf(st, id), env)
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("%w: %v", ErrPersist, err)
 	}
 	seqs, serr := r.resolveSeqs([]string{id}, true)
 	if serr != nil {
-		return "", false, serr
+		return "", false, fmt.Errorf("%w: %v", ErrPersist, serr)
 	}
 	rec := Record{Seq: seqs[id], ClaimID: id, Envelope: merged}
 	if chainErr != nil { // errUnresolved: persisted, awaiting its dependency
@@ -707,6 +707,20 @@ func (r *Registry) checkChain(id string, st *claim.Statement, p *claim.Predicate
 // errUnresolved marks a chain check that FAILED only because a referenced seed/prev is not present yet
 // (as opposed to a structurally-invalid claim). Such a claim is persisted and deferred, not rejected.
 var errUnresolved = errors.New("unresolved chain reference")
+
+// ErrPersist wraps a LOCAL persistence failure - the disk, the path, the lock - as opposed to
+// anything wrong with the record. The distinction is the whole point: a caller must be able to tell
+// "this claim is invalid, skip it" from "I could not write, nothing was stored".
+//
+// Without it, `nekton mirror` classified every Add error as a retryable missing dependency and, after
+// retrying it pointlessly, reported a write failure as "1 unresolved (missing dependency - an
+// incomplete chain)" with exit 0. It was not a dependency problem and the chain was not incomplete
+// (AUD-05). Mirrors that report success while storing nothing are the worst possible outcome for a
+// tool whose job is evidence.
+//
+// Mirrors plankton's registry.ErrPersist, deliberately: both kernels are asked the same question by
+// the same callers.
+var ErrPersist = errors.New("failed to persist claim locally")
 
 // objectFile is the on-disk record form: no local seq (derived on load), so the same logical
 // claim is byte-identical on every peer - making a git merge of two registries conflict-free.

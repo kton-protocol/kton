@@ -19,7 +19,10 @@ import (
 const usage = `plankton - content-addressed lineage substrate (reference)
 
 usage:
-  plankton keygen <name>                              generate a signing identity (<name>.key/.pub)
+  plankton keygen <name> [--seed <64-hex>] [--force]  generate a signing identity (<name>.key/.pub)
+      An existing key file is NEVER overwritten: replacing an identity destroys the only copy of
+      its private seed. --force moves the old file to <name>.key.old rather than deleting it.
+      An identical --seed is a no-op, so a reproducible snapshot can re-run.
       --seed <64-hex>                                 derive it from a seed, not the entropy pool, so a corpus or
                                                       snapshot rebuilds to the same record ids (fixtures only:
                                                       the key is only as strong as its seed)
@@ -1049,13 +1052,45 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return fmt.Errorf("open peer %s: %w", peer, err)
 		}
-		added := 0
+		// Classify, do not swallow. This loop used to drop EVERY Add error, so mirroring into a
+		// destination that could not be written reported "0 new; registry holds 0 fotons" and exited
+		// 0 - a backup or replication script would read that as success (AUD-05).
+		//
+		// A LOCAL persistence failure is fatal and says so: nothing after it can be trusted either,
+		// and the caller needs a non-zero exit at the moment it matters. A record the kernel REFUSES
+		// (unsigned, not a foton, structurally invalid) is the peer's problem, not ours: skip it,
+		// count it, and name it, because a silent skip is how an incomplete mirror looks complete.
+		added, refused := 0, 0
+		var refusedIDs []string
 		for _, rec := range src.Records(0) {
-			if _, isNew, err := local.Add(rec.Envelope); err == nil && isNew {
+			id, isNew, err := local.Add(rec.Envelope)
+			switch {
+			case err == nil && isNew:
 				added++
+			case err == nil:
+				// already held
+			case errors.Is(err, registry.ErrPersist):
+				return fmt.Errorf("mirror of %s FAILED after %d record(s): could not write locally - "+
+					"the local registry is incomplete and this is not a peer problem: %w", peer, added, err)
+			default:
+				refused++
+				if len(refusedIDs) < 5 {
+					if id == "" {
+						id = "<unparseable>"
+					}
+					refusedIDs = append(refusedIDs, id)
+				}
+				fmt.Fprintf(os.Stderr, "warning: peer record refused: %v\n", err)
 			}
 		}
-		fmt.Printf("mirrored %s: %d new; registry holds %d fotons\n", peer, added, local.Len())
+		msg := fmt.Sprintf("mirrored %s: %d new", peer, added)
+		if refused > 0 {
+			msg += fmt.Sprintf(", %d REFUSED as invalid (%s)", refused, strings.Join(refusedIDs, ", "))
+		}
+		fmt.Printf("%s; registry holds %d fotons\n", msg, local.Len())
+		if refused > 0 {
+			return fmt.Errorf("%d peer record(s) were refused - this copy is INCOMPLETE", refused)
+		}
 		return nil
 
 	default:

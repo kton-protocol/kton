@@ -9,6 +9,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -259,8 +260,18 @@ func mirrorPlankton(localDir, peer string) error {
 	for _, rec := range src.Records(0) {
 		envs = append(envs, rec.Envelope)
 	}
-	added, skipped := settleAdd(local.Add, envs)
-	fmt.Printf("mirrored %s: %d new, %d skipped; registry holds %d fotons\n", peer, added, skipped, local.Len())
+	added, refused, err := settleAdd(local.Add, envs)
+	if err != nil {
+		return fmt.Errorf("mirror of %s FAILED: %w", peer, err)
+	}
+	msg := fmt.Sprintf("mirrored %s: %d new", peer, added)
+	if refused > 0 {
+		msg += fmt.Sprintf(", %d REFUSED as invalid", refused)
+	}
+	fmt.Printf("%s; registry holds %d fotons\n", msg, local.Len())
+	if refused > 0 {
+		return fmt.Errorf("%d peer record(s) were refused - this copy is INCOMPLETE", refused)
+	}
 	return nil
 }
 
@@ -291,37 +302,50 @@ func mirrorNekton(localDir, peer string) error {
 	for _, rec := range raw {
 		envs = append(envs, rec.Envelope)
 	}
-	added, skipped := settleAdd(local.Add, envs)
-	fmt.Printf("mirrored %s: %d new, %d deferred (unresolved, persisted for a later mirror); registry holds %d claim(s)\n", peer, added, skipped, local.Len())
+	added, refused, err := settleAdd(local.Add, envs)
+	if err != nil {
+		return fmt.Errorf("mirror of %s FAILED: %w", peer, err)
+	}
+	msg := fmt.Sprintf("mirrored %s: %d new", peer, added)
+	if refused > 0 {
+		msg += fmt.Sprintf(", %d REFUSED as invalid", refused)
+	}
+	fmt.Printf("%s; registry holds %d claim(s)\n", msg, local.Len())
+	fmt.Fprintln(os.Stderr, "note: a claim whose seed or prev is not held yet is STORED and awaits it; "+
+		"`nekton head <scope>` reports a scope that does not resolve.")
+	if refused > 0 {
+		return fmt.Errorf("%d peer claim(s) were refused - this copy is INCOMPLETE", refused)
+	}
 	return nil
 }
 
-// settleAdd feeds envelopes into a registry's Add, retrying deferrable failures across passes
-// (a nekton scoped child settles once its seed + prev are indexed) and skipping records that
-// never become valid - so one malformed record can never wedge replication. Works for both
-// kernels because both expose the same Add signature.
-func settleAdd(add func(core.Envelope) (string, bool, error), envs []core.Envelope) (added, skipped int) {
-	pending := envs
-	for {
-		progress := false
-		var next []core.Envelope
-		for _, e := range pending {
-			_, isNew, err := add(e)
-			if err != nil {
-				next = append(next, e)
-				continue
-			}
-			if isNew {
-				added++
-			}
-			progress = true
-		}
-		pending = next
-		if !progress {
-			break
+// settleAdd ingests a batch and CLASSIFIES what happened, rather than retrying it.
+//
+// The retry loop this replaces could not heal anything. In both kernels a claim or foton whose
+// dependency is missing is PERSISTED and returns nil (unresolved is incomplete, not invalid,
+// SPEC §11), so it never reached the error branch; every error that did was permanent (unparseable,
+// unsigned, structurally invalid) or environmental (a local write failure). The loop therefore spun,
+// then reported a write failure as "2 skipped" with exit 0 (AUD-05).
+//
+// A local persistence failure is returned: nothing after it can be trusted, and a caller mirroring
+// into a broken destination must not read "skipped" as "the peer sent us junk".
+func settleAdd(add func(core.Envelope) (string, bool, error), envs []core.Envelope) (added, refused int, err error) {
+	for _, e := range envs {
+		_, isNew, aerr := add(e)
+		switch {
+		case aerr == nil && isNew:
+			added++
+		case aerr == nil:
+			// already held
+		case errors.Is(aerr, preg.ErrPersist), errors.Is(aerr, nreg.ErrPersist):
+			return added, refused, fmt.Errorf("could not write locally after %d record(s) - the local "+
+				"store is incomplete and this is not a peer problem: %w", added, aerr)
+		default:
+			refused++
+			fmt.Fprintf(os.Stderr, "warning: peer record refused: %v\n", aerr)
 		}
 	}
-	return added, len(pending)
+	return added, refused, nil
 }
 
 // --- nekton federation server + HTTP mirror (moved verbatim out of the nekton kernel) --------

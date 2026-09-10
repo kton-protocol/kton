@@ -60,11 +60,18 @@ every reference output. Whether that fulfilment is \fIaccepted\fR as a validatio
 attestation - not plankton's verdict.
 .SH COMMANDS
 .TP
-.B plankton keygen \fIname\fR [--seed \fI64-hex\fR]
+.B plankton keygen \fIname\fR [--seed \fI64-hex\fR] [--force]
 Generate an Ed25519 signing identity: writes \fIname\fR.key (secret) and \fIname\fR.pub.
 \fB--seed\fR derives it from a seed rather than the entropy pool, so a corpus or a snapshot rebuilds
 to the same record ids - the public key is inside every signed payload, so a random key per run moves
 every id. Fixtures only: such a key is exactly as strong as the seed behind it.
+.IP
+An existing \fIname\fR.key or \fIname\fR.pub is \fBnever overwritten\fR. Replacing an identity
+destroys the only copy of its private seed, and records signed with it can no longer be checked
+against that filename - the signatures stay valid, the ability to check them does not.
+\fB--force\fR replaces it deliberately by \fBmoving\fR the old file to \fIname\fR.key.old; this
+command deletes key material under no circumstances. Re-running with an identical \fB--seed\fR is a
+no-op, so a reproducible snapshot does not need \fB--force\fR.
 .TP
 .B plankton pubkey \fIkey.key\fR|\fIhex\fR
 Print the public key hex. Needed because an identity can be written by hand (a bare 32-byte seed is a
