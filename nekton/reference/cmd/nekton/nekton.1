@@ -48,9 +48,14 @@ The interop face: a claim RENDERS as a nanopublication (RDF/TriG) via
 The DSSE claim stays the stored/signed form.
 .SH COMMANDS
 .TP
-.B nekton keygen \fIname\fR [--seed \fI64-hex\fR]
+.B nekton keygen \fIname\fR [--seed \fI64-hex\fR] [--force]
 Generate an Ed25519 identity (\fIname\fR.key / \fIname\fR.pub). Same format as plankton.
 \fB--seed\fR derives it deterministically so a corpus rebuilds to the same ids; fixtures only.
+.IP
+An existing \fIname\fR.key or \fIname\fR.pub is \fBnever overwritten\fR: replacing an identity
+destroys the only copy of its private seed, and records signed with it can no longer be checked
+against that filename. \fB--force\fR replaces it deliberately by \fBmoving\fR the old file to
+\fIname\fR.key.old; key material is never deleted. An identical \fB--seed\fR is a no-op.
 .TP
 .B nekton pubkey \fIkey.key\fR|\fIhex\fR
 Print the public key hex - what \fBverify\fR, \fB--trust-keys\fR and viewer key directories read.

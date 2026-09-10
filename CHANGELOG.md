@@ -26,6 +26,49 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Fixed — identities and truthful failures (external audit, step 1)
+
+- **`keygen` no longer overwrites an identity, and no longer inherits a file's permissions**
+  (AUD-01). `os.WriteFile(path, seed, 0600)` looks safe and is not: the mode applies only when the
+  call *creates* the file, so a pre-existing world-readable `alice.key` kept `0644` and received the
+  new private seed. And `keygen alice` twice succeeded twice — the first seed was gone, and records
+  signed with it could no longer be checked against that filename. The signatures stayed
+  cryptographically valid; what was destroyed was the ability to check them.
+
+  Both kernels now go through one shared `core.WriteKeyFile`: `O_EXCL`, so the mode is always the
+  one asked for; an existing destination is refused with a message naming the fix; `--force`
+  **moves** the old file to `<name>.key.old` rather than deleting it — this path destroys key
+  material under no circumstances. An identical `--seed` is a no-op, so a reproducible snapshot
+  re-runs without `--force`. A failure writing the public half removes the private half rather than
+  leaving a keypair whose public key nobody has.
+
+- **A mirror that cannot write now fails, loudly** (AUD-05). All three entrypoints reported success
+  after storing nothing:
+
+  ```
+  plankton mirror <peer>      "0 new; registry holds 0 fotons"                        exit 0
+  kton mirror plankton <peer> "0 new, 2 skipped"                                      exit 0
+  nekton mirror <peer>        "1 unresolved (missing dependency - an incomplete chain)" exit 0
+  ```
+
+  The nekton wording was not merely vague, it was a wrong diagnosis of the only error class that
+  could arrive: `Add` **persists** a claim whose seed or prev is missing and returns nil (§11 —
+  incomplete is not invalid), so a missing dependency never reached that branch. Every error that
+  did was permanent (unparseable, unsigned, structurally invalid) or environmental (a local write
+  failure). The retry loops could therefore heal nothing, and are gone.
+
+  `nekton/registry` gains `ErrPersist`, mirroring plankton's, so a caller can tell *"this record is
+  invalid, skip it"* from *"I could not write, nothing was stored"*. A local write failure now
+  returns non-zero and names the cause; a refused peer record is counted, named, and also exits
+  non-zero, because a silent skip is how an incomplete mirror looks complete.
+
+- **`nanopublish --rsa` no longer claims to have saved a key it lost** (AUD-06). With a path whose
+  parent did not exist, the command generated an RSA key, published, printed *"generated a new RSA
+  key and saved it to …"* and exited 0 — and the file did not exist, so the next run minted a
+  different identity. The save's error was discarded with `_ =`. Separately, **any** read error was
+  treated as "no key here" and fell through to generating a new one, so a permission problem
+  silently replaced the identity that was requested. Both now fail with the reason.
+
 ### Changed
 
 - **A subnekton is one file** (#41). A nekton store is now one JSONL file per scope plus one for
@@ -63,6 +106,49 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
+
+### Fixed — identities and truthful failures (external audit, step 1)
+
+- **`keygen` no longer overwrites an identity, and no longer inherits a file's permissions**
+  (AUD-01). `os.WriteFile(path, seed, 0600)` looks safe and is not: the mode applies only when the
+  call *creates* the file, so a pre-existing world-readable `alice.key` kept `0644` and received the
+  new private seed. And `keygen alice` twice succeeded twice — the first seed was gone, and records
+  signed with it could no longer be checked against that filename. The signatures stayed
+  cryptographically valid; what was destroyed was the ability to check them.
+
+  Both kernels now go through one shared `core.WriteKeyFile`: `O_EXCL`, so the mode is always the
+  one asked for; an existing destination is refused with a message naming the fix; `--force`
+  **moves** the old file to `<name>.key.old` rather than deleting it — this path destroys key
+  material under no circumstances. An identical `--seed` is a no-op, so a reproducible snapshot
+  re-runs without `--force`. A failure writing the public half removes the private half rather than
+  leaving a keypair whose public key nobody has.
+
+- **A mirror that cannot write now fails, loudly** (AUD-05). All three entrypoints reported success
+  after storing nothing:
+
+  ```
+  plankton mirror <peer>      "0 new; registry holds 0 fotons"                        exit 0
+  kton mirror plankton <peer> "0 new, 2 skipped"                                      exit 0
+  nekton mirror <peer>        "1 unresolved (missing dependency - an incomplete chain)" exit 0
+  ```
+
+  The nekton wording was not merely vague, it was a wrong diagnosis of the only error class that
+  could arrive: `Add` **persists** a claim whose seed or prev is missing and returns nil (§11 —
+  incomplete is not invalid), so a missing dependency never reached that branch. Every error that
+  did was permanent (unparseable, unsigned, structurally invalid) or environmental (a local write
+  failure). The retry loops could therefore heal nothing, and are gone.
+
+  `nekton/registry` gains `ErrPersist`, mirroring plankton's, so a caller can tell *"this record is
+  invalid, skip it"* from *"I could not write, nothing was stored"*. A local write failure now
+  returns non-zero and names the cause; a refused peer record is counted, named, and also exits
+  non-zero, because a silent skip is how an incomplete mirror looks complete.
+
+- **`nanopublish --rsa` no longer claims to have saved a key it lost** (AUD-06). With a path whose
+  parent did not exist, the command generated an RSA key, published, printed *"generated a new RSA
+  key and saved it to …"* and exited 0 — and the file did not exist, so the next run minted a
+  different identity. The save's error was discarded with `_ =`. Separately, **any** read error was
+  treated as "no key here" and fell through to generating a new one, so a permission problem
+  silently replaced the identity that was requested. Both now fail with the reason.
 
 ### Changed
 
@@ -171,6 +257,49 @@ build reading a format it does not know refuses loudly instead of reporting an e
   `reproduces` claim records and which the exit code cannot distinguish.
 - **`kton fetch --allow-local`** (#81) — see Security.
 
+### Fixed — identities and truthful failures (external audit, step 1)
+
+- **`keygen` no longer overwrites an identity, and no longer inherits a file's permissions**
+  (AUD-01). `os.WriteFile(path, seed, 0600)` looks safe and is not: the mode applies only when the
+  call *creates* the file, so a pre-existing world-readable `alice.key` kept `0644` and received the
+  new private seed. And `keygen alice` twice succeeded twice — the first seed was gone, and records
+  signed with it could no longer be checked against that filename. The signatures stayed
+  cryptographically valid; what was destroyed was the ability to check them.
+
+  Both kernels now go through one shared `core.WriteKeyFile`: `O_EXCL`, so the mode is always the
+  one asked for; an existing destination is refused with a message naming the fix; `--force`
+  **moves** the old file to `<name>.key.old` rather than deleting it — this path destroys key
+  material under no circumstances. An identical `--seed` is a no-op, so a reproducible snapshot
+  re-runs without `--force`. A failure writing the public half removes the private half rather than
+  leaving a keypair whose public key nobody has.
+
+- **A mirror that cannot write now fails, loudly** (AUD-05). All three entrypoints reported success
+  after storing nothing:
+
+  ```
+  plankton mirror <peer>      "0 new; registry holds 0 fotons"                        exit 0
+  kton mirror plankton <peer> "0 new, 2 skipped"                                      exit 0
+  nekton mirror <peer>        "1 unresolved (missing dependency - an incomplete chain)" exit 0
+  ```
+
+  The nekton wording was not merely vague, it was a wrong diagnosis of the only error class that
+  could arrive: `Add` **persists** a claim whose seed or prev is missing and returns nil (§11 —
+  incomplete is not invalid), so a missing dependency never reached that branch. Every error that
+  did was permanent (unparseable, unsigned, structurally invalid) or environmental (a local write
+  failure). The retry loops could therefore heal nothing, and are gone.
+
+  `nekton/registry` gains `ErrPersist`, mirroring plankton's, so a caller can tell *"this record is
+  invalid, skip it"* from *"I could not write, nothing was stored"*. A local write failure now
+  returns non-zero and names the cause; a refused peer record is counted, named, and also exits
+  non-zero, because a silent skip is how an incomplete mirror looks complete.
+
+- **`nanopublish --rsa` no longer claims to have saved a key it lost** (AUD-06). With a path whose
+  parent did not exist, the command generated an RSA key, published, printed *"generated a new RSA
+  key and saved it to …"* and exited 0 — and the file did not exist, so the next run minted a
+  different identity. The save's error was discarded with `_ =`. Separately, **any** read error was
+  treated as "no key here" and fell through to generating a new one, so a permission problem
+  silently replaced the identity that was requested. Both now fail with the reason.
+
 ### Changed
 
 - **`pin` and `blob` are plankton commands** (#102). `plankton pin <file>` and
@@ -258,6 +387,49 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Fixed — identities and truthful failures (external audit, step 1)
+
+- **`keygen` no longer overwrites an identity, and no longer inherits a file's permissions**
+  (AUD-01). `os.WriteFile(path, seed, 0600)` looks safe and is not: the mode applies only when the
+  call *creates* the file, so a pre-existing world-readable `alice.key` kept `0644` and received the
+  new private seed. And `keygen alice` twice succeeded twice — the first seed was gone, and records
+  signed with it could no longer be checked against that filename. The signatures stayed
+  cryptographically valid; what was destroyed was the ability to check them.
+
+  Both kernels now go through one shared `core.WriteKeyFile`: `O_EXCL`, so the mode is always the
+  one asked for; an existing destination is refused with a message naming the fix; `--force`
+  **moves** the old file to `<name>.key.old` rather than deleting it — this path destroys key
+  material under no circumstances. An identical `--seed` is a no-op, so a reproducible snapshot
+  re-runs without `--force`. A failure writing the public half removes the private half rather than
+  leaving a keypair whose public key nobody has.
+
+- **A mirror that cannot write now fails, loudly** (AUD-05). All three entrypoints reported success
+  after storing nothing:
+
+  ```
+  plankton mirror <peer>      "0 new; registry holds 0 fotons"                        exit 0
+  kton mirror plankton <peer> "0 new, 2 skipped"                                      exit 0
+  nekton mirror <peer>        "1 unresolved (missing dependency - an incomplete chain)" exit 0
+  ```
+
+  The nekton wording was not merely vague, it was a wrong diagnosis of the only error class that
+  could arrive: `Add` **persists** a claim whose seed or prev is missing and returns nil (§11 —
+  incomplete is not invalid), so a missing dependency never reached that branch. Every error that
+  did was permanent (unparseable, unsigned, structurally invalid) or environmental (a local write
+  failure). The retry loops could therefore heal nothing, and are gone.
+
+  `nekton/registry` gains `ErrPersist`, mirroring plankton's, so a caller can tell *"this record is
+  invalid, skip it"* from *"I could not write, nothing was stored"*. A local write failure now
+  returns non-zero and names the cause; a refused peer record is counted, named, and also exits
+  non-zero, because a silent skip is how an incomplete mirror looks complete.
+
+- **`nanopublish --rsa` no longer claims to have saved a key it lost** (AUD-06). With a path whose
+  parent did not exist, the command generated an RSA key, published, printed *"generated a new RSA
+  key and saved it to …"* and exited 0 — and the file did not exist, so the next run minted a
+  different identity. The save's error was discarded with `_ =`. Separately, **any** read error was
+  treated as "no key here" and fell through to generating a new one, so a permission problem
+  silently replaced the identity that was requested. Both now fail with the reason.
 
 ### Changed
 

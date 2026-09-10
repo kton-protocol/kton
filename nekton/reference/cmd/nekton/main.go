@@ -7,6 +7,7 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -19,7 +20,10 @@ import (
 const usage = `nekton - signed-claim commitment substrate (reference)
 
 usage:
-  nekton keygen <name>                                generate a signing identity (<name>.key/.pub)
+  nekton keygen <name> [--seed <64-hex>] [--force]  generate a signing identity (<name>.key/.pub)
+      An existing key file is NEVER overwritten: replacing an identity destroys the only copy of
+      its private seed. --force moves the old file to <name>.key.old rather than deleting it.
+      An identical --seed is a no-op, so a reproducible snapshot can re-run.
       --seed <64-hex>                                 derive it from a seed, not the entropy pool, so a corpus or
                                                       snapshot rebuilds to the same record ids (fixtures only:
                                                       the key is only as strong as its seed)
@@ -531,36 +535,47 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return fmt.Errorf("open peer %s: %w", peer, err)
 		}
-		pending := src.RawRecords()
-		added := 0
-		for {
-			progress := false
-			var next []registry.Record
-			for _, rec := range pending {
-				_, isNew, err := local.Add(rec.Envelope)
-				if err != nil {
-					next = append(next, rec)
-					continue
+		// There is no retry loop here any more, and that is a fix rather than a simplification.
+		//
+		// `Add` PERSISTS a claim whose seed or prev is missing and returns nil - unresolved is
+		// INCOMPLETE, not invalid (SPEC §11), so it is stored and settles when its dependency
+		// arrives. A missing dependency therefore never reached the old loop's error branch. Every
+		// error that DID reach it was permanent (unparseable, unsigned, structurally invalid) or
+		// environmental (a local write failure); retrying either is useless. So the loop retried
+		// nothing that could heal, and then labelled whatever was left "unresolved (missing
+		// dependency - an incomplete chain)". A local write failure was reported in exactly those
+		// words, with exit 0 (AUD-05). That is not imprecision, it is a wrong diagnosis of the one
+		// class of error that could arrive.
+		added, refused := 0, 0
+		var refusedIDs []string
+		for _, rec := range src.RawRecords() {
+			_, isNew, err := local.Add(rec.Envelope)
+			switch {
+			case err == nil && isNew:
+				added++
+			case err == nil:
+				// already held
+			case errors.Is(err, registry.ErrPersist):
+				return fmt.Errorf("mirror of %s FAILED after %d claim(s): could not write locally - "+
+					"the local registry is incomplete and this is not a peer problem: %w", peer, added, err)
+			default:
+				refused++
+				if len(refusedIDs) < 5 {
+					refusedIDs = append(refusedIDs, rec.ClaimID)
 				}
-				if isNew {
-					added++
-				}
-				progress = true
-			}
-			pending = next
-			if !progress {
-				break
+				fmt.Fprintf(os.Stderr, "warning: peer claim %s refused: %v\n", rec.ClaimID, err)
 			}
 		}
 		msg := fmt.Sprintf("mirrored %s: %d new", peer, added)
-		if len(pending) > 0 {
-			ids := make([]string, 0, len(pending))
-			for _, rec := range pending {
-				ids = append(ids, rec.ClaimID)
-			}
-			msg += fmt.Sprintf(", %d unresolved (missing dependency - an incomplete chain): %s", len(pending), strings.Join(ids, ", "))
+		if refused > 0 {
+			msg += fmt.Sprintf(", %d REFUSED as invalid (%s)", refused, strings.Join(refusedIDs, ", "))
 		}
 		fmt.Printf("%s; registry holds %d claim(s)\n", msg, local.Len())
+		fmt.Fprintln(os.Stderr, "note: a claim whose seed or prev is not held yet is STORED and awaits it; "+
+			"`nekton head <scope>` reports a scope that does not resolve.")
+		if refused > 0 {
+			return fmt.Errorf("%d peer claim(s) were refused - this copy is INCOMPLETE", refused)
+		}
 		return nil
 
 	case "head":
