@@ -47,8 +47,9 @@ func TestNormalizeContentHash(t *testing.T) {
 // serializer keeps whatever form it holds, so two implementations hash the same value differently.
 func TestJCSNumbers(t *testing.T) {
 	cases := map[string]string{
-		`{"n":4.50}`:               `{"n":4.5}`,   // no trailing zero
-		`{"n":1E30}`:               `{"n":1e+30}`, // lowercase e, explicit +
+		`{"n":4.50}`: `{"n":4.5}`,  // no trailing zero
+		`{"n":1E3}`:  `{"n":1000}`, // lowercase e, explicit + (see the rejection test
+		//                                        below: 1E30 is an integer beyond 2^53 and REFUSED)
 		`{"n":2e-3}`:               `{"n":0.002}`, // small exponent expanded
 		`{"n":1e-27}`:              `{"n":1e-27}`, // very small -> exponent form
 		`{"n":1.0}`:                `{"n":1}`,     // integer-valued -> "1"
@@ -63,6 +64,60 @@ func TestJCSNumbers(t *testing.T) {
 	for in, want := range cases {
 		if got := canon(t, in); got != want {
 			t.Errorf("number canon %s -> %s, want %s", in, got, want)
+		}
+	}
+}
+
+// A number whose VALUE is an integer beyond 2^53 is refused in EVERY spelling, and that restriction
+// is deliberately narrower than what RFC 8785 will serialize (SPEC §5.3). RFC 8785 happily writes
+// 9007199254740993 as 9007199254740992 - which is exactly the problem: two records differing by one
+// would share a content address.
+//
+// The rule used to be gated on the SPELLING - it ran only when the literal held no `.`, `e` or `E`.
+// So 100000000000000000000 was refused while 1e20 was accepted and canonicalized TO
+// 100000000000000000000, which this same function then refused on a later parse (AUD-07).
+func TestLargeIntegersAreRefusedInEverySpelling(t *testing.T) {
+	for _, refused := range []string{
+		`{"n":9007199254740993}`,   // 2^53+1, integer token
+		`{"n":9007199254740993.0}`, // the same value with a fractional part
+		`{"n":-9007199254740993}`,
+		`{"n":1e20}`,                  // the spelling that used to slip through
+		`{"n":100000000000000000000}`, // ... and what it canonicalized to
+		`{"n":1E30}`,
+		`{"n":12345678901234567890.5}`, // not an integer literal, but its double is a huge integer
+	} {
+		if out, err := CanonJSON([]byte(refused)); err == nil {
+			t.Errorf("CanonJSON(%s) = %s; want a refusal - its identity cannot be kept distinct", refused, out)
+		}
+	}
+	// 2^53 itself is exactly representable and stays accepted.
+	if _, err := CanonJSON([]byte(`{"n":9007199254740992}`)); err != nil {
+		t.Errorf("2^53 is exactly representable and must be accepted: %v", err)
+	}
+}
+
+// canon(canon(x)) == canon(x) for every accepted input. The property the old spelling-gated rule
+// broke, and the one an authoring/hashing/sealing/ingestion pipeline depends on, because every one
+// of those stages re-canonicalizes the same logical content.
+func TestCanonicalizationIsIdempotent(t *testing.T) {
+	for _, in := range []string{
+		`{"n":4.50}`, `{"n":2e-3}`, `{"n":1e-27}`, `{"n":1.0}`, `{"n":1e0}`, `{"n":-0}`,
+		`{"n":333333333.33333329}`, `{"n":9007199254740992}`, `{"n":1e-6}`, `{"n":1e-7}`,
+		`{"n":3.141592653589793}`, `{"n":2.2250738585072014e-308}`, `{"n":1E3}`,
+		`{"s":"x","a":[1,2,{"b":true}],"z":null}`,
+	} {
+		once, err := CanonJSON([]byte(in))
+		if err != nil {
+			t.Errorf("CanonJSON(%s): %v", in, err)
+			continue
+		}
+		twice, err := CanonJSON(once)
+		if err != nil {
+			t.Errorf("CanonJSON refuses its OWN output for %s: %s -> %v", in, once, err)
+			continue
+		}
+		if string(twice) != string(once) {
+			t.Errorf("not idempotent: %s -> %s -> %s", in, once, twice)
 		}
 	}
 }

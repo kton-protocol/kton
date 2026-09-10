@@ -266,6 +266,15 @@ func (r *Registry) apply(rec Record) {
 			r.degraded++
 			return
 		}
+		// Same rule as Add's, on the read path: an unresolvable action key is structural, and both
+		// packages document a git merge as a supported federation transport, which bypasses Add
+		// entirely. Skipped and counted rather than fatal - one planted file must not disable reads
+		// over every good record, and --strict already refuses to answer over a degraded read.
+		if _, err := f.ActionKey(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping structurally invalid record %s: %v\n", rec.FotonID, err)
+			r.degraded++
+			return
+		}
 	}
 	key, _ := recordKey(rec.Envelope, rec.FotonID)
 	if i, ok := r.keyIdx[key]; ok {
@@ -340,6 +349,15 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	// reuse cache (cold-session finding).
 	if err := f.CheckProtocolRef(); err != nil {
 		return "", false, err
+	}
+	// A foton whose §6.3 ACTION KEY cannot be computed is structurally ambiguous - two inputs at one
+	// relative path with different hashes, so the {path -> hash} map could hold only one and an input
+	// would silently vanish from the computation's identity. Such a record used to be accepted and
+	// indexed EVERYWHERE EXCEPT byAction: the action-key error was swallowed on the way in, leaving
+	// the record fully queryable while missing from the reuse index, with nobody told (AUD-10). A
+	// structural violation is refused here instead of becoming an invisible gap.
+	if _, err := f.ActionKey(); err != nil {
+		return "", false, fmt.Errorf("foton is structurally invalid: %w", err)
 	}
 	key, err := recordKey(env, fotonID)
 	if err != nil {

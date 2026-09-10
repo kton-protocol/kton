@@ -130,11 +130,23 @@ testable (see the conformance tests in `../reference/core/canon_test.go`):
 
 - **Numbers** MUST be serialized by the ECMAScript Number-to-String algorithm (RFC 8785 §3.2.2.3):
   shortest round-tripping IEEE-754 double form, lowercase `e`, explicit `+` on positive exponents, no
-  trailing zeros - e.g. `4.50` → `4.5`, `1E30` → `1e+30`, `2e-3` → `0.002`, `1.0` → `1`. **A value that
-  needs more precision or range than an IEEE-754 double can hold - a high-precision measurement, a large
-  integer id, an exact decimal - MUST be carried as a JSON string, never a JSON number.** This is a
-  schema-design rule, called out where plankton/nekton fields are defined, not merely a serialization
-  rule.
+  trailing zeros - e.g. `4.50` → `4.5`, `2e-3` → `0.002`, `1.0` → `1`, `1e-27` → `1e-27`.
+- **Numbers are additionally RESTRICTED on input, beyond what RFC 8785 will serialize.** A number whose
+  value is an **integer with `|v| > 2^53`** MUST be REFUSED, in every spelling: `9007199254740993`,
+  `9007199254740993.0` and `1e30` alike. RFC 8785 defines a serialization for such values, and that is
+  the problem: `9007199254740993` and `9007199254740992` serialize to the *same* bytes, so two records
+  differing by one would share a content address. A canonicalizer for a content-addressed substrate
+  cannot accept an input whose identity it cannot keep distinct.
+
+  The restriction is on the **value**, never on the spelling. Enforcing it only for integer literals -
+  and letting the exponent and decimal forms of the same value through - is the defect this rule
+  replaces: it made acceptance depend on how a number was written, and it produced canonical output
+  the same canonicalizer then refused to parse. **`canon(canon(x)) == canon(x)` MUST hold for every
+  accepted input.**
+- **A value that needs more precision or range than an IEEE-754 double can hold** - a high-precision
+  measurement, a large integer id, an exact decimal - **MUST be carried as a JSON string, never a JSON
+  number.** This is a schema-design rule, called out where plankton/nekton fields are defined, not
+  merely a serialization rule; the input restriction above is what enforces it at the boundary.
 - **Strings** MUST be escaped per RFC 8785 §3.2.2.2: control characters below U+0020 use the five named
   short escapes (backspace, tab, line-feed, form-feed, carriage-return) or otherwise a **lowercase**
   four-hex-digit escape; above U+0020 only the double-quote and the backslash are escaped; every other
@@ -592,9 +604,11 @@ When a short-lived signing certificate is used (e.g. Sigstore-Fulcio), the trans
 proof (e.g. Rekor) SHOULD be carried **inside the record**, so that verification a year later does not
 depend on the certificate still being valid or an external service still answering. The on-record encoding is
 §8.1: an inclusion proof is verification material with `scheme: "rekor-entry"`, bound to the record by
-its content address like any other. *(Scenario 3. The reference `kton anchor` currently verifies the
-proof and prints it to stdout without storing it, and there is no offline re-verification of a saved
-proof; both are open.)*
+its content address like any other. *(Scenario 3. `kton anchor --store` records the verified entry as §8.1
+verification material on the record; without `--store` the proof is only printed. What remains open
+is OFFLINE re-verification of a saved proof - and note that the anchor path reconstructs a root
+supplied by the proof and does not authenticate the log's own checkpoint, so a verified SET is not
+by itself proof that the tree root was authenticated.)*
 
 ## 14 Publication projections  *(informative)*
 
@@ -681,12 +695,12 @@ GET /material?subject=<record id>          -> { "subject", "material": [ ... ] }
 A malformed or missing parameter answers 400. A record this participant does not hold answers 404.
 Both are distinct from an empty `records` list, which means "held, nothing matches".
 
-The reference implementation ships the **client** for this binding (`kton mirror`) and no server: a
-specification of a protocol is not a place to distribute a network service, and a server that binds
-a port has security obligations - authentication, transport security, rate limiting, request bounds -
-that belong to a deployment rather than to a reference. Writing one over the table above is a small
-amount of code in any language, and `../reference/testdata/federation/` fixes the bytes it must
-produce.
+The reference implementation ships **neither half** of this binding: no server, and no client
+either. A specification of a protocol is not a place to distribute a network service - a server that
+binds a port carries security obligations (authentication, transport security, rate limiting, request
+bounds) that belong to a deployment - and the client half turned out to have no caller at all, while
+bringing four unbounded HTTP clients with it. Writing either over the table above is a small amount
+of code in any language, and `../reference/testdata/federation/` fixes the bytes it must produce.
 
 It does answer §12 over a different binding: `plankton records --json --since N` and
 `nekton records --json --since N` return exactly the `sync(since)` document above on stdout. A server

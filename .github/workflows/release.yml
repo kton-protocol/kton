@@ -30,7 +30,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          # Released binaries are built on a SUPPORTED, patched Go line: the standard library ships
+          # inside them, so a toolchain outside its support window is the release's problem even
+          # with no third-party modules (AUD-13). The declared 1.22 floor is proven by CI's `compat`
+          # job; it is not the security baseline for artifacts we hand out.
+          go-version: 'stable'
 
       - name: build the three binaries and package
         env:

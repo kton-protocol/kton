@@ -144,8 +144,12 @@ them: a modeling workbench, a CLI, a published paper's verifiable package, or an
 
 The kernel is real. The Go reference implementation ([`reference/`](reference/)) builds and
 passes tests: foton model + action key, canonical JSON, DSSE/Ed25519, an append-log registry
-with hash indexes, lineage / reuse queries, federation (serve / mirror / sync), and optional
-byte-pinning. The sibling **nekton** layer has its own Go reference ([`nekton/`](nekton/)),
+with hash indexes, lineage / reuse queries, local overlay-by-hash federation (`mirror` on a
+directory, and `records --json --since N` as the §12 `sync` answer on stdout), and optional
+byte-pinning. There is **no HTTP server and no HTTP client**: `serve` went in #83 and the
+federation client in #101, because a protocol repository is about bytes rather than about which
+other protocol carries them somewhere. §12 fixes the queries and the wire form and leaves the
+transport unspecified. The sibling **nekton** layer has its own Go reference ([`nekton/`](nekton/)),
 reusing plankton's shared `core`. The spec ([`spec/`](spec/)) is **0.1 (draft)**. Cockpit spikes
 - a VS Code Navigator, R/Python executors, and tool-qualification demos - live in a separate
 research companion (not yet public).

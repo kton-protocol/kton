@@ -23,9 +23,11 @@ anchoring) lives in the separate **kton cockpit** module (`../kton/`), which imp
 - `blobstore/` - an **optional** content-addressed byte store used only for pinning. The
   kernel/registry stores no bytes; this is a separate, opt-in backend (spec §6.1/§10). Pure
   filesystem, no network.
-- `cmd/plankton/` - the kernel CLI. Local **`mirror <dir>`** (overlay a peer registry by hash,
-  no network) stays here - it is pure federation. **Network** federation (`serve`, mirror a
-  URL), transparency-log **`anchor`**, and byte **`pin`/`blob`** are in `kton` (`../kton/`).
+- `cmd/plankton/` - the kernel CLI. Local **`mirror <dir>`** (overlay a peer registry by hash, no
+  network) stays here - it is a data operation, not a transport - as do byte **`pin`/`blob`**, which
+  need a hash and no address. Transparency-log **`anchor`** and locator **`fetch`** are in `kton`
+  (`../kton/`). Network federation is in neither: no server (#83) and no client (#101);
+  `records --json --since N` is the §12 `sync` answer on stdout.
 - `testdata/` - frozen conformance vectors copied from the spike (`../spike/`). Also consumed by
   the kton federation tests (single source of truth, no duplication).
 

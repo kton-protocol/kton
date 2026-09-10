@@ -78,7 +78,10 @@ func (f Foton) FotonID() (string, error) {
 // no longer decouple the action key from the actual protocol, because the action key recomputes the
 // ref from the descriptor rather than believing the wire field.
 func (p Protocol) EffectiveRef() (string, error) {
-	if len(p.Descriptor) > 0 {
+	// PRESENT, including empty: `descriptor: {}` is a descriptor and is hashed. `len(...) > 0`
+	// treated it as absent, which both skipped the §6.2 check and put the ref in the
+	// bare/unverifiable action-key namespace (AUD-10). Only nil is absent.
+	if p.Descriptor != nil {
 		return ComputeProtocolRef(p.Descriptor)
 	}
 	return p.Ref, nil
@@ -88,7 +91,11 @@ func (p Protocol) EffectiveRef() (string, error) {
 // is present, Protocol.Ref MUST equal sha256(canon(descriptor)). A mismatch is a malformed foton
 // (its wire ref lies about its protocol) and is rejected rather than silently indexed.
 func (f Foton) CheckProtocolRef() error {
-	if len(f.Protocol.Descriptor) == 0 {
+	// A PRESENT descriptor is hashed, even when it is empty. `len(...) == 0` conflated
+	// `descriptor: {}` with no descriptor at all, so an empty object let an arbitrary incorrect ref
+	// through unchecked (AUD-10). §6.2 requires hashing any descriptor that is there, and
+	// `{}` canonicalizes and hashes perfectly well; only ABSENT means unverifiable.
+	if f.Protocol.Descriptor == nil {
 		return nil
 	}
 	want, err := ComputeProtocolRef(f.Protocol.Descriptor)
@@ -126,7 +133,7 @@ func (f Foton) ActionKey() (string, error) {
 		return "", err
 	}
 	proto := map[string]any{"kind": f.Protocol.Kind, "ref": ref}
-	if len(f.Protocol.Descriptor) == 0 {
+	if f.Protocol.Descriptor == nil {
 		// A bare ref (no carried descriptor) is an UNVERIFIABLE pointer to an off-record protocol.
 		// Namespace it so it can never share an action key with a VERIFIABLE inline descriptor whose
 		// content happens to hash to the same ref - the cold-session bypass where an attacker's

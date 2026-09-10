@@ -26,6 +26,70 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Fixed — boundary and identity rules (external audit, step 3)
+
+- **Canonicalization is idempotent, and the number rule is on the value rather than the spelling**
+  (AUD-07). The exactness check ran only when the literal held no `.`, `e` or `E`, so acceptance
+  depended on how a number was written:
+
+  ```
+  100000000000000000000   refused
+  1e20                    ACCEPTED -> canonicalized to 100000000000000000000, which the same
+                          canonicalizer then refused on a later parse
+  9007199254740993.0      ACCEPTED and silently rounded, while the integer token was refused
+  ```
+
+  Two tests now run on every number, because neither alone suffices: the **literal**, parsed
+  exactly (`9007199254740993` rounds to a double whose magnitude is exactly 2^53, so a test on the
+  parsed value would accept 2^53+1 and sign its neighbour), and the resulting **value**
+  (`12345678901234567890.5` is no integer literal, but its double is a huge integer whose canonical
+  form the first test would then refuse). `canon(canon(x)) == canon(x)` now holds for everything
+  accepted, checked over a corpus.
+
+  **This narrows the accepted input set relative to RFC 8785**, which happily serializes `1e30`.
+  That is deliberate: `9007199254740993` and `9007199254740992` serialize to the *same* bytes, so
+  two records differing by one would share a content address. §5.3 now states the restriction, and
+  its normative example list no longer implies `1E30` is accepted.
+
+- **A field that would vanish before signing is refused** (AUD-08). Both authoring parsers decoded
+  straight into structs, which destroys the evidence: Go keeps the **last** of a duplicate name and
+  stops at the end of the first document. `"why":"first","why":"second"` was signed as `"second"`;
+  `CanonJSON` accepted `{"x":1} {"ignored":2}` and returned only `{"x":1}`. The new
+  `core.CheckJSONDocument` runs on the raw bytes — one complete document, no duplicate names — and
+  plankton's foton spec additionally rejects unknown fields, so a misspelled `inputs` no longer
+  disappears. The opaque `descriptor` stays fully extensible.
+
+- **A precomputed foton id now equals the id of the record signed** (AUD-09). `FotonID` used the
+  supplied hash strings verbatim while the signing path normalized them, so an accepted uppercase
+  hash produced two different ids for one spec — a cockpit that precomputes a result id held a
+  reference that did not resolve to the record it went on to sign. Both paths go through one
+  normalized representation.
+
+- **Structural foton validation is complete, and its failures are refusals** (AUD-10). A signed
+  foton with two different hashes at the same **absolute** input path was accepted *and indexed*;
+  its action key then failed to compute and the registry silently omitted the action-key index while
+  leaving the record queryable everywhere else. `Validate` now checks bound-hash syntax, relative
+  work-tree paths and duplicate input paths (path-only unbound slots stay legitimate), and both
+  ingest and the read path refuse a record whose action key cannot be computed.
+
+  Separately, `len(descriptor) == 0` conflated `descriptor: {}` with **no** descriptor, so an empty
+  object let an arbitrary incorrect ref through unchecked and shared the bare-ref action-key
+  namespace. Only `nil` is absent now; a present descriptor is hashed, empty or not.
+
+### Changed — release and contributor plumbing (external audit)
+
+- **CI runs on `dev`, not only `main`** — a direct push to the active development branch was
+  ungated; only pull requests were ever checked.
+- **The gate and released binaries build on a supported Go line** (AUD-13). 1.22 is outside Go's
+  support window, and the standard library ships inside every released binary — having no
+  third-party modules does not remove toolchain maintenance. The declared `go 1.22` floor is now
+  *proven* by a separate `compat` job rather than doubling as the release baseline.
+- **`CONTRIBUTING` no longer tells readers to run `go test ./...` from the repo root** (AUD-12),
+  which fails: the workspace root is not a module. It gives the per-module loop CI actually runs.
+- Stale capability claims removed: the root README advertised `serve`, Annex C said the reference
+  ships the HTTP federation **client** (deleted in #101), §13 said `kton anchor` cannot store a
+  proof though `--store` does, and `kton/README` gave a build command from the wrong directory.
+
 ### Fixed — a union is now commutative (external audit, step 2)
 
 - **A multi-source read gave a different answer depending on argument order** (AUD-02, AUD-03,
@@ -138,6 +202,70 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
+
+### Fixed — boundary and identity rules (external audit, step 3)
+
+- **Canonicalization is idempotent, and the number rule is on the value rather than the spelling**
+  (AUD-07). The exactness check ran only when the literal held no `.`, `e` or `E`, so acceptance
+  depended on how a number was written:
+
+  ```
+  100000000000000000000   refused
+  1e20                    ACCEPTED -> canonicalized to 100000000000000000000, which the same
+                          canonicalizer then refused on a later parse
+  9007199254740993.0      ACCEPTED and silently rounded, while the integer token was refused
+  ```
+
+  Two tests now run on every number, because neither alone suffices: the **literal**, parsed
+  exactly (`9007199254740993` rounds to a double whose magnitude is exactly 2^53, so a test on the
+  parsed value would accept 2^53+1 and sign its neighbour), and the resulting **value**
+  (`12345678901234567890.5` is no integer literal, but its double is a huge integer whose canonical
+  form the first test would then refuse). `canon(canon(x)) == canon(x)` now holds for everything
+  accepted, checked over a corpus.
+
+  **This narrows the accepted input set relative to RFC 8785**, which happily serializes `1e30`.
+  That is deliberate: `9007199254740993` and `9007199254740992` serialize to the *same* bytes, so
+  two records differing by one would share a content address. §5.3 now states the restriction, and
+  its normative example list no longer implies `1E30` is accepted.
+
+- **A field that would vanish before signing is refused** (AUD-08). Both authoring parsers decoded
+  straight into structs, which destroys the evidence: Go keeps the **last** of a duplicate name and
+  stops at the end of the first document. `"why":"first","why":"second"` was signed as `"second"`;
+  `CanonJSON` accepted `{"x":1} {"ignored":2}` and returned only `{"x":1}`. The new
+  `core.CheckJSONDocument` runs on the raw bytes — one complete document, no duplicate names — and
+  plankton's foton spec additionally rejects unknown fields, so a misspelled `inputs` no longer
+  disappears. The opaque `descriptor` stays fully extensible.
+
+- **A precomputed foton id now equals the id of the record signed** (AUD-09). `FotonID` used the
+  supplied hash strings verbatim while the signing path normalized them, so an accepted uppercase
+  hash produced two different ids for one spec — a cockpit that precomputes a result id held a
+  reference that did not resolve to the record it went on to sign. Both paths go through one
+  normalized representation.
+
+- **Structural foton validation is complete, and its failures are refusals** (AUD-10). A signed
+  foton with two different hashes at the same **absolute** input path was accepted *and indexed*;
+  its action key then failed to compute and the registry silently omitted the action-key index while
+  leaving the record queryable everywhere else. `Validate` now checks bound-hash syntax, relative
+  work-tree paths and duplicate input paths (path-only unbound slots stay legitimate), and both
+  ingest and the read path refuse a record whose action key cannot be computed.
+
+  Separately, `len(descriptor) == 0` conflated `descriptor: {}` with **no** descriptor, so an empty
+  object let an arbitrary incorrect ref through unchecked and shared the bare-ref action-key
+  namespace. Only `nil` is absent now; a present descriptor is hashed, empty or not.
+
+### Changed — release and contributor plumbing (external audit)
+
+- **CI runs on `dev`, not only `main`** — a direct push to the active development branch was
+  ungated; only pull requests were ever checked.
+- **The gate and released binaries build on a supported Go line** (AUD-13). 1.22 is outside Go's
+  support window, and the standard library ships inside every released binary — having no
+  third-party modules does not remove toolchain maintenance. The declared `go 1.22` floor is now
+  *proven* by a separate `compat` job rather than doubling as the release baseline.
+- **`CONTRIBUTING` no longer tells readers to run `go test ./...` from the repo root** (AUD-12),
+  which fails: the workspace root is not a module. It gives the per-module loop CI actually runs.
+- Stale capability claims removed: the root README advertised `serve`, Annex C said the reference
+  ships the HTTP federation **client** (deleted in #101), §13 said `kton anchor` cannot store a
+  proof though `--store` does, and `kton/README` gave a build command from the wrong directory.
 
 ### Fixed — a union is now commutative (external audit, step 2)
 
@@ -321,6 +449,70 @@ build reading a format it does not know refuses loudly instead of reporting an e
   `reproduces` claim records and which the exit code cannot distinguish.
 - **`kton fetch --allow-local`** (#81) — see Security.
 
+### Fixed — boundary and identity rules (external audit, step 3)
+
+- **Canonicalization is idempotent, and the number rule is on the value rather than the spelling**
+  (AUD-07). The exactness check ran only when the literal held no `.`, `e` or `E`, so acceptance
+  depended on how a number was written:
+
+  ```
+  100000000000000000000   refused
+  1e20                    ACCEPTED -> canonicalized to 100000000000000000000, which the same
+                          canonicalizer then refused on a later parse
+  9007199254740993.0      ACCEPTED and silently rounded, while the integer token was refused
+  ```
+
+  Two tests now run on every number, because neither alone suffices: the **literal**, parsed
+  exactly (`9007199254740993` rounds to a double whose magnitude is exactly 2^53, so a test on the
+  parsed value would accept 2^53+1 and sign its neighbour), and the resulting **value**
+  (`12345678901234567890.5` is no integer literal, but its double is a huge integer whose canonical
+  form the first test would then refuse). `canon(canon(x)) == canon(x)` now holds for everything
+  accepted, checked over a corpus.
+
+  **This narrows the accepted input set relative to RFC 8785**, which happily serializes `1e30`.
+  That is deliberate: `9007199254740993` and `9007199254740992` serialize to the *same* bytes, so
+  two records differing by one would share a content address. §5.3 now states the restriction, and
+  its normative example list no longer implies `1E30` is accepted.
+
+- **A field that would vanish before signing is refused** (AUD-08). Both authoring parsers decoded
+  straight into structs, which destroys the evidence: Go keeps the **last** of a duplicate name and
+  stops at the end of the first document. `"why":"first","why":"second"` was signed as `"second"`;
+  `CanonJSON` accepted `{"x":1} {"ignored":2}` and returned only `{"x":1}`. The new
+  `core.CheckJSONDocument` runs on the raw bytes — one complete document, no duplicate names — and
+  plankton's foton spec additionally rejects unknown fields, so a misspelled `inputs` no longer
+  disappears. The opaque `descriptor` stays fully extensible.
+
+- **A precomputed foton id now equals the id of the record signed** (AUD-09). `FotonID` used the
+  supplied hash strings verbatim while the signing path normalized them, so an accepted uppercase
+  hash produced two different ids for one spec — a cockpit that precomputes a result id held a
+  reference that did not resolve to the record it went on to sign. Both paths go through one
+  normalized representation.
+
+- **Structural foton validation is complete, and its failures are refusals** (AUD-10). A signed
+  foton with two different hashes at the same **absolute** input path was accepted *and indexed*;
+  its action key then failed to compute and the registry silently omitted the action-key index while
+  leaving the record queryable everywhere else. `Validate` now checks bound-hash syntax, relative
+  work-tree paths and duplicate input paths (path-only unbound slots stay legitimate), and both
+  ingest and the read path refuse a record whose action key cannot be computed.
+
+  Separately, `len(descriptor) == 0` conflated `descriptor: {}` with **no** descriptor, so an empty
+  object let an arbitrary incorrect ref through unchecked and shared the bare-ref action-key
+  namespace. Only `nil` is absent now; a present descriptor is hashed, empty or not.
+
+### Changed — release and contributor plumbing (external audit)
+
+- **CI runs on `dev`, not only `main`** — a direct push to the active development branch was
+  ungated; only pull requests were ever checked.
+- **The gate and released binaries build on a supported Go line** (AUD-13). 1.22 is outside Go's
+  support window, and the standard library ships inside every released binary — having no
+  third-party modules does not remove toolchain maintenance. The declared `go 1.22` floor is now
+  *proven* by a separate `compat` job rather than doubling as the release baseline.
+- **`CONTRIBUTING` no longer tells readers to run `go test ./...` from the repo root** (AUD-12),
+  which fails: the workspace root is not a module. It gives the per-module loop CI actually runs.
+- Stale capability claims removed: the root README advertised `serve`, Annex C said the reference
+  ships the HTTP federation **client** (deleted in #101), §13 said `kton anchor` cannot store a
+  proof though `--store` does, and `kton/README` gave a build command from the wrong directory.
+
 ### Fixed — a union is now commutative (external audit, step 2)
 
 - **A multi-source read gave a different answer depending on argument order** (AUD-02, AUD-03,
@@ -483,6 +675,70 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Fixed — boundary and identity rules (external audit, step 3)
+
+- **Canonicalization is idempotent, and the number rule is on the value rather than the spelling**
+  (AUD-07). The exactness check ran only when the literal held no `.`, `e` or `E`, so acceptance
+  depended on how a number was written:
+
+  ```
+  100000000000000000000   refused
+  1e20                    ACCEPTED -> canonicalized to 100000000000000000000, which the same
+                          canonicalizer then refused on a later parse
+  9007199254740993.0      ACCEPTED and silently rounded, while the integer token was refused
+  ```
+
+  Two tests now run on every number, because neither alone suffices: the **literal**, parsed
+  exactly (`9007199254740993` rounds to a double whose magnitude is exactly 2^53, so a test on the
+  parsed value would accept 2^53+1 and sign its neighbour), and the resulting **value**
+  (`12345678901234567890.5` is no integer literal, but its double is a huge integer whose canonical
+  form the first test would then refuse). `canon(canon(x)) == canon(x)` now holds for everything
+  accepted, checked over a corpus.
+
+  **This narrows the accepted input set relative to RFC 8785**, which happily serializes `1e30`.
+  That is deliberate: `9007199254740993` and `9007199254740992` serialize to the *same* bytes, so
+  two records differing by one would share a content address. §5.3 now states the restriction, and
+  its normative example list no longer implies `1E30` is accepted.
+
+- **A field that would vanish before signing is refused** (AUD-08). Both authoring parsers decoded
+  straight into structs, which destroys the evidence: Go keeps the **last** of a duplicate name and
+  stops at the end of the first document. `"why":"first","why":"second"` was signed as `"second"`;
+  `CanonJSON` accepted `{"x":1} {"ignored":2}` and returned only `{"x":1}`. The new
+  `core.CheckJSONDocument` runs on the raw bytes — one complete document, no duplicate names — and
+  plankton's foton spec additionally rejects unknown fields, so a misspelled `inputs` no longer
+  disappears. The opaque `descriptor` stays fully extensible.
+
+- **A precomputed foton id now equals the id of the record signed** (AUD-09). `FotonID` used the
+  supplied hash strings verbatim while the signing path normalized them, so an accepted uppercase
+  hash produced two different ids for one spec — a cockpit that precomputes a result id held a
+  reference that did not resolve to the record it went on to sign. Both paths go through one
+  normalized representation.
+
+- **Structural foton validation is complete, and its failures are refusals** (AUD-10). A signed
+  foton with two different hashes at the same **absolute** input path was accepted *and indexed*;
+  its action key then failed to compute and the registry silently omitted the action-key index while
+  leaving the record queryable everywhere else. `Validate` now checks bound-hash syntax, relative
+  work-tree paths and duplicate input paths (path-only unbound slots stay legitimate), and both
+  ingest and the read path refuse a record whose action key cannot be computed.
+
+  Separately, `len(descriptor) == 0` conflated `descriptor: {}` with **no** descriptor, so an empty
+  object let an arbitrary incorrect ref through unchecked and shared the bare-ref action-key
+  namespace. Only `nil` is absent now; a present descriptor is hashed, empty or not.
+
+### Changed — release and contributor plumbing (external audit)
+
+- **CI runs on `dev`, not only `main`** — a direct push to the active development branch was
+  ungated; only pull requests were ever checked.
+- **The gate and released binaries build on a supported Go line** (AUD-13). 1.22 is outside Go's
+  support window, and the standard library ships inside every released binary — having no
+  third-party modules does not remove toolchain maintenance. The declared `go 1.22` floor is now
+  *proven* by a separate `compat` job rather than doubling as the release baseline.
+- **`CONTRIBUTING` no longer tells readers to run `go test ./...` from the repo root** (AUD-12),
+  which fails: the workspace root is not a module. It gives the per-module loop CI actually runs.
+- Stale capability claims removed: the root README advertised `serve`, Annex C said the reference
+  ships the HTTP federation **client** (deleted in #101), §13 said `kton anchor` cannot store a
+  proof though `--store` does, and `kton/README` gave a build command from the wrong directory.
 
 ### Fixed — a union is now commutative (external audit, step 2)
 
