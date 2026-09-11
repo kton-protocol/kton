@@ -1,6 +1,7 @@
 # The scope question
 
-*Written for a discussion, not as a conclusion. Status: open (#70, #10).*
+*Written for a discussion, not as a conclusion. Status: **§2 resolved** (#70); the cases in §3 and the
+questions in §5 remain open (#10).*
 
 The repository states its scope twice. That is not obviously wrong — the two statements answer
 different questions — but one of them has legal effect, they have already drifted apart once, and
@@ -11,7 +12,7 @@ where the line actually falls, using cases rather than principles.
 
 ## 1. What the two documents are
 
-| | `spec/SPEC.md` §1 | `community-specification/02-scope.md` |
+| | `spec/SPEC.md` §1 | `Scope.md` |
 |---|---|---|
 | **what it says** | what *this document* specifies | what the *patent commitment* covers |
 | **who reads it** | an implementer deciding what to build | a licensee, a contributor, a court |
@@ -21,7 +22,7 @@ where the line actually falls, using cases rather than principles.
 They overlap deliberately and heavily. Almost everything in scope for one is in scope for the other.
 But they are not the same sentence, and the cases below are where they come apart.
 
-## 2. The open legal question, first
+## 2. The legal question, resolved (#70)
 
 License §9.13:
 
@@ -29,11 +30,30 @@ License §9.13:
 > Specification's repository. … **If no Scope is provided, each Contributor's Necessary Claims are
 > limited to that Contributor's Contributions.**
 
-There is no `Scope.md` in this repository. There is `community-specification/02-scope.md`.
-`getting-started.md` says three times to "complete the Scope.md file".
+There was no `Scope.md`. The content existed as `community-specification/02-scope.md` - the *template
+pack's* filename, not the one the License operates on - so the fallback applied and the commitment
+covered each contributor's own commits rather than the specification. That is the opposite of what a
+specification license is for.
 
-Everything below assumes that question gets answered. It is not a technical decision and nothing in
-this document resolves it.
+It turned out not to be one missing file but **four**. The License names three by name and none
+existed; a fourth stated the wrong source-code license:
+
+| file | what the License does with it | consequence while absent |
+|---|---|---|
+| `Scope.md` | §9.13 bounds the patent commitment | the fallback applied - contributions only |
+| `Notices.md` | §2.1.3.3 acceptance, §2.3 withdrawal, §9.7 Exclusion Notice | three mechanisms with nowhere to be exercised, including the one that protects a contributor |
+| `Governance.md` | §9.2 defines "Approved Specification" by reference to it | no route by which anything could ever become Approved |
+| `License.md` | deployed statement of the repository's licensing | the template's MIT default contradicted the Apache-2.0 the code ships |
+
+All four are now at the repository root under the names the License uses, which is where
+`getting-started.md` puts them ("Create a new repository and include the following files") and where
+a licensee looks. The template pack keeps the License text and CLA **unmodified**, which is the point
+of vendoring them.
+
+**One blank remains, on purpose.** `Notices.md` has no Code of Conduct contact. Designating people to
+that role is the Working Group's decision, and the guidance asks for two so a complaint about one
+still has somewhere to go. It is marked NOT YET DESIGNATED rather than filled in with a plausible
+name.
 
 ---
 
@@ -123,7 +143,7 @@ Worth deciding **before** anything is written, not after.
 
 The hardest case, and the reason the two documents cannot simply be merged.
 
-`02-scope.md` describes the Working Group's scope — what it *develops*. `spec/SPEC.md` §1 describes
+`Scope.md` describes the Working Group's scope — what it *develops*. `spec/SPEC.md` §1 describes
 what the current document *contains*. A topic the Working Group intends to specify but has not yet
 written is in the first and, correctly, absent from the second.
 
@@ -152,7 +172,9 @@ and that marker is itself a decision about what the commitment covers.
 
 ## 5. Questions to settle
 
-1. The `Scope.md` filename question (#70). Everything else waits on it.
+1. ~~The `Scope.md` filename question (#70).~~ **Resolved** - see §2. The four files the License
+   operates on are deployed at the repository root. The one thing still outstanding from it is the
+   Code of Conduct contact in `Notices.md`, which is a naming decision rather than a scope question.
 2. Does the patent commitment follow the **specified surface** or the **shipping program**? Case 3.3
    makes them differ, and every real consumer sits on the wrong side of the line.
 3. Is 3.2's answer — a compliant PDF renderer is outside the commitment — the intended one?

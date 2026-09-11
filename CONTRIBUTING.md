@@ -75,6 +75,6 @@ the DCO rather than a CLA - no copyright assignment, just the certification abov
 governed by the Community Specification framework in
 [`community-specification/`](community-specification/): its license
 ([`01-community-specification-license-v1.md`](community-specification/01-community-specification-license-v1.md)),
-scope ([`02-scope.md`](community-specification/02-scope.md)), governance, and contribution process
+scope ([`Scope.md`](Scope.md)), governance, and contribution process
 ([`06-contributing.md`](community-specification/06-contributing.md)). Spec changes follow that process;
 code changes follow this file.

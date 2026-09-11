@@ -179,8 +179,12 @@ to `man -l -` to render). The architecture invariants are in [`CONTRIBUTING.md`]
 
 kton is meant to be an **open standard others implement independently**, not just this codebase. The
 normative specification ([`spec/`](spec/)) is being developed under the Linux Foundation / Joint
-Development Foundation **Community Specification** framework - its scope, license, governance, and
-contribution process live in [`community-specification/`](community-specification/). Two audiences:
+Development Foundation **Community Specification** framework. The four files that framework's License
+operates on are at the repository root, under the names the License itself uses -
+[`Scope.md`](Scope.md) (what the patent commitment covers), [`Notices.md`](Notices.md) (acceptance,
+withdrawal, patent exclusions), [`Governance.md`](Governance.md) (how a draft becomes Approved) and
+[`License.md`](License.md). The unmodified License text and CLA are vendored in
+[`community-specification/`](community-specification/). Two audiences:
 **want to use it?** → the tools in this repo; **want to see it run?** → the demo (`gitmick/kton-demo`).
 
 ## License

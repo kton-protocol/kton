@@ -1,5 +1,11 @@
 # Scope
 
+*This is the `Scope.md` the Community Specification License names in §9.13. It is what bounds the
+patent commitment: **"If no Scope is provided, each Contributor's Necessary Claims are limited to
+that Contributor's Contributions."** Until this file existed under this name, that fallback applied -
+the commitment covered each contributor's own commits rather than the specification, which is the
+opposite of what a specification license is for. Changes to Scope do not apply retroactively.*
+
 This Working Group develops **kton**, a specification for **content-addressed data provenance**: a
 minimal, transport-neutral format and set of verification semantics for recording *how a result was
 produced* and *what has been attested about it*, such that any party can re-derive and independently

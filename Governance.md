@@ -1,5 +1,11 @@
 # Community Specification Governance Policy 1.0
 
+*This is the `Governance.md` the Community Specification License names in §9.2: an "Approved
+Specification" is the version "designated as an Approved Specification as set forth in the
+accompanying Governance.md file". Until it existed, there was no defined route by which anything in
+this repository could ever become Approved - the specification could be drafted forever and never
+ratified.*
+
 > **kton governance - current scale (v0.1).** The project is bootstrapping: a small maintainer group stewards the specification, operating the consensus-based due-process rules below at current size. The structure is intended to grow (a steering committee as members join) and to migrate to a Joint Development Foundation project, and ultimately toward ISO/IEC JTC 1, without re-founding. No single participant or company controls the specification.
 
 
