@@ -26,6 +26,32 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Fixed — the `envtally-CF2` proof can finally decide something
+
+- It had **two** reasons it could never run its own scenario, and both had to go before it could say
+  anything. The `EXDIR` pointing at its own directory was the first (fixed earlier); the second was
+  that it passed `fit.dsse.json` as a fourth argument to `release.py`, whose contract is
+  `ttl trig query FIT_HASH HEAD_HASH`. So `fit_hash` was the **filename**, the gate was bound to a
+  submission that does not exist, and not one condition could light whatever the graph said.
+
+  It now runs **two** scenarios over the shipped gate — an honest 3/3 and a forged one — because
+  "the attack did not light it" and "this branch never lights" are indistinguishable without the
+  control. The honest one lights; the forged one lights too:
+
+  ```
+  CONTROL  foton 3/3, claim 3/3  ->  [x] the fit's environment is qualified
+  ATTACK   foton 2/3, claim 3/3  ->  [x] the fit's environment is qualified
+  ```
+
+  `release.rq`'s `FILTER(?nful = ?ntot)` compares the numbers **in the qualification**, which its
+  author writes; the verdict recorded inside the cited fulfilment foton is never read. The gate's own
+  comment says the forgery is caught by a re-run in Act 8a — so the guarantee is real but lives
+  outside the gate, while the checklist line reads as though the gate verified it. Filed as
+  gitmick/kton-examples#14.
+
+  Recorded **OPEN** and VULNERABLE, not gated: it is a property of the shipped example gate, not of
+  the kernels, which record the 2/3 verdict faithfully.
+
 ### Added — properties, not just examples
 
 - **Fuzz targets over the canonicalization boundary**, and a CI job that actually searches (30 s per
@@ -307,6 +333,32 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
+
+### Fixed — the `envtally-CF2` proof can finally decide something
+
+- It had **two** reasons it could never run its own scenario, and both had to go before it could say
+  anything. The `EXDIR` pointing at its own directory was the first (fixed earlier); the second was
+  that it passed `fit.dsse.json` as a fourth argument to `release.py`, whose contract is
+  `ttl trig query FIT_HASH HEAD_HASH`. So `fit_hash` was the **filename**, the gate was bound to a
+  submission that does not exist, and not one condition could light whatever the graph said.
+
+  It now runs **two** scenarios over the shipped gate — an honest 3/3 and a forged one — because
+  "the attack did not light it" and "this branch never lights" are indistinguishable without the
+  control. The honest one lights; the forged one lights too:
+
+  ```
+  CONTROL  foton 3/3, claim 3/3  ->  [x] the fit's environment is qualified
+  ATTACK   foton 2/3, claim 3/3  ->  [x] the fit's environment is qualified
+  ```
+
+  `release.rq`'s `FILTER(?nful = ?ntot)` compares the numbers **in the qualification**, which its
+  author writes; the verdict recorded inside the cited fulfilment foton is never read. The gate's own
+  comment says the forgery is caught by a re-run in Act 8a — so the guarantee is real but lives
+  outside the gate, while the checklist line reads as though the gate verified it. Filed as
+  gitmick/kton-examples#14.
+
+  Recorded **OPEN** and VULNERABLE, not gated: it is a property of the shipped example gate, not of
+  the kernels, which record the 2/3 verdict faithfully.
 
 ### Added — properties, not just examples
 
@@ -659,6 +711,32 @@ build reading a format it does not know refuses loudly instead of reporting an e
   `reproduces` claim records and which the exit code cannot distinguish.
 - **`kton fetch --allow-local`** (#81) — see Security.
 
+### Fixed — the `envtally-CF2` proof can finally decide something
+
+- It had **two** reasons it could never run its own scenario, and both had to go before it could say
+  anything. The `EXDIR` pointing at its own directory was the first (fixed earlier); the second was
+  that it passed `fit.dsse.json` as a fourth argument to `release.py`, whose contract is
+  `ttl trig query FIT_HASH HEAD_HASH`. So `fit_hash` was the **filename**, the gate was bound to a
+  submission that does not exist, and not one condition could light whatever the graph said.
+
+  It now runs **two** scenarios over the shipped gate — an honest 3/3 and a forged one — because
+  "the attack did not light it" and "this branch never lights" are indistinguishable without the
+  control. The honest one lights; the forged one lights too:
+
+  ```
+  CONTROL  foton 3/3, claim 3/3  ->  [x] the fit's environment is qualified
+  ATTACK   foton 2/3, claim 3/3  ->  [x] the fit's environment is qualified
+  ```
+
+  `release.rq`'s `FILTER(?nful = ?ntot)` compares the numbers **in the qualification**, which its
+  author writes; the verdict recorded inside the cited fulfilment foton is never read. The gate's own
+  comment says the forgery is caught by a re-run in Act 8a — so the guarantee is real but lives
+  outside the gate, while the checklist line reads as though the gate verified it. Filed as
+  gitmick/kton-examples#14.
+
+  Recorded **OPEN** and VULNERABLE, not gated: it is a property of the shipped example gate, not of
+  the kernels, which record the 2/3 verdict faithfully.
+
 ### Added — properties, not just examples
 
 - **Fuzz targets over the canonicalization boundary**, and a CI job that actually searches (30 s per
@@ -990,6 +1068,32 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Fixed — the `envtally-CF2` proof can finally decide something
+
+- It had **two** reasons it could never run its own scenario, and both had to go before it could say
+  anything. The `EXDIR` pointing at its own directory was the first (fixed earlier); the second was
+  that it passed `fit.dsse.json` as a fourth argument to `release.py`, whose contract is
+  `ttl trig query FIT_HASH HEAD_HASH`. So `fit_hash` was the **filename**, the gate was bound to a
+  submission that does not exist, and not one condition could light whatever the graph said.
+
+  It now runs **two** scenarios over the shipped gate — an honest 3/3 and a forged one — because
+  "the attack did not light it" and "this branch never lights" are indistinguishable without the
+  control. The honest one lights; the forged one lights too:
+
+  ```
+  CONTROL  foton 3/3, claim 3/3  ->  [x] the fit's environment is qualified
+  ATTACK   foton 2/3, claim 3/3  ->  [x] the fit's environment is qualified
+  ```
+
+  `release.rq`'s `FILTER(?nful = ?ntot)` compares the numbers **in the qualification**, which its
+  author writes; the verdict recorded inside the cited fulfilment foton is never read. The gate's own
+  comment says the forgery is caught by a re-run in Act 8a — so the guarantee is real but lives
+  outside the gate, while the checklist line reads as though the gate verified it. Filed as
+  gitmick/kton-examples#14.
+
+  Recorded **OPEN** and VULNERABLE, not gated: it is a property of the shipped example gate, not of
+  the kernels, which record the 2/3 verdict faithfully.
 
 ### Added — properties, not just examples
 
