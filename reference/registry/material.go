@@ -86,6 +86,15 @@ func readMaterial(objectsDir string) map[string][]VerificationMaterial {
 		}
 		out[vm.Subject] = append(out[vm.Subject], vm)
 	}
+	// A scanner stops on the FIRST error and reports it only here. Without this check, one line
+	// longer than the buffer ends the loop silently and every attachment AFTER it disappears with no
+	// warning - the file reads as if it simply ended. §8.1 says material must never affect a
+	// record's validity, and it does not; but losing evidence quietly is exactly the failure this
+	// substrate exists to prevent, so say it.
+	if err := sc.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: verification material in %s is INCOMPLETE - stopped reading at %v\n",
+			materialPath(objectsDir), err)
+	}
 	return out
 }
 
