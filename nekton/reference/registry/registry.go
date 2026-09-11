@@ -375,6 +375,12 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 		// evidence must not disappear because it happened to arrive in the second source (AUD-11).
 		mergeMaterial(u.material, readAllMaterial(objects))
 	}
+	// A union's positions are SYNTHETIC: they are assigned per open, over whatever sources were
+	// named, and belong to no store. So it gets a FRESH epoch each time, which is not a shortcut but
+	// the honest answer: the epoch's contract is "if this changed, your cursor means nothing", and a
+	// cursor against a union means nothing on the next open anyway. An EMPTY epoch would have been
+	// neither "same" nor a usable "different" (SPEC §12).
+	u.epoch = core.NewEpoch()
 	u.dropped = u.settle(pending)
 	if b, err := os.ReadFile(u.peersPath); err == nil {
 		_ = json.Unmarshal(b, &u.peers)

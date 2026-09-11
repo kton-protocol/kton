@@ -198,6 +198,12 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 		mergeMaterial(u.material, r.material)
 		u.degraded += r.degraded // a skip in ANY source makes the union read incomplete
 	}
+	// A union's positions are SYNTHETIC: assigned per open, over whatever sources were named, and
+	// belonging to no store. So it gets a FRESH epoch each time - not a shortcut but the honest
+	// answer, since the epoch's contract is "if this changed, your cursor means nothing" and a cursor
+	// against a union means nothing on the next open anyway. An EMPTY epoch would have been neither
+	// "same" nor a usable "different" (SPEC §12).
+	u.epoch = core.NewEpoch()
 	return u, nil
 }
 

@@ -26,6 +26,51 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Fixed — specification vs. implementation audit
+
+A clause-by-clause sweep of `spec/SPEC.md` against both kernels. §5 (canonicalization), §6 (foton
+identity and the action key), §7 (claims, opaque predicates, the scope/seed grammar) and §8
+(signatures, §8.1 material) came back clean. Five real divergences, plus one thing that looked wrong
+and was not:
+
+- **A malformed query parameter answered `(none)` and exited 0** — across five commands and both
+  kernels. §12 says an unrecognised query parameter *"MUST be an error, never an empty result: an
+  empty answer to a malformed question is a successful wrong answer."* That sentence described the
+  behaviour exactly. A script asking who produced a result, with a typo in the hash, was told nobody
+  had, and carried on. `plankton producer|uses|lineage` and `nekton about|by signer` now refuse a
+  parameter that is not a content address (or, for a subject, a URI).
+
+- **A union view carried an empty `epoch`** — both kernels. A union's positions are synthetic,
+  assigned per open over whatever sources were named, so a fresh epoch each time is the honest
+  answer: the epoch's contract is *"if this changed, your cursor means nothing"*, and a cursor
+  against a union means nothing on the next open anyway. An empty one was neither "same" nor a usable
+  "different".
+
+- **`plankton producer|uses|lineage --json` returned summaries, not records.** §12 says the record
+  queries answer `{records: [<envelope> …]}`; a consumer handed `{fotonId, kind, inputs, outputs}`
+  cannot verify a signature or re-derive the id, and has to come back for the record it was just told
+  about. Each element now carries its `envelope`; the summary fields stay alongside it.
+
+- **§15.6 contradicted §7 and §9.** It required a conforming implementation to *"refuse … ill-formed
+  reproduction claims lacking a level"*. §9 assigns that to a conforming **consumer**, and §7 forbids
+  the kernel from doing it — predicates are opaque, and refusing a `reproduces` claim for lacking a
+  level needs exactly the vocabulary knowledge §7 says a kernel MUST NOT require. The implementation
+  follows §7; the clause was wrong and now says whose duty it is.
+
+- **§11's "a verdict MUST carry its corpus" had no subject.** Nothing implements it, and nothing
+  should: a verdict belongs to a gate or a reviewer, not to a kernel that has no verdicts and treats
+  the predicate as opaque. Stated, so an implementer stops looking for it.
+
+- Annex **C** sat between **A** and **B**; reordered.
+
+Not a defect, checked and cleared: §15.2 names an exact foton id and action key that appear nowhere
+in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than stored, and
+`TestGoldenVectors` asserts both and passes.
+
+**Left open deliberately:** `nekton about --json` answers a bare array where §12 says
+`{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
+that array today. Filed rather than changed unilaterally.
+
 ### Fixed — the `envtally-CF2` proof can finally decide something
 
 - It had **two** reasons it could never run its own scenario, and both had to go before it could say
@@ -333,6 +378,51 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
+
+### Fixed — specification vs. implementation audit
+
+A clause-by-clause sweep of `spec/SPEC.md` against both kernels. §5 (canonicalization), §6 (foton
+identity and the action key), §7 (claims, opaque predicates, the scope/seed grammar) and §8
+(signatures, §8.1 material) came back clean. Five real divergences, plus one thing that looked wrong
+and was not:
+
+- **A malformed query parameter answered `(none)` and exited 0** — across five commands and both
+  kernels. §12 says an unrecognised query parameter *"MUST be an error, never an empty result: an
+  empty answer to a malformed question is a successful wrong answer."* That sentence described the
+  behaviour exactly. A script asking who produced a result, with a typo in the hash, was told nobody
+  had, and carried on. `plankton producer|uses|lineage` and `nekton about|by signer` now refuse a
+  parameter that is not a content address (or, for a subject, a URI).
+
+- **A union view carried an empty `epoch`** — both kernels. A union's positions are synthetic,
+  assigned per open over whatever sources were named, so a fresh epoch each time is the honest
+  answer: the epoch's contract is *"if this changed, your cursor means nothing"*, and a cursor
+  against a union means nothing on the next open anyway. An empty one was neither "same" nor a usable
+  "different".
+
+- **`plankton producer|uses|lineage --json` returned summaries, not records.** §12 says the record
+  queries answer `{records: [<envelope> …]}`; a consumer handed `{fotonId, kind, inputs, outputs}`
+  cannot verify a signature or re-derive the id, and has to come back for the record it was just told
+  about. Each element now carries its `envelope`; the summary fields stay alongside it.
+
+- **§15.6 contradicted §7 and §9.** It required a conforming implementation to *"refuse … ill-formed
+  reproduction claims lacking a level"*. §9 assigns that to a conforming **consumer**, and §7 forbids
+  the kernel from doing it — predicates are opaque, and refusing a `reproduces` claim for lacking a
+  level needs exactly the vocabulary knowledge §7 says a kernel MUST NOT require. The implementation
+  follows §7; the clause was wrong and now says whose duty it is.
+
+- **§11's "a verdict MUST carry its corpus" had no subject.** Nothing implements it, and nothing
+  should: a verdict belongs to a gate or a reviewer, not to a kernel that has no verdicts and treats
+  the predicate as opaque. Stated, so an implementer stops looking for it.
+
+- Annex **C** sat between **A** and **B**; reordered.
+
+Not a defect, checked and cleared: §15.2 names an exact foton id and action key that appear nowhere
+in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than stored, and
+`TestGoldenVectors` asserts both and passes.
+
+**Left open deliberately:** `nekton about --json` answers a bare array where §12 says
+`{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
+that array today. Filed rather than changed unilaterally.
 
 ### Fixed — the `envtally-CF2` proof can finally decide something
 
@@ -711,6 +801,51 @@ build reading a format it does not know refuses loudly instead of reporting an e
   `reproduces` claim records and which the exit code cannot distinguish.
 - **`kton fetch --allow-local`** (#81) — see Security.
 
+### Fixed — specification vs. implementation audit
+
+A clause-by-clause sweep of `spec/SPEC.md` against both kernels. §5 (canonicalization), §6 (foton
+identity and the action key), §7 (claims, opaque predicates, the scope/seed grammar) and §8
+(signatures, §8.1 material) came back clean. Five real divergences, plus one thing that looked wrong
+and was not:
+
+- **A malformed query parameter answered `(none)` and exited 0** — across five commands and both
+  kernels. §12 says an unrecognised query parameter *"MUST be an error, never an empty result: an
+  empty answer to a malformed question is a successful wrong answer."* That sentence described the
+  behaviour exactly. A script asking who produced a result, with a typo in the hash, was told nobody
+  had, and carried on. `plankton producer|uses|lineage` and `nekton about|by signer` now refuse a
+  parameter that is not a content address (or, for a subject, a URI).
+
+- **A union view carried an empty `epoch`** — both kernels. A union's positions are synthetic,
+  assigned per open over whatever sources were named, so a fresh epoch each time is the honest
+  answer: the epoch's contract is *"if this changed, your cursor means nothing"*, and a cursor
+  against a union means nothing on the next open anyway. An empty one was neither "same" nor a usable
+  "different".
+
+- **`plankton producer|uses|lineage --json` returned summaries, not records.** §12 says the record
+  queries answer `{records: [<envelope> …]}`; a consumer handed `{fotonId, kind, inputs, outputs}`
+  cannot verify a signature or re-derive the id, and has to come back for the record it was just told
+  about. Each element now carries its `envelope`; the summary fields stay alongside it.
+
+- **§15.6 contradicted §7 and §9.** It required a conforming implementation to *"refuse … ill-formed
+  reproduction claims lacking a level"*. §9 assigns that to a conforming **consumer**, and §7 forbids
+  the kernel from doing it — predicates are opaque, and refusing a `reproduces` claim for lacking a
+  level needs exactly the vocabulary knowledge §7 says a kernel MUST NOT require. The implementation
+  follows §7; the clause was wrong and now says whose duty it is.
+
+- **§11's "a verdict MUST carry its corpus" had no subject.** Nothing implements it, and nothing
+  should: a verdict belongs to a gate or a reviewer, not to a kernel that has no verdicts and treats
+  the predicate as opaque. Stated, so an implementer stops looking for it.
+
+- Annex **C** sat between **A** and **B**; reordered.
+
+Not a defect, checked and cleared: §15.2 names an exact foton id and action key that appear nowhere
+in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than stored, and
+`TestGoldenVectors` asserts both and passes.
+
+**Left open deliberately:** `nekton about --json` answers a bare array where §12 says
+`{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
+that array today. Filed rather than changed unilaterally.
+
 ### Fixed — the `envtally-CF2` proof can finally decide something
 
 - It had **two** reasons it could never run its own scenario, and both had to go before it could say
@@ -1068,6 +1203,51 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Fixed — specification vs. implementation audit
+
+A clause-by-clause sweep of `spec/SPEC.md` against both kernels. §5 (canonicalization), §6 (foton
+identity and the action key), §7 (claims, opaque predicates, the scope/seed grammar) and §8
+(signatures, §8.1 material) came back clean. Five real divergences, plus one thing that looked wrong
+and was not:
+
+- **A malformed query parameter answered `(none)` and exited 0** — across five commands and both
+  kernels. §12 says an unrecognised query parameter *"MUST be an error, never an empty result: an
+  empty answer to a malformed question is a successful wrong answer."* That sentence described the
+  behaviour exactly. A script asking who produced a result, with a typo in the hash, was told nobody
+  had, and carried on. `plankton producer|uses|lineage` and `nekton about|by signer` now refuse a
+  parameter that is not a content address (or, for a subject, a URI).
+
+- **A union view carried an empty `epoch`** — both kernels. A union's positions are synthetic,
+  assigned per open over whatever sources were named, so a fresh epoch each time is the honest
+  answer: the epoch's contract is *"if this changed, your cursor means nothing"*, and a cursor
+  against a union means nothing on the next open anyway. An empty one was neither "same" nor a usable
+  "different".
+
+- **`plankton producer|uses|lineage --json` returned summaries, not records.** §12 says the record
+  queries answer `{records: [<envelope> …]}`; a consumer handed `{fotonId, kind, inputs, outputs}`
+  cannot verify a signature or re-derive the id, and has to come back for the record it was just told
+  about. Each element now carries its `envelope`; the summary fields stay alongside it.
+
+- **§15.6 contradicted §7 and §9.** It required a conforming implementation to *"refuse … ill-formed
+  reproduction claims lacking a level"*. §9 assigns that to a conforming **consumer**, and §7 forbids
+  the kernel from doing it — predicates are opaque, and refusing a `reproduces` claim for lacking a
+  level needs exactly the vocabulary knowledge §7 says a kernel MUST NOT require. The implementation
+  follows §7; the clause was wrong and now says whose duty it is.
+
+- **§11's "a verdict MUST carry its corpus" had no subject.** Nothing implements it, and nothing
+  should: a verdict belongs to a gate or a reviewer, not to a kernel that has no verdicts and treats
+  the predicate as opaque. Stated, so an implementer stops looking for it.
+
+- Annex **C** sat between **A** and **B**; reordered.
+
+Not a defect, checked and cleared: §15.2 names an exact foton id and action key that appear nowhere
+in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than stored, and
+`TestGoldenVectors` asserts both and passes.
+
+**Left open deliberately:** `nekton about --json` answers a bare array where §12 says
+`{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
+that array today. Filed rather than changed unilaterally.
 
 ### Fixed — the `envtally-CF2` proof can finally decide something
 

@@ -118,6 +118,11 @@ func (m *SeqMap) Assign(ids []string) bool {
 	return changed
 }
 
+// NewEpoch is exported because a SYNTHETIC numbering needs one too: a union view assigns positions
+// per open, over whatever sources were named, so its cursor is meaningful for exactly one read. A
+// fresh epoch each time says so, where an empty one said nothing.
+func NewEpoch() string { return newEpoch() }
+
 // newEpoch is a random label, not a counter or a timestamp: it only ever has to DIFFER from the one
 // before it, and a clock that goes backwards or a counter that restarts at 0 would both fail at that.
 func newEpoch() string {
