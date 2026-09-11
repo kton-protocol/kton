@@ -103,3 +103,27 @@ jobs:
             echo "== $m =="
             ( cd "$m" && go build ./... && go test ./... )
           done
+
+  # Fuzzing runs as its OWN job, on purpose. `go test` already executes the seed corpus in `verify`
+  # - the seeds are the shapes that have bitten us - but a seed corpus only replays what someone
+  # already thought of, and AUD-07 was a whole class of numbers nobody had. A short search each time
+  # is cheap and is the only part of this suite that can surprise us.
+  #
+  # Separate, because a find here is NOT a regression in the pull request's own code: it is an input
+  # the canonicalizer never handled. Reading it as "this PR broke something" would be wrong, and a
+  # red mark in the main gate would say exactly that.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: short fuzz over the canonicalization boundary
+        working-directory: reference
+        run: |
+          set -e
+          for target in FuzzCanonJSON FuzzNormalizeContentHash; do
+            echo "== $target"
+            go test ./core/ -run XXX -fuzz "$target" -fuzztime 30s
+          done
