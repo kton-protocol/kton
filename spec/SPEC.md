@@ -65,7 +65,7 @@ which sign a rendering rather than the record and are therefore projections (Cla
 Apache-2.0) <!-- scope:out reference-code -->.
 
 The **patent** Scope of this Working Group - what the Community Specification License commits - is
-defined by `../community-specification/02-scope.md`, not by this clause. The two are deliberately
+defined by `../Scope.md`, not by this clause. The two are deliberately
 kept in step and `scripts/check-scope-drift.sh` fails CI if they diverge, but they answer different
 questions: this clause says what *this document* specifies, that file says what the commitment
 covers.

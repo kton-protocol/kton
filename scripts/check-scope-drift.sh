@@ -2,11 +2,11 @@
 # The repository states its scope TWICE, on purpose and for different readers:
 #
 #   spec/SPEC.md §1                        what THIS DOCUMENT specifies (an ISO-style clause)
-#   community-specification/02-scope.md    what the PATENT COMMITMENT covers (Community Spec License)
+#   Scope.md    what the PATENT COMMITMENT covers (Community Spec License)
 #
 # They are not the same statement and should not be merged - but they must not disagree about which
 # topics are in and out. They already did once: SPEC §1 gained the signed-PDF exclusion and the
-# evidence-evaluation carve-out while 02-scope.md had neither, and it was found by reading rather
+# evidence-evaluation carve-out while Scope.md had neither, and it was found by reading rather
 # than by a check (#66, synced by hand in #67). One of these two files defines what is
 # patent-committed, so hand-syncing is not a strategy.
 #
@@ -16,7 +16,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 A=spec/SPEC.md
-B=community-specification/02-scope.md
+B=Scope.md
 
 keys() { grep -o "<!-- scope:$2 [a-z0-9-]* -->" "$1" | awk '{print $3}' | sort -u; }
 
