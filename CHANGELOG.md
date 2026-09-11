@@ -26,6 +26,28 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Added — properties, not just examples
+
+- **Fuzz targets over the canonicalization boundary**, and a CI job that actually searches (30 s per
+  target) rather than only replaying the seed corpus. The audit noted there were no `Fuzz`
+  entrypoints at all, and AUD-07 is why it matters: a whole class of numbers where
+  `canon(canon(x)) != canon(x)`, which no example-based test would have found because they all used
+  values someone had already thought of. Measured locally at **1.48 M executions, 406 new
+  interesting inputs, no failure**.
+
+  The job is separate from the main gate deliberately: a find is *not* a regression in the pull
+  request's own code, and a red mark in `verify` would say exactly that.
+
+- **Sync convergence as a property** (nekton). §12's cursor makes one promise — follow it and you
+  lose nothing — and the audit's closing note on AUD-04 was that a full rescan recovers what an
+  incremental follow cannot. The test drives the interleavings that broke it (a co-signature arriving
+  after the peer is past the claim; a chain whose seed arrives late) and asserts the **consumer's
+  final state**: a peer that only ever followed cursors must hold exactly what a peer reading from
+  zero holds. Verified against the pre-fix behaviour, where it reports
+
+  > the cursor-following peer holds 4 claims, the full-read peer 5 - following the cursor lost
+  > something a rescan would have found
+
 ### Changed — guards and housekeeping
 
 - **The architecture guard now enforces that the kernels open no socket** (#104). It checked
@@ -285,6 +307,28 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
+
+### Added — properties, not just examples
+
+- **Fuzz targets over the canonicalization boundary**, and a CI job that actually searches (30 s per
+  target) rather than only replaying the seed corpus. The audit noted there were no `Fuzz`
+  entrypoints at all, and AUD-07 is why it matters: a whole class of numbers where
+  `canon(canon(x)) != canon(x)`, which no example-based test would have found because they all used
+  values someone had already thought of. Measured locally at **1.48 M executions, 406 new
+  interesting inputs, no failure**.
+
+  The job is separate from the main gate deliberately: a find is *not* a regression in the pull
+  request's own code, and a red mark in `verify` would say exactly that.
+
+- **Sync convergence as a property** (nekton). §12's cursor makes one promise — follow it and you
+  lose nothing — and the audit's closing note on AUD-04 was that a full rescan recovers what an
+  incremental follow cannot. The test drives the interleavings that broke it (a co-signature arriving
+  after the peer is past the claim; a chain whose seed arrives late) and asserts the **consumer's
+  final state**: a peer that only ever followed cursors must hold exactly what a peer reading from
+  zero holds. Verified against the pre-fix behaviour, where it reports
+
+  > the cursor-following peer holds 4 claims, the full-read peer 5 - following the cursor lost
+  > something a rescan would have found
 
 ### Changed — guards and housekeeping
 
@@ -615,6 +659,28 @@ build reading a format it does not know refuses loudly instead of reporting an e
   `reproduces` claim records and which the exit code cannot distinguish.
 - **`kton fetch --allow-local`** (#81) — see Security.
 
+### Added — properties, not just examples
+
+- **Fuzz targets over the canonicalization boundary**, and a CI job that actually searches (30 s per
+  target) rather than only replaying the seed corpus. The audit noted there were no `Fuzz`
+  entrypoints at all, and AUD-07 is why it matters: a whole class of numbers where
+  `canon(canon(x)) != canon(x)`, which no example-based test would have found because they all used
+  values someone had already thought of. Measured locally at **1.48 M executions, 406 new
+  interesting inputs, no failure**.
+
+  The job is separate from the main gate deliberately: a find is *not* a regression in the pull
+  request's own code, and a red mark in `verify` would say exactly that.
+
+- **Sync convergence as a property** (nekton). §12's cursor makes one promise — follow it and you
+  lose nothing — and the audit's closing note on AUD-04 was that a full rescan recovers what an
+  incremental follow cannot. The test drives the interleavings that broke it (a co-signature arriving
+  after the peer is past the claim; a chain whose seed arrives late) and asserts the **consumer's
+  final state**: a peer that only ever followed cursors must hold exactly what a peer reading from
+  zero holds. Verified against the pre-fix behaviour, where it reports
+
+  > the cursor-following peer holds 4 claims, the full-read peer 5 - following the cursor lost
+  > something a rescan would have found
+
 ### Changed — guards and housekeeping
 
 - **The architecture guard now enforces that the kernels open no socket** (#104). It checked
@@ -924,6 +990,28 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Added — properties, not just examples
+
+- **Fuzz targets over the canonicalization boundary**, and a CI job that actually searches (30 s per
+  target) rather than only replaying the seed corpus. The audit noted there were no `Fuzz`
+  entrypoints at all, and AUD-07 is why it matters: a whole class of numbers where
+  `canon(canon(x)) != canon(x)`, which no example-based test would have found because they all used
+  values someone had already thought of. Measured locally at **1.48 M executions, 406 new
+  interesting inputs, no failure**.
+
+  The job is separate from the main gate deliberately: a find is *not* a regression in the pull
+  request's own code, and a red mark in `verify` would say exactly that.
+
+- **Sync convergence as a property** (nekton). §12's cursor makes one promise — follow it and you
+  lose nothing — and the audit's closing note on AUD-04 was that a full rescan recovers what an
+  incremental follow cannot. The test drives the interleavings that broke it (a co-signature arriving
+  after the peer is past the claim; a chain whose seed arrives late) and asserts the **consumer's
+  final state**: a peer that only ever followed cursors must hold exactly what a peer reading from
+  zero holds. Verified against the pre-fix behaviour, where it reports
+
+  > the cursor-following peer holds 4 claims, the full-read peer 5 - following the cursor lost
+  > something a rescan would have found
 
 ### Changed — guards and housekeeping
 
