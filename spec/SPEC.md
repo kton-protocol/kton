@@ -411,11 +411,21 @@ VerificationMaterial := { subject:   "sha256:<hex>",
                           material:  base64(<the scheme's own artifact>) }
 ```
 
-- **`subject` MUST be the record's content address** - a foton id or a claim id. Because a claim id is
-  `sha256(canon(Statement))` and the envelope's `payload` *is* those canonical bytes, a scheme that
-  signs bytes MUST sign the canonical Statement bytes. The binding is then **structural**: the digest
-  the external scheme committed to *is* the record's identity. It MUST NOT rest on a filename, on a
-  particular serialization of the envelope, or on co-location.
+- **`subject` MUST be the record's content address** - a foton id or a claim id - and a scheme that
+  signs bytes MUST sign the **canonical Statement bytes**, which are exactly the envelope's `payload`.
+  It MUST NOT rest on a filename, on a particular serialization of the envelope, or on co-location.
+
+  How tight the binding then is differs between the two layers, and an implementer should know which
+  one they have:
+
+  - For a **claim**, `claimId = sha256(canon(Statement))`, so the digest the external scheme committed
+    to *is* the record's identity. The binding is **structural** - nothing has to be recomputed to see
+    that the witness is about this record.
+  - For a **foton**, `fotonId = sha256(canon(Foton))` over the covered projection, which is **not** the
+    payload digest. A scheme signing the payload therefore commits to the Statement that *derives*
+    this foton id, one canonicalization away. That is still a binding a verifier can check with no
+    outside information, but it is a **derivation**, not an identity, and a consumer that compares
+    digests without performing it will find they differ.
 - **The kernel MUST NOT interpret or verify `material`.** This is the §8 posture exactly: stored is not
   verified. A kernel carries verification material as opaque bytes; evaluating it - and deciding which
   issuers, trust lists or identities count - is a consumer concern, like trust policy.

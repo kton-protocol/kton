@@ -1273,11 +1273,30 @@ func (r *Registry) PeerCursor(url string) int { return r.peers[url] }
 // SetPeerCursor records and persists the last remote seq pulled from a peer.
 func (r *Registry) SetPeerCursor(url string, seq int) error {
 	r.peers[url] = seq
-	b, err := json.MarshalIndent(r.peers, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(r.peersPath, b, 0o644)
+	// peers.json is ONE file every mirror mutates, so two concurrent mirrors would otherwise lose one
+	// another's cursor - and a lost cursor is a silently re-fetched or silently SKIPPED range. Merged
+	// by MAXIMUM under the lock, never clobbered: a cursor only ever moves forward, so the later
+	// writer's view of a peer it did not talk to must not roll that peer back. plankton got this in
+	// #77; nekton kept the plain read-modify-write until now.
+	return r.withWriteLock(func() error {
+		on := map[string]int{}
+		if b, err := os.ReadFile(r.peersPath); err == nil {
+			_ = json.Unmarshal(b, &on)
+		}
+		for k, v := range r.peers {
+			if v > on[k] {
+				on[k] = v
+			}
+		}
+		for k, v := range on {
+			r.peers[k] = v
+		}
+		b, err := json.MarshalIndent(on, "", "  ")
+		if err != nil {
+			return err
+		}
+		return atomicWrite(r.peersPath, b)
+	})
 }
 
 // materialPath is where evidence about a subnekton's claims lives: one JSONL file BESIDE the
@@ -1325,6 +1344,14 @@ func readMaterialFile(path string) []VerificationMaterial {
 			continue
 		}
 		out = append(out, vm)
+	}
+	// A scanner stops on the FIRST error and reports it only here. Without this check, one line
+	// longer than the buffer ends the loop silently and every attachment AFTER it disappears with no
+	// warning - the file reads as if it simply ended. §8.1 says material must never affect a
+	// record's validity, and it does not; but losing evidence quietly is exactly the failure this
+	// substrate exists to prevent, so say it.
+	if err := sc.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: verification material in %s is INCOMPLETE - stopped reading at %v\n", path, err)
 	}
 	return out
 }

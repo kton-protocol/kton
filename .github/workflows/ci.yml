@@ -29,6 +29,16 @@ jobs:
             ( cd "$m" && go build ./... && go test ./... && go vet ./... )
           done
 
+      - name: gofmt (nothing unformatted)
+        run: |
+          set -e
+          unformatted="$(gofmt -l reference nekton/reference kton/reference)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would change these files:"; echo "$unformatted"
+            exit 1
+          fi
+          echo "ok: every Go file is gofmt-clean"
+
       - name: architecture guard (documents-never-executes, one-way deps, WASM-clean kernels)
         run: bash scripts/check-import-direction.sh
 

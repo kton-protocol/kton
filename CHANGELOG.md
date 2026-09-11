@@ -26,6 +26,40 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Changed — guards and housekeeping
+
+- **The architecture guard now enforces that the kernels open no socket** (#104). It checked
+  `net/http` only, so a kernel could have grown a network dependency through bare `net` (which dials
+  one directly) or `crypto/tls` (which wraps one) with the guard green. It now covers both, plus
+  `net/url`. The cockpit *may* reach an address — that is what it is for — but the files that do are
+  named in the guard, so growing that surface is a deliberate act visible in a diff. Verified to fail
+  in both directions.
+- **CI checks `gofmt`.** Nothing did; two files sat unformatted on `dev` for weeks.
+- **A truncated verification-material file is reported, not swallowed.** `bufio.Scanner` stops at the
+  first error and reports it only through `Err()`, which neither reader checked — one line longer
+  than the 16 MiB buffer ended the loop silently and every attachment *after* it disappeared, the
+  file reading as though it had simply ended. §8.1 keeps material from affecting a record's validity,
+  and it still does; what was wrong was losing evidence without a word. Both readers now say the file
+  is incomplete, and still return what they could read.
+- **nekton's `SetPeerCursor` takes the lock plankton got in #77.** `peers.json` is one file every
+  mirror mutates, so two concurrent mirrors lost one another's cursor — and a lost cursor is a
+  silently re-fetched or silently *skipped* range. Merged by maximum under the lock and written
+  atomically, so a cursor only ever moves forward.
+
+### Fixed — documentation honesty
+
+- **§8.1 no longer overstates the binding for foton ids.** It justified a *structural* binding using
+  the claim case alone — `claimId = sha256(canon(Statement))`, which is exactly the payload digest.
+  For a foton that is not true: `fotonId = sha256(canon(Foton))` over the covered projection, so a
+  scheme signing the payload commits to the Statement that *derives* the id, one canonicalization
+  away. Measured: the two digests differ. Still checkable with no outside information, but a
+  derivation rather than an identity — and a consumer comparing digests without performing it finds
+  they do not match. My overclaim, corrected.
+- **`security/REPORT.md` no longer presents 70 dead permalinks as evidence.** They pointed at the
+  archived predecessor repository, whose history did not carry over, so none of them resolves — while
+  a footer claimed they "resolve for repo members". The hashes are kept as plain text, so the trail
+  survives for anyone holding the archive and nothing claims to be checkable that is not.
+
 ### Fixed — the cursor contract (external audit, AUD-04)
 
 - **A change to a record that a peer is already past now reaches it, and the feed no longer hides
@@ -251,6 +285,40 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
+
+### Changed — guards and housekeeping
+
+- **The architecture guard now enforces that the kernels open no socket** (#104). It checked
+  `net/http` only, so a kernel could have grown a network dependency through bare `net` (which dials
+  one directly) or `crypto/tls` (which wraps one) with the guard green. It now covers both, plus
+  `net/url`. The cockpit *may* reach an address — that is what it is for — but the files that do are
+  named in the guard, so growing that surface is a deliberate act visible in a diff. Verified to fail
+  in both directions.
+- **CI checks `gofmt`.** Nothing did; two files sat unformatted on `dev` for weeks.
+- **A truncated verification-material file is reported, not swallowed.** `bufio.Scanner` stops at the
+  first error and reports it only through `Err()`, which neither reader checked — one line longer
+  than the 16 MiB buffer ended the loop silently and every attachment *after* it disappeared, the
+  file reading as though it had simply ended. §8.1 keeps material from affecting a record's validity,
+  and it still does; what was wrong was losing evidence without a word. Both readers now say the file
+  is incomplete, and still return what they could read.
+- **nekton's `SetPeerCursor` takes the lock plankton got in #77.** `peers.json` is one file every
+  mirror mutates, so two concurrent mirrors lost one another's cursor — and a lost cursor is a
+  silently re-fetched or silently *skipped* range. Merged by maximum under the lock and written
+  atomically, so a cursor only ever moves forward.
+
+### Fixed — documentation honesty
+
+- **§8.1 no longer overstates the binding for foton ids.** It justified a *structural* binding using
+  the claim case alone — `claimId = sha256(canon(Statement))`, which is exactly the payload digest.
+  For a foton that is not true: `fotonId = sha256(canon(Foton))` over the covered projection, so a
+  scheme signing the payload commits to the Statement that *derives* the id, one canonicalization
+  away. Measured: the two digests differ. Still checkable with no outside information, but a
+  derivation rather than an identity — and a consumer comparing digests without performing it finds
+  they do not match. My overclaim, corrected.
+- **`security/REPORT.md` no longer presents 70 dead permalinks as evidence.** They pointed at the
+  archived predecessor repository, whose history did not carry over, so none of them resolves — while
+  a footer claimed they "resolve for repo members". The hashes are kept as plain text, so the trail
+  survives for anyone holding the archive and nothing claims to be checkable that is not.
 
 ### Fixed — the cursor contract (external audit, AUD-04)
 
@@ -547,6 +615,40 @@ build reading a format it does not know refuses loudly instead of reporting an e
   `reproduces` claim records and which the exit code cannot distinguish.
 - **`kton fetch --allow-local`** (#81) — see Security.
 
+### Changed — guards and housekeeping
+
+- **The architecture guard now enforces that the kernels open no socket** (#104). It checked
+  `net/http` only, so a kernel could have grown a network dependency through bare `net` (which dials
+  one directly) or `crypto/tls` (which wraps one) with the guard green. It now covers both, plus
+  `net/url`. The cockpit *may* reach an address — that is what it is for — but the files that do are
+  named in the guard, so growing that surface is a deliberate act visible in a diff. Verified to fail
+  in both directions.
+- **CI checks `gofmt`.** Nothing did; two files sat unformatted on `dev` for weeks.
+- **A truncated verification-material file is reported, not swallowed.** `bufio.Scanner` stops at the
+  first error and reports it only through `Err()`, which neither reader checked — one line longer
+  than the 16 MiB buffer ended the loop silently and every attachment *after* it disappeared, the
+  file reading as though it had simply ended. §8.1 keeps material from affecting a record's validity,
+  and it still does; what was wrong was losing evidence without a word. Both readers now say the file
+  is incomplete, and still return what they could read.
+- **nekton's `SetPeerCursor` takes the lock plankton got in #77.** `peers.json` is one file every
+  mirror mutates, so two concurrent mirrors lost one another's cursor — and a lost cursor is a
+  silently re-fetched or silently *skipped* range. Merged by maximum under the lock and written
+  atomically, so a cursor only ever moves forward.
+
+### Fixed — documentation honesty
+
+- **§8.1 no longer overstates the binding for foton ids.** It justified a *structural* binding using
+  the claim case alone — `claimId = sha256(canon(Statement))`, which is exactly the payload digest.
+  For a foton that is not true: `fotonId = sha256(canon(Foton))` over the covered projection, so a
+  scheme signing the payload commits to the Statement that *derives* the id, one canonicalization
+  away. Measured: the two digests differ. Still checkable with no outside information, but a
+  derivation rather than an identity — and a consumer comparing digests without performing it finds
+  they do not match. My overclaim, corrected.
+- **`security/REPORT.md` no longer presents 70 dead permalinks as evidence.** They pointed at the
+  archived predecessor repository, whose history did not carry over, so none of them resolves — while
+  a footer claimed they "resolve for repo members". The hashes are kept as plain text, so the trail
+  survives for anyone holding the archive and nothing claims to be checkable that is not.
+
 ### Fixed — the cursor contract (external audit, AUD-04)
 
 - **A change to a record that a peer is already past now reaches it, and the feed no longer hides
@@ -822,6 +924,40 @@ build reading a format it does not know refuses loudly instead of reporting an e
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Changed — guards and housekeeping
+
+- **The architecture guard now enforces that the kernels open no socket** (#104). It checked
+  `net/http` only, so a kernel could have grown a network dependency through bare `net` (which dials
+  one directly) or `crypto/tls` (which wraps one) with the guard green. It now covers both, plus
+  `net/url`. The cockpit *may* reach an address — that is what it is for — but the files that do are
+  named in the guard, so growing that surface is a deliberate act visible in a diff. Verified to fail
+  in both directions.
+- **CI checks `gofmt`.** Nothing did; two files sat unformatted on `dev` for weeks.
+- **A truncated verification-material file is reported, not swallowed.** `bufio.Scanner` stops at the
+  first error and reports it only through `Err()`, which neither reader checked — one line longer
+  than the 16 MiB buffer ended the loop silently and every attachment *after* it disappeared, the
+  file reading as though it had simply ended. §8.1 keeps material from affecting a record's validity,
+  and it still does; what was wrong was losing evidence without a word. Both readers now say the file
+  is incomplete, and still return what they could read.
+- **nekton's `SetPeerCursor` takes the lock plankton got in #77.** `peers.json` is one file every
+  mirror mutates, so two concurrent mirrors lost one another's cursor — and a lost cursor is a
+  silently re-fetched or silently *skipped* range. Merged by maximum under the lock and written
+  atomically, so a cursor only ever moves forward.
+
+### Fixed — documentation honesty
+
+- **§8.1 no longer overstates the binding for foton ids.** It justified a *structural* binding using
+  the claim case alone — `claimId = sha256(canon(Statement))`, which is exactly the payload digest.
+  For a foton that is not true: `fotonId = sha256(canon(Foton))` over the covered projection, so a
+  scheme signing the payload commits to the Statement that *derives* the id, one canonicalization
+  away. Measured: the two digests differ. Still checkable with no outside information, but a
+  derivation rather than an identity — and a consumer comparing digests without performing it finds
+  they do not match. My overclaim, corrected.
+- **`security/REPORT.md` no longer presents 70 dead permalinks as evidence.** They pointed at the
+  archived predecessor repository, whose history did not carry over, so none of them resolves — while
+  a footer claimed they "resolve for repo members". The hashes are kept as plain text, so the trail
+  survives for anyone holding the archive and nothing claims to be checkable that is not.
 
 ### Fixed — the cursor contract (external audit, AUD-04)
 
