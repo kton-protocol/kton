@@ -529,6 +529,12 @@ A registry is a self-hosted scope of records. There is no central registry.
      decided over) inside its signed payload. A verdict without its corpus is a configuration, not a
      statement.
 
+     *This obligation is on whoever ISSUES a verdict - a gate, a release process, a reviewer - not on
+     the kernel, which has no verdicts of its own and treats such a claim's predicate as opaque (§7).
+     A kernel carries and indexes it; it neither adds the corpus nor checks for it. Stated because
+     the clause previously said only "MUST" and an implementer could reasonably have read it as a
+     kernel duty and found nothing to implement.*
+
   A conforming reader MUST NOT generalize either closed-world rule (e.g. "a dangling link is rejected")
   to the open substrate; outside a sealed scope or a gate, an unresolved reference is *incomplete*, not
   invalid.
@@ -669,7 +675,14 @@ A conforming implementation MUST:
 4. index and resolve records per Clauses 11–12, including the completeness/validity distinction (11);
 5. enforce the scope/seed/chain grammar (7.4) and reject unsigned claims (7.2) and forged `genesis`
    (7.4);
-6. refuse partial spectrum fulfilment (10) and ill-formed reproduction claims lacking a level (9);
+6. refuse partial spectrum fulfilment (10);
+
+   *A conforming KERNEL does not refuse an ill-formed reproduction claim. §9 assigns that to a
+   conforming **consumer**, and §7 forbids the kernel from doing it: predicates are opaque
+   identifiers, and a kernel that rejected a `reproduces` claim for lacking a level would have to
+   know what `reproduces` means - which is exactly the vocabulary knowledge §7 says it MUST NOT
+   require. The kernel's duty is to carry and index the claim faithfully; the duty to refuse it is
+   the reader's. This item used to name the kernel and contradicted both clauses.*
 7. if it carries verification material (8.1) - which is OPTIONAL to produce and OPTIONAL to carry -
    not reject an unrecognised `scheme`, not treat its absence or invalidity as affecting a record's
    validity or resolvability, and not report a record as verified on the strength of material it did
@@ -706,6 +719,12 @@ used by *examples* (not the protocol) - EDAM/SWO/STATO/OBI, Cell Ontology, HGNC,
 for evidence - are application vocabulary, not normative kton terms. The full reuse ↔ native mapping and
 the reserved `gxp:*` set are in [`vocabulary.md`](vocabulary.md).
 
+## Annex B *(informative)* - scenario → clause map
+
+1 Canonicalization → 5. 2 Tamper → 5.6, 8. 3 Long-term → 13. 4 Identity → 8. 5 Cross-repo chain → 7.4,
+11. 6 Normalization level → 9. 7 Spectrum fulfilment → 10. 8 Aggregator independence → 12. 9 Missing
+links → 11. 10 Publication round-trip → 14.
+
 ## Annex C *(informative)* - an HTTP binding for Clause 12
 
 One realization of the §12 queries, and the one the reference client speaks. Nothing here is
@@ -736,9 +755,3 @@ It does answer §12 over a different binding: `plankton records --json --since N
 `nekton records --json --since N` return exactly the `sync(since)` document above on stdout. A server
 over HTTP is then a shell around that, which is what "the transport is not specified" means in
 practice.
-
-## Annex B *(informative)* - scenario → clause map
-
-1 Canonicalization → 5. 2 Tamper → 5.6, 8. 3 Long-term → 13. 4 Identity → 8. 5 Cross-repo chain → 7.4,
-11. 6 Normalization level → 9. 7 Spectrum fulfilment → 10. 8 Aggregator independence → 12. 9 Missing
-links → 11. 10 Publication round-trip → 14.

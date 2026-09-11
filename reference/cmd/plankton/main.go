@@ -770,6 +770,22 @@ func run(cmd string, args []string) error {
 		if q == "" {
 			return fmt.Errorf("usage: plankton %s [--source D ...] [--sources-file F] [--strict] [--json] <sha256:...>", cmd)
 		}
+		// SPEC §12: "An unrecognised or absent query parameter MUST be an error, never an empty
+		// result: an empty answer to a malformed question is a successful wrong answer."
+		//
+		// `plankton producer not-a-hash` used to print "(none) - not-a-hash is a lineage root or
+		// unknown in this registry" and exit 0. A script asking who produced a result, with a typo in
+		// the hash, was told nobody had - and carried on. The registry cannot hold a record under a
+		// key that is not a content address, so the answer is not "none", it is "that is not a
+		// question about content".
+		norm, ok := core.NormalizeContentHash(q)
+		if !ok {
+			return fmt.Errorf("%q is not a sha256 content hash, so this is not a question this "+
+				"registry can answer.\n  An empty answer to a malformed question would be a "+
+				"successful wrong answer (SPEC §12).\n  Expected sha256:<64 hex> - `plankton hash "+
+				"<file>` prints one.", q)
+		}
+		q = norm
 		var r *registry.Registry
 		var err error
 		if len(sources) > 0 {
@@ -798,12 +814,6 @@ func run(cmd string, args []string) error {
 				return fmt.Errorf("--strict: refusing to answer - %d record(s) lack a well-formed signature (use `plankton verify` to check authenticity)", n)
 			}
 		}
-		// Normalize the query hash to canonical lowercase (SPEC §5.1): a bare 64-hex or an uppercase
-		// digest resolves under the same key the index was built with (FileRef hashes are stored
-		// "sha256:<lowerhex>"). Without this, `plankton uses <barehex>` misses and misreads as a root.
-		if norm, ok := core.NormalizeContentHash(q); ok {
-			q = norm
-		}
 		var ids []string
 		switch cmd {
 		case "producer":
@@ -818,13 +828,22 @@ func run(cmd string, args []string) error {
 		// that holds today, is guaranteed nowhere, and no test protects it (#57). Here the id is a
 		// named field, so a reordered output line cannot silently mislabel a record.
 		if asJSON {
+			// Each record carries its ENVELOPE, not only a summary. SPEC §12 says the record queries
+			// answer `{ "records": [ <envelope> ... ] }`, and the reason is not tidiness: a consumer
+			// handed `{fotonId, kind, inputs, outputs}` cannot verify a signature, cannot re-derive the
+			// id, and has to come back for the record it was just told about. The summary fields stay
+			// alongside it - they are useful and removing them would break readers for nothing.
 			recs := make([]map[string]any, 0, len(ids))
 			for _, id := range ids {
 				f, _ := r.Foton(id)
-				recs = append(recs, map[string]any{
+				rec := map[string]any{
 					"fotonId": id, "kind": f.Protocol.Kind,
 					"inputs": len(f.Inputs), "outputs": len(f.Outputs),
-				})
+				}
+				if env, ok := r.Envelope(id); ok {
+					rec["envelope"] = env
+				}
+				recs = append(recs, rec)
 			}
 			out := map[string]any{"relation": cmd, "query": q, "records": recs}
 			if len(sources) > 0 {

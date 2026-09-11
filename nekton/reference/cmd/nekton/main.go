@@ -197,6 +197,20 @@ func takeJSON(args []string) ([]string, bool) {
 	return rest, asJSON
 }
 
+// validSubjectArg accepts what SPEC §7.3 calls a subject - a content address or a URI - and refuses
+// anything else, so a malformed question is an error rather than an empty answer (SPEC §12).
+func validSubjectArg(s string) (string, error) {
+	if n, ok := core.NormalizeContentHash(s); ok {
+		return n, nil
+	}
+	if i := strings.Index(s, ":"); i > 0 && !strings.HasPrefix(s, "sha") {
+		return s, nil // a URI: it has a scheme, and the kernel treats the rest as opaque
+	}
+	return "", fmt.Errorf("%q is neither a sha256 content address nor a URI, so it is not a subject "+
+		"this registry can be asked about.\n  An empty answer to a malformed question would be a "+
+		"successful wrong answer (SPEC §12).", s)
+}
+
 func run(cmd string, args []string) error {
 	switch cmd { // help/version in COMMAND position (not just as a flag) should not be "unknown command"
 	case "--help", "-h", "help":
@@ -437,14 +451,24 @@ func run(cmd string, args []string) error {
 		if len(args) != 1 {
 			return fmt.Errorf("usage: nekton about <subject> [--json]  (hash \"sha256:...\" or uri)")
 		}
+		// SPEC §12: "An unrecognised or absent query parameter MUST be an error, never an empty
+		// result: an empty answer to a malformed question is a successful wrong answer."
+		//
+		// `nekton about not-a-hash` used to print "(none)" and exit 0. A subject is a content address
+		// or a URI; a bare word is neither, so the honest answer is not "nothing is said about it" but
+		// "that is not a subject".
+		subj, err := validSubjectArg(args[0])
+		if err != nil {
+			return err
+		}
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
 		}
 		if asJSON {
-			return printClaimsJSON(r.About(args[0]))
+			return printClaimsJSON(r.About(subj))
 		}
-		printClaims(r.About(args[0]))
+		printClaims(r.About(subj))
 		return nil
 
 	case "by":
@@ -457,6 +481,15 @@ func run(cmd string, args []string) error {
 			return err
 		}
 		var recs []registry.Record
+		if args[0] == "signer" {
+			// A keyid is 16 hex characters, or a public key that derives one. Anything else is a
+			// malformed question (SPEC §12), not a signer who has said nothing.
+			if k := keyidFromArg(args[1]); len(k) != 16 || strings.Trim(strings.ToLower(k), "0123456789abcdef") != "" {
+				return fmt.Errorf("%q is not a signer keyid (16 hex characters), a .pub file, or a public key "+
+					"hex.\n  An empty answer to a malformed question would be a successful wrong answer "+
+					"(SPEC §12).\n  `nekton keyid <key.pub>` prints one.", args[1])
+			}
+		}
 		switch args[0] {
 		case "signer":
 			recs = r.BySigner(keyidFromArg(args[1]))
