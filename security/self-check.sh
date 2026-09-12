@@ -53,7 +53,10 @@ printf '%-26s %-14s %-14s %s\n' "attack" "dead binary" "quiet binary" "meaning"
 printf '%-26s %-14s %-14s %s\n' "------" "-----------" "------------" "-------"
 for f in "$HERE"/attacks/*.sh; do
   a=$(basename "$f" .sh); case "$a" in _*) continue ;; esac
-  grep -q 'VERDICT' "$f" || continue   # prose-only reproductions have nothing to self-check
+  # A PoC that EMITS a verdict. Prose that merely mentions the word is not one - normalizer-forge
+  # is a demonstration whose comment explains why it has no verdict to give, and a loose match made
+  # this guard try to self-check it.
+  grep -qE '(echo|printf)[^|#]*VERDICT: ' "$f" || continue
   d=$(verdict dead "$f"); q=$(verdict quiet "$f")
   if [ "${d:-}" = PREVENTED ] || [ "${q:-}" = PREVENTED ]; then
     note="CANNOT FAIL - passes against a binary that does nothing"; fail=1

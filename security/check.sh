@@ -18,7 +18,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; KX="${1:-}"
 
-GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated silent-source-drop export-attribution canon-bigint rdf-injection spectrum-existence concurrency-races scope-path-traversal read-path-ungated union-across-payloads cursor-shift"
+GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated silent-source-drop export-attribution canon-bigint rdf-injection spectrum-existence concurrency-races scope-path-traversal read-path-ungated union-across-payloads cursor-shift fourEyes-graphpoll"
 # envtally-CF2 is here, not in GATED, and deliberately: its path to the shipped release gate was
 # wrong, so it never ran; with that fixed the gate runs but ticks NONE of its seven conditions in
 # this scenario, which makes "env-qualified stayed unticked" meaningless. It now says INCONCLUSIVE
@@ -74,15 +74,33 @@ for a in $SKIPPED; do
   printf '%-26s %-12s %s\n' "$a" "SKIPPED" "needs a kton-examples checkout (pass it as \$1)"
 done
 
+# An EXECUTABLE PoC in neither list is invisible: check.sh never runs it, so self-check.sh never sees
+# it either and the can-this-fail guard does not cover it. fourEyes-graphpoll sat there - 44 lines of
+# scenario, a grep that could not match, no VERDICT line at all, and nobody the wiser.
+unlisted=""
+for f in "$HERE"/attacks/*.sh; do
+  a=$(basename "$f" .sh); case "$a" in _*) continue ;; esac
+  grep -qE '(echo|printf)[^|#]*VERDICT: ' "$f" || continue   # a PoC that EMITS one; prose mentioning the word is not one
+  case " $GATED $OPEN $SKIPPED " in *" $a "*) continue ;; esac
+  unlisted="$unlisted $a"
+done
+if [ -n "$unlisted" ]; then
+  echo
+  echo "::error::these PoCs print a VERDICT but are in neither GATED nor OPEN, so nothing runs them"
+  echo "::error::and security/self-check.sh cannot see them either:$unlisted"
+  fail=1
+fi
+
 # Coverage: how much of the recorded engagement this gate actually executes.
 total=$(ls "$HERE"/attacks/*.sh 2>/dev/null | grep -vc '/_' || echo 0)
-exec_n=$(grep -l 'VERDICT' "$HERE"/attacks/*.sh 2>/dev/null | grep -vc '/_' || echo 0)
+exec_n=$(grep -lE '(echo|printf)[^|#]*VERDICT: ' "$HERE"/attacks/*.sh 2>/dev/null | grep -vc '/_' || echo 0)
 run_n=$(( $(printf '%s\n' $GATED | grep -c .) + $(printf '%s\n' $OPEN | grep -c .) ))
 
 echo
 echo "coverage: $run_n of $total recorded attacks run here; $exec_n have an executable VERDICT."
-echo "          the remainder are documented in REPORT.md or run in the kton-examples CI - a"
-echo "          green gate below means those $run_n held, not that the suite is complete."
+echo "          the remainder carry no verdict and are records of a finding, reproduced in prose"
+echo "          in REPORT.md - they do NOT run anywhere else. A green gate means those $run_n"
+echo "          held, not that the suite is complete."
 echo
 # The gate is only worth its green line if its proofs can fail. self-check.sh runs every PoC against
 # binaries that do nothing; any that still says PREVENTED is not evidence.

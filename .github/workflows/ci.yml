@@ -68,7 +68,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: 'stable'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: toolchain for the example-12 gate attacks (release.py runs SPARQL over rdflib)
+        # Without this the gate could not RUN the two PoCs that exercise the shipped release gate, and
+        # they correctly reported INCONCLUSIVE - a job that cannot run what it gates is not a gate.
+        run: python -m pip install --quiet rdflib
       - name: build binaries
         run: |
           set -e; mkdir -p "$RUNNER_TEMP/bin"
