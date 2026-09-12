@@ -89,7 +89,10 @@ scenario() {
       "$FIT" "$HEAD" "$(keyid16 cro-org)" "$(keyid16 sponsor-org)" > verdict.txt 2>err.txt
 
     grep -E '^\s*\[[ x]\].*PRINCIPALS' verdict.txt | sed 's/^/    /'
-    if ! grep -qE '\[[ x]\]' verdict.txt; then echo "NORUN"
+    if ! grep -qE '\[[ x]\]' verdict.txt; then
+      # Say WHY, or the next person debugging a red gate has to reproduce it to find out.
+      sed 's/^/    release.py: /' err.txt | head -3
+      echo "NORUN"
     elif grep -q '\[x\].*PRINCIPALS' verdict.txt; then echo "TICKED"
     else echo "UNTICKED"; fi )
 }
