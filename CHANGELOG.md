@@ -26,6 +26,45 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Fixed — a gated proof that proved nothing, and a coverage claim that was not true
+
+Both reported by the examples workstream's red-team pass.
+
+- **`fourEyes-graphpoll` could not conclude anything, twice over.** Its closing
+  `grep -E 'two distinct PRINCIPALS'` could never match — `release.py` prints "two distinct
+  **authority-vouched** PRINCIPALS" — and `|| true` swallowed that, so it exited 0 having printed
+  nothing. Worse, it emitted **no `VERDICT:` line at all**, so `check.sh` could not have read a result
+  even with the grep repaired.
+
+  And the scenario left **all seven** conditions unticked, so "four-eyes stayed unticked" was true
+  with and without the attack — precisely the defect this suite found in `envtally-CF2` and downgraded
+  to INCONCLUSIVE for.
+
+  It now runs **four** scenarios over the shipped gate: two genuine vouched reviewers (must tick — and
+  does, which is what makes the rest evidence), one genuine reviewer plus the author reviewing its own
+  fit (must not), that plus the injected attribution edge (must not — **PREVENTED**), and the honest
+  case *with* the decoy, reported rather than required. That last one answered a question worth
+  asking: it stays ticked, so the injected claim cannot block a legitimate release either. `release.py`
+  ignores it because `Q_AUTHOR` counts only verified agents.
+
+- **An executable PoC in neither `GATED` nor `OPEN` was invisible**, which is how the above went
+  unnoticed: nothing ran it, so `self-check.sh` never saw it and the can-it-fail guard did not cover
+  it. `check.sh` now **fails** if a PoC that emits a verdict is in neither list. Sixteen scripts are
+  unlisted; thirteen are one-line prose notes and stay that way.
+
+- **`security/README.md` claimed coverage that does not exist:** *"The example-12 gate attacks
+  (four-eyes, spectrum-launder, normalizer-forge) run against the full capstone in the kton-examples
+  CI."* They do not — that workflow builds binaries, runs the examples and checks permalinks, and has
+  no such step. The same false framing was in `check.sh`'s own coverage line. Both corrected, with
+  each of the three named and its actual status given.
+
+- **`normalizer-forge` took the binary path as `$1`** where every other PoC takes a kton-examples
+  checkout, which is what made the first attempt to run it look like a failure. It now uses `plankton`
+  from PATH like the rest, and reads the store through `_records.sh` instead of globbing
+  `objects/sha256/*.json` — the very trap that helper exists to close. It stays verdict-less on
+  purpose: it demonstrates *specified* behaviour, and the property it points at is tested by example
+  12's Act 8a.
+
 ### Fixed — specification vs. implementation audit
 
 A clause-by-clause sweep of `spec/SPEC.md` against both kernels. §5 (canonicalization), §6 (foton
@@ -378,6 +417,45 @@ that array today. Filed rather than changed unilaterally.
 
 - Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
   this is a storage layout revision, not a protocol change.
+
+### Fixed — a gated proof that proved nothing, and a coverage claim that was not true
+
+Both reported by the examples workstream's red-team pass.
+
+- **`fourEyes-graphpoll` could not conclude anything, twice over.** Its closing
+  `grep -E 'two distinct PRINCIPALS'` could never match — `release.py` prints "two distinct
+  **authority-vouched** PRINCIPALS" — and `|| true` swallowed that, so it exited 0 having printed
+  nothing. Worse, it emitted **no `VERDICT:` line at all**, so `check.sh` could not have read a result
+  even with the grep repaired.
+
+  And the scenario left **all seven** conditions unticked, so "four-eyes stayed unticked" was true
+  with and without the attack — precisely the defect this suite found in `envtally-CF2` and downgraded
+  to INCONCLUSIVE for.
+
+  It now runs **four** scenarios over the shipped gate: two genuine vouched reviewers (must tick — and
+  does, which is what makes the rest evidence), one genuine reviewer plus the author reviewing its own
+  fit (must not), that plus the injected attribution edge (must not — **PREVENTED**), and the honest
+  case *with* the decoy, reported rather than required. That last one answered a question worth
+  asking: it stays ticked, so the injected claim cannot block a legitimate release either. `release.py`
+  ignores it because `Q_AUTHOR` counts only verified agents.
+
+- **An executable PoC in neither `GATED` nor `OPEN` was invisible**, which is how the above went
+  unnoticed: nothing ran it, so `self-check.sh` never saw it and the can-it-fail guard did not cover
+  it. `check.sh` now **fails** if a PoC that emits a verdict is in neither list. Sixteen scripts are
+  unlisted; thirteen are one-line prose notes and stay that way.
+
+- **`security/README.md` claimed coverage that does not exist:** *"The example-12 gate attacks
+  (four-eyes, spectrum-launder, normalizer-forge) run against the full capstone in the kton-examples
+  CI."* They do not — that workflow builds binaries, runs the examples and checks permalinks, and has
+  no such step. The same false framing was in `check.sh`'s own coverage line. Both corrected, with
+  each of the three named and its actual status given.
+
+- **`normalizer-forge` took the binary path as `$1`** where every other PoC takes a kton-examples
+  checkout, which is what made the first attempt to run it look like a failure. It now uses `plankton`
+  from PATH like the rest, and reads the store through `_records.sh` instead of globbing
+  `objects/sha256/*.json` — the very trap that helper exists to close. It stays verdict-less on
+  purpose: it demonstrates *specified* behaviour, and the property it points at is tested by example
+  12's Act 8a.
 
 ### Fixed — specification vs. implementation audit
 
@@ -801,6 +879,45 @@ that array today. Filed rather than changed unilaterally.
   `reproduces` claim records and which the exit code cannot distinguish.
 - **`kton fetch --allow-local`** (#81) — see Security.
 
+### Fixed — a gated proof that proved nothing, and a coverage claim that was not true
+
+Both reported by the examples workstream's red-team pass.
+
+- **`fourEyes-graphpoll` could not conclude anything, twice over.** Its closing
+  `grep -E 'two distinct PRINCIPALS'` could never match — `release.py` prints "two distinct
+  **authority-vouched** PRINCIPALS" — and `|| true` swallowed that, so it exited 0 having printed
+  nothing. Worse, it emitted **no `VERDICT:` line at all**, so `check.sh` could not have read a result
+  even with the grep repaired.
+
+  And the scenario left **all seven** conditions unticked, so "four-eyes stayed unticked" was true
+  with and without the attack — precisely the defect this suite found in `envtally-CF2` and downgraded
+  to INCONCLUSIVE for.
+
+  It now runs **four** scenarios over the shipped gate: two genuine vouched reviewers (must tick — and
+  does, which is what makes the rest evidence), one genuine reviewer plus the author reviewing its own
+  fit (must not), that plus the injected attribution edge (must not — **PREVENTED**), and the honest
+  case *with* the decoy, reported rather than required. That last one answered a question worth
+  asking: it stays ticked, so the injected claim cannot block a legitimate release either. `release.py`
+  ignores it because `Q_AUTHOR` counts only verified agents.
+
+- **An executable PoC in neither `GATED` nor `OPEN` was invisible**, which is how the above went
+  unnoticed: nothing ran it, so `self-check.sh` never saw it and the can-it-fail guard did not cover
+  it. `check.sh` now **fails** if a PoC that emits a verdict is in neither list. Sixteen scripts are
+  unlisted; thirteen are one-line prose notes and stay that way.
+
+- **`security/README.md` claimed coverage that does not exist:** *"The example-12 gate attacks
+  (four-eyes, spectrum-launder, normalizer-forge) run against the full capstone in the kton-examples
+  CI."* They do not — that workflow builds binaries, runs the examples and checks permalinks, and has
+  no such step. The same false framing was in `check.sh`'s own coverage line. Both corrected, with
+  each of the three named and its actual status given.
+
+- **`normalizer-forge` took the binary path as `$1`** where every other PoC takes a kton-examples
+  checkout, which is what made the first attempt to run it look like a failure. It now uses `plankton`
+  from PATH like the rest, and reads the store through `_records.sh` instead of globbing
+  `objects/sha256/*.json` — the very trap that helper exists to close. It stays verdict-less on
+  purpose: it demonstrates *specified* behaviour, and the property it points at is tested by example
+  12's Act 8a.
+
 ### Fixed — specification vs. implementation audit
 
 A clause-by-clause sweep of `spec/SPEC.md` against both kernels. §5 (canonicalization), §6 (foton
@@ -1203,6 +1320,45 @@ that array today. Filed rather than changed unilaterally.
 - Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
   layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
   new layout while the property they test still held.
+
+### Fixed — a gated proof that proved nothing, and a coverage claim that was not true
+
+Both reported by the examples workstream's red-team pass.
+
+- **`fourEyes-graphpoll` could not conclude anything, twice over.** Its closing
+  `grep -E 'two distinct PRINCIPALS'` could never match — `release.py` prints "two distinct
+  **authority-vouched** PRINCIPALS" — and `|| true` swallowed that, so it exited 0 having printed
+  nothing. Worse, it emitted **no `VERDICT:` line at all**, so `check.sh` could not have read a result
+  even with the grep repaired.
+
+  And the scenario left **all seven** conditions unticked, so "four-eyes stayed unticked" was true
+  with and without the attack — precisely the defect this suite found in `envtally-CF2` and downgraded
+  to INCONCLUSIVE for.
+
+  It now runs **four** scenarios over the shipped gate: two genuine vouched reviewers (must tick — and
+  does, which is what makes the rest evidence), one genuine reviewer plus the author reviewing its own
+  fit (must not), that plus the injected attribution edge (must not — **PREVENTED**), and the honest
+  case *with* the decoy, reported rather than required. That last one answered a question worth
+  asking: it stays ticked, so the injected claim cannot block a legitimate release either. `release.py`
+  ignores it because `Q_AUTHOR` counts only verified agents.
+
+- **An executable PoC in neither `GATED` nor `OPEN` was invisible**, which is how the above went
+  unnoticed: nothing ran it, so `self-check.sh` never saw it and the can-it-fail guard did not cover
+  it. `check.sh` now **fails** if a PoC that emits a verdict is in neither list. Sixteen scripts are
+  unlisted; thirteen are one-line prose notes and stay that way.
+
+- **`security/README.md` claimed coverage that does not exist:** *"The example-12 gate attacks
+  (four-eyes, spectrum-launder, normalizer-forge) run against the full capstone in the kton-examples
+  CI."* They do not — that workflow builds binaries, runs the examples and checks permalinks, and has
+  no such step. The same false framing was in `check.sh`'s own coverage line. Both corrected, with
+  each of the three named and its actual status given.
+
+- **`normalizer-forge` took the binary path as `$1`** where every other PoC takes a kton-examples
+  checkout, which is what made the first attempt to run it look like a failure. It now uses `plankton`
+  from PATH like the rest, and reads the store through `_records.sh` instead of globbing
+  `objects/sha256/*.json` — the very trap that helper exists to close. It stays verdict-less on
+  purpose: it demonstrates *specified* behaviour, and the property it points at is tested by example
+  12's Act 8a.
 
 ### Fixed — specification vs. implementation audit
 

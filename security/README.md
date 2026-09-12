@@ -9,9 +9,15 @@ suite is complete. `check.sh` prints its own coverage ratio for that reason - to
 28 recorded attacks. "Is this build secure?" is not answered by one line of output; the open
 findings in REPORT.md are part of the answer.
 
-- `attacks/<id>.sh` - the PoCs. Those that end in `VERDICT: PREVENTED | VULNERABLE` are executable
-  and can be gated; the rest are records of the finding whose reproduction lives in prose in
-  REPORT.md or in the kton-examples capstone CI.
+- `attacks/<id>.sh` - the PoCs. Those that end in `VERDICT: PREVENTED | VULNERABLE | INCONCLUSIVE`
+  are executable and are run by `check.sh`; **every one of them must appear in `GATED` or `OPEN`**, and
+  `check.sh` fails if one does not. An executable PoC in neither list is invisible: nothing runs it,
+  so `self-check.sh` cannot see it either, and it can rot into a script that proves nothing without
+  anyone noticing (which is what happened to `fourEyes-graphpoll`).
+
+  The rest carry no verdict and are **records of a finding**, with the reproduction in prose in
+  REPORT.md. Thirteen of them are one-line notes. `normalizer-forge` is the exception: an executable
+  *demonstration* of specified behaviour, which is why it has no verdict to give.
 - `attacks/_records.sh` - shared store reader. A PoC must read the registry through it rather than
   globbing a layout, or a layout change reports as a fake regression.
 - `check.sh [kton-examples-dir]` - runs the gated and known-open attacks, prints a table plus the
@@ -35,6 +41,19 @@ The `security-regression` job in `.github/workflows/ci.yml` builds the binaries,
 (for the viewer attack), and runs `check.sh`. A red gate names the exact finding that regressed.
 
 ## Scope
-This gates the kernel/nekton/viewer-layer fixes (fast, deterministic, no R). The example-12 gate attacks
-(four-eyes, spectrum-launder, normalizer-forge) run against the full capstone in the kton-examples CI.
-Open items and accepted boundaries are documented in REPORT.md, not gated.
+This gates the kernel/nekton/viewer-layer fixes (fast, deterministic, no R). Open items and accepted
+boundaries are documented in REPORT.md, not gated.
+
+**The example-12 gate attacks do NOT run anywhere else.** This file used to say they "run against the
+full capstone in the kton-examples CI". They do not - that workflow builds the binaries, runs the
+examples end to end and checks permalinks, and has no such step. Of the three it named:
+
+| | |
+|---|---|
+| `fourEyes-graphpoll` | now executable, gated **here**, with three controls (it previously printed no verdict at all) |
+| `spectrum-launder` | a one-line prose note in this directory; the reproduction is in REPORT.md |
+| `normalizer-forge` | an executable demonstration of specified behaviour, no verdict to give; the property it points at is tested by example 12's Act 8a |
+
+`envtally-CF2` is the fourth example-12 attack and runs here, in `OPEN`, because the shipped gate's
+`env-qualified` condition reads the claim's own tally rather than the fulfilment it cites
+(gitmick/kton-examples#14).
