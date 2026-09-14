@@ -120,6 +120,12 @@ do so if the canonical byte form is exact.
 by the lowercase hex encoding of the 32-byte digest. Implementations SHOULD keep the algorithm
 identifier pluggable for future agility, but MUST emit and accept `sha256:` at 0.1.
 
+*The reference implementation does NOT follow that SHOULD: `HashBytes` calls `sha256.Sum256` directly
+and `NormalizeContentHash` hardcodes the seven-character prefix and the 64-character digest. That is a
+deliberate choice at 0.1 - a pluggable identifier with exactly one value is indirection without
+agility - and the cost of changing it later is a search for two literals. Stated so the gap is a
+decision rather than an oversight.*
+
 5.2 A **file's** content hash is computed over its uncompressed byte content.
 
 5.3 **Canonical JSON** is defined as **RFC 8785 (JSON Canonicalization Scheme, JCS)**. A conforming
@@ -146,7 +152,9 @@ testable (see the conformance tests in `../reference/core/canon_test.go`):
 - **A value that needs more precision or range than an IEEE-754 double can hold** - a high-precision
   measurement, a large integer id, an exact decimal - **MUST be carried as a JSON string, never a JSON
   number.** This is a schema-design rule, called out where plankton/nekton fields are defined, not
-  merely a serialization rule; the input restriction above is what enforces it at the boundary.
+  merely a serialization rule; the input restriction above is what enforces it at the boundary. It is
+  called out again at each field that can carry a measurement: §6.1 (a `FileRef`'s carried `meta`) and
+  §7.2 (a claim's `object` Literal and its `evidence`).
 - **Strings** MUST be escaped per RFC 8785 §3.2.2.2: control characters below U+0020 use the five named
   short escapes (backspace, tab, line-feed, form-feed, carriage-return) or otherwise a **lowercase**
   four-hex-digit escape; above U+0020 only the double-quote and the backslash are escaped; every other
@@ -169,6 +177,13 @@ non-double-representable integers, but routes values through the platform JSON l
 **deterministically** replaces invalid UTF-8 with U+FFFD instead of erroring as strict I-JSON requires,
 and does not yet hard-reject lone surrogates. This affects only malformed input; well-formed records are
 fully JCS-conformant and the conformance vectors verify byte-for-byte.)*
+
+*The reference implementation cannot follow the SHOULD above: the kernels carry **zero third-party
+dependencies** - the property that keeps them auditable and WebAssembly-compilable - so its JCS is
+hand-rolled, 392 lines of it. What stands in for "tested" is the frozen conformance vectors of
+Clause 15, a fuzz target asserting `canon(canon(x)) == canon(x)` over machine-generated input, and the
+RFC 8785 example set. An implementation that CAN take a dependency should take one; this one weighs
+the two and chooses.*
 
 5.4 **Record identity** (foton id, claim id, `scope_id`, `protocol.ref`, action key) is `sha256(canon(
 …))` over the indicated value. **Identical content coincides**: two records whose canonical forms are
@@ -203,6 +218,11 @@ FileRef := {
 - Identity and integrity derive from `hash`. `uri`, `id`, `mediaType`, and `meta` are **carried, not
   covered**: they are location/description hints and MUST NOT affect any identity computation (foton id
   or action key). A consumer MUST verify fetched bytes against `hash` (5.6).
+- **`meta` carries descriptions, and a description can be a measurement.** Whenever a `meta` member
+  would hold a value needing more precision or range than an IEEE-754 double - an instrument reading,
+  an exact decimal, a large identifier - it MUST be a JSON string, never a JSON number (5.3). `meta`
+  is non-covered, so no identity protects it from a lossy round-trip; the string form is the only
+  thing that does.
 - **Wire transport at 0.1.** Of the carried fields, only `uri` is emitted onto the wire (6.6) and
   round-tripped by a conforming implementation at 0.1. `id`, `mediaType`, and `meta` are **reserved**:
   defined for forward compatibility but NOT yet emitted or parsed, and a conforming implementation MAY
@@ -265,6 +285,11 @@ How a foton was produced MAY be recorded, executor-agnostically, in two independ
 - **concrete env-data - CARRIED, not covered.** `EnvData := [{ kind, ref, locators? }]` (e.g.
   `oci`/`nix`/`renv`) records the exact stack for reconstruction. It MUST NOT affect any identity.
 
+  **RESERVED at 0.1**, like `meta` in §6.1: the shape is defined for forward compatibility but is NOT
+  emitted or parsed, and a conforming implementation MAY ignore it. The reference records a concrete
+  environment's bytes through a `FileRef`'s carried `uri` locators instead. Because env-data is
+  non-covered, adding it later will not move any identity.
+
 A concrete environment is bound to an env-spectrum by a nekton `qualifies-as` claim (7.2): mechanically
 the environment *fulfils* the spectrum (Clause 10); acceptance as qualified is a signed claim on top.
 
@@ -321,6 +346,11 @@ Claim := {
   the authoritative identity is the **keyid** (§8). A consumer that trusts a named identity MUST check
   the keyid, not `by`; a reader SHOULD present the proven keyid at least as prominently as `by`.
 - `object` MAY be omitted (unary predicates such as `reviewed`), a `Ref`, or a `Literal`.
+- **A `Literal.value` that is a measurement MUST be a JSON string.** A claim's `object` is the one
+  place in nekton where a free-form quantity enters the record, and a claim id is `sha256(canon(Claim))`
+  - so a value that an IEEE-754 double cannot hold exactly would be signed in its rounded form and the
+  claim would attest to a number nobody measured. Carry it as a string with an explicit `datatype`
+  (5.3). The same applies to any quantity a `why` or an `evidence` Ref describes.
 - **Directional object-refs.** When `object` is a `Ref.hash`, the claim asserts a directional relation
   from `subject` to `object` (e.g. `reproduces`, `refines`, `qualifies-as`). The kernel stores the
   direction; it does not interpret the predicate.
@@ -555,8 +585,13 @@ Records are immutable and content-addressed, so replication is a conflict-free s
 
 - `sync?since=T` returns append-only records since cursor `T`; **mirroring** = `sync` + persistence.
   Because a batch may deliver a scoped child before its seed, ingest MUST settle scoped claims in
-  dependency order and skip records that never become valid, always advancing the peer cursor so one
-  malformed or hostile record cannot wedge replication. A local-directory overlay (`mirror <dir>`) is
+  dependency order and skip records that never become valid, and **the party driving the sync** MUST
+  keep advancing its stored cursor, so one malformed or hostile record cannot wedge replication.
+
+  *The cursor belongs to the party that PULLS, not to the store it pulls into: it is per-peer state
+  about a conversation the kernel does not conduct. The reference kernels expose `PeerCursor` /
+  `SetPeerCursor` for such a party to use and never call them themselves - since the HTTP client left
+  this repository there is no code path here that pulls at all.* A local-directory overlay (`mirror <dir>`) is
   cursorless overlay-by-hash, so it **re-attempts** a previously-unresolved record whenever a later
   mirror supplies its missing ancestry - an incomplete chain heals as its dependencies arrive.
 - **Aggregator independence (Scenario 8).** An aggregator is a **discovery index**: it indexes and
