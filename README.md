@@ -157,6 +157,39 @@ research companion (not yet public).
 See [`docs/concepts.md`](docs/concepts.md), [`docs/glossary.md`](docs/glossary.md),
 and [`VISION.md`](VISION.md).
 
+## Install
+
+Each release attaches one archive per platform, plus a `.sha256` beside it. Verify the archive
+before you run what is inside it - a provenance tool that asks you to trust an unchecked download
+has already lost the argument.
+
+```sh
+ver=v0.2.0                      # see github.com/kton-protocol/kton/releases
+plat=linux_amd64                # or linux_arm64, darwin_amd64, darwin_arm64, windows_amd64
+base="https://github.com/kton-protocol/kton/releases/download/$ver"
+curl -fLO "$base/kton_${ver}_${plat}.tar.gz"
+curl -fLO "$base/kton_${ver}_${plat}.tar.gz.sha256"
+sha256sum -c "kton_${ver}_${plat}.tar.gz.sha256"    # must print: OK
+tar xzf "kton_${ver}_${plat}.tar.gz"
+cd "kton_${ver}_${plat}"
+sudo install -m 755 plankton nekton kton /usr/local/bin/
+plankton --version && nekton --version && kton --version
+```
+
+The archive holds the three binaries and the licence - nothing to configure: no Go toolchain, no
+runtime, no service. `plankton` and `nekton` are the kernels; `kton` is the cockpit and the only one
+that ever reaches the network (`kton fetch`, Rekor anchoring).
+
+**Versions.** The binaries are at **0.2**; the specification they implement is **0.1 (draft)**. Those
+are two axes on purpose - 0.2 changed the nekton store layout, not the protocol - so a record
+authored by a 0.2 binary still stamps `specVersion: "0.1"`. A 0.1 binary **cannot read a 0.2 nekton
+store and does not say so**; upgrade every binary that touches a shared registry at the same time,
+and read the first section of [`CHANGELOG.md`](CHANGELOG.md) before you do.
+
+*`go install kton.dev/...` does not work yet: the module paths are `kton.dev/plankton`,
+`kton.dev/nekton`, `kton.dev/kton`, but kton.dev does not serve the `go-import` meta redirect those
+need. Use a release archive or the source build below.*
+
 ## Build
 
 The repo is a Go **workspace** (`go.work`) tying three standard-library-only modules -
