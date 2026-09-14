@@ -137,6 +137,16 @@ if ! bash "$HERE/self-check.sh" >/dev/null 2>&1; then
 else
   echo "self-check: PASS - every PoC above can actually fail (security/self-check.sh)"
 fi
+
+# REPORT.md states counts about this directory (how many attacks, how many closed, how much of the
+# suite is executable). Those were wrong for a long time and nothing could tell - a number in prose
+# is maintained by whoever remembers to. Recomputed here against the directory itself.
+if ! bash "$HERE/check-report-counts.sh" >/dev/null 2>&1; then
+  echo "::error::REPORT.md states counts this directory does not support - run security/check-report-counts.sh"
+  fail=1
+else
+  echo "report counts: PASS - REPORT.md's posture matches the directory (security/check-report-counts.sh)"
+fi
 echo
 
 if [ "$fail" = 0 ]; then

@@ -12,12 +12,22 @@ which made 70 dead permalinks look like evidence a reader could follow. They are
 hashes so the trail survives for anyone holding the archive, and so nothing here claims to be
 checkable that is not.*
 
-## Posture: **27/29 spectrum members fulfilled** → NOT SECURE (2 open)
+## Posture: **27 closed · 3 open · 2 accepted boundary**, of 32 recorded attacks → NOT SECURE
 
-27 closed · 2 open · 2 accepted boundary. Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
+*These numbers are derived from what is in this directory, not carried forward by hand. `ls
+attacks/*.sh` is 32; `check.sh` prints its own coverage line every run. The previous posture said
+"27/29 spectrum members fulfilled · 27 closed · 2 open" over a Closed table with 24 rows, and
+"10 of the 28 PoCs are executable" when 17 are and `check.sh` runs 16 - a report overclaiming its
+own coverage, which is the finding this suite keeps making about everything else.*
+
+**17 of the 32 PoCs are executable**; `check.sh` runs **16** of them here (the 17th,
+`screenshot-viewer-labels`, needs a kton-examples checkout passed as `$1`). The remaining 15 carry no
+verdict: they are records of a finding, reproduced in prose below, and they run nowhere. A green gate
+means those 16 held - not that the suite is complete.
+
+Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
 vulnerable/fixed commits as signed `nekton` claims. Those claims and the `keys/` directory are not in this
 repository, so `nekton verify` cannot be run against them from here - `redteam.pub` alone verifies nothing.
-10 of the 28 PoCs are executable and run in `check.sh`; the rest are records, not reproductions.
 
 ## By vulnerability class
 | class | count |
@@ -42,6 +52,10 @@ repository, so `nekton verify` cannot be run against them from here - `redteam.p
 | `canonicalization` | 1 |
 | `read-face-brittle` | 1 |
 | `witness-not-fully-verified` | 1 |
+| `cursor-is-a-derived-position` | 1 |
+| `ingest-gate-not-on-the-read-path` | 1 |
+| `path-from-unvalidated-input` | 1 |
+| `signature-attached-to-bytes-it-did-not-sign` | 1 |
 
 The recurring class: **a face or backstop trusts recorded/declared data instead of re-verifying the signed bytes / re-executing in a trusted executor.**
 
@@ -55,19 +69,22 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 | `co-signer-drop` | ORANGE | `federation-not-order-independent` | `0aa44b8` | `b625b1f` |
 | `concurrency-races` | ORANGE | `concurrency-nonatomic` | `a687723` | `af3cefa` |
 | `corrupt-poisons-read` | ORANGE | `read-face-brittle` | `ed7a008` | `056b87a` |
-| `envtally-CF2` | RED | `gate-trusts-recorded-tally` | [`3619db4`](https://github.com/gitmick/kton-examples/commit/3619db4) | [`0f3dafa`](https://github.com/gitmick/kton-examples/commit/0f3dafa) |
+| `cursor-shift` | RED | `cursor-is-a-derived-position` | - | #97 |
 | `export-attribution` | RED | `export-trusts-claimed-keyid` | `9ea6938` | `e92beca` |
 | `fourEyes-graphpoll` | RED | `gate-trusts-mutable-graph-edge` | [`ac188cb`](https://github.com/gitmick/kton-examples/commit/ac188cb) | [`4931c42`](https://github.com/gitmick/kton-examples/commit/4931c42) |
 | `fourEyes-max` | RED | `gate-trusts-mutable-graph-edge` | [`b2616d7`](https://github.com/gitmick/kton-examples/commit/b2616d7) | [`56ae3cd`](https://github.com/gitmick/kton-examples/commit/56ae3cd) |
 | `nanopub-signed-eq-published` | RED | `render-face-doesnt-escape` | `9ea6938` | `1a8c798` |
 | `normalizer-forge` | RED | `backstop-looks-up-not-reexecute` | [`2024ca5`](https://github.com/gitmick/kton-examples/commit/2024ca5) | [`dee089c`](https://github.com/gitmick/kton-examples/commit/dee089c) |
 | `rdf-injection` | RED | `render-face-doesnt-escape` | `2e896c8` | `804f052` |
+| `read-path-ungated` | RED | `ingest-gate-not-on-the-read-path` | - | #91 |
+| `scope-path-traversal` | RED | `path-from-unvalidated-input` | - | #87 |
 | `scope-truncation` | ORANGE | `freshness-monotone-boundary` | `a687723` | `8bbdf54` |
 | `screenshot-viewer-labels` | RED | `viewer-trusts-declared-id` | [`46ed3fa`](https://github.com/gitmick/kton-examples/commit/46ed3fa) | [`b2616d7`](https://github.com/gitmick/kton-examples/commit/b2616d7) |
 | `silent-source-drop` | ORANGE | `read-face-silent-partial` | `ed7a008` | `056b87a` |
 | `spectrum-existence` | ORANGE | `spectrum-no-existence-check` | `7df1e70` | `05a94d8` |
 | `spectrum-launder` | RED | `backstop-looks-up-not-reexecute` | [`24bd5af`](https://github.com/gitmick/kton-examples/commit/24bd5af) | [`46ed3fa`](https://github.com/gitmick/kton-examples/commit/46ed3fa) |
 | `suppress-replay` | RED | `read-face-trusts-declared-id` | `7df1e70` | `d0f7cf9` |
+| `union-across-payloads` | RED | `signature-attached-to-bytes-it-did-not-sign` | - | #93 |
 | `viewer-selfsigned` | RED | `viewer-trusts-declared-id` | [`b8a642a`](https://github.com/gitmick/kton-examples/commit/b8a642a) | [`f5570c0`](https://github.com/gitmick/kton-examples/commit/f5570c0) |
 | `viewer-xss` | RED | `render-face-doesnt-escape` | [`826ea7d`](https://github.com/gitmick/kton-examples/commit/826ea7d) | [`b8a642a`](https://github.com/gitmick/kton-examples/commit/b8a642a) |
 | `wasm-viewer-trust` | RED | `viewer-trusts-declared-id` | `804f052` | `6ff639e` |
@@ -78,6 +95,7 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 |---|---|---|---|---|
 | `backdated-production` | RED | `no-key-lifecycle` | `1447cea` | **OPEN** — A compromised key backdates the self-asserted when to 'produce' record |
 | `no-revocation` | RED | `no-key-lifecycle` | `1447cea` | **OPEN** — kton has no revocation/validity notion: a revoked or compromised key's |
+| `envtally-CF2` | RED | `gate-trusts-recorded-tally` | [`3619db4`](https://github.com/gitmick/kton-examples/commit/3619db4) | **OPEN** — the fix was never reached: the gate's path to the release check was wrong, so it never ran |
 
 ## Accepted boundaries (irreducible — a truthful caveat is the correct response)
 - **`author-records-unverified`** — plankton author records hash(--out) and the --cmd string; it NEVER runs the command (SPEC 5: the kernel MUST NOT execute). Trust that a computation is honest belongs to a trusted executor / re-run. Not a kernel defect.
@@ -210,12 +228,39 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **fixed at (reproduction now fails):** pk `056b87a`
 - **PoC:** [`attacks/corrupt-poisons-read.sh`](attacks/corrupt-poisons-read.sh)
 
-### `envtally-CF2` — RED · ✅ closed
+### `cursor-shift` — RED · ✅ closed
+- **class:** `cursor-is-a-derived-position`
+- **theory:** SPEC §12's `sync(since)` hands a peer a cursor and promises everything newer comes back
+  on the next call. The cursor was a record's **rank in the hash-sorted store**, recomputed on every
+  load - not a position issued once. Hash order has nothing to do with append order, so a new record
+  lands wherever its hash falls: only one that sorts LAST gets a number above the peer's cursor.
+  Every other one is born below it and is invisible to that peer forever.
+- **demonstrated:** a bug and an attack at once. A record's hash is grindable (change a byte of the
+  payload, rehash), and a git merge is a documented federation transport - so anyone who can write
+  into a store can pick a record that sorts early and have it, or the honest record it displaces,
+  silently withheld from every already-synced peer. Roughly (N-1)/N of new records are lost by
+  accident; measured at ~2 attempts to place one deliberately. The same defect reached nekton across
+  scopes, where the store sorts `objects/scope/<id>.jsonl` by scope id and a new scope sorting first
+  pushes every older record up by one.
+- **fixed at:** #97 (AUD-02) - a position is issued **once**, at append time, into `objects/.seq`
+  beside the records, and never recomputed. The stored bytes key the position, not the record
+  identity, so peers stay byte-identical and a git merge of two stores is still conflict-free.
+- **PoC:** [`attacks/cursor-shift.sh`](attacks/cursor-shift.sh) - gated. It asserts the **property**,
+  not the mechanism: after syncing to the cursor, adding one record must make exactly that record
+  appear above it. Eight rounds per kernel, because a single round passes 1/N of the time by luck.
+
+### `envtally-CF2` — RED · 🔴 OPEN
 - **class:** `gate-trusts-recorded-tally`
 - **theory:** env-qualified branch checked only that the fulfilment foton prov:used the spectrum, never that its tally passed; a 2/3 FAILED qualification was accepted as 3/3.
 - **vulnerable at:** kx [`3619db4`](https://github.com/gitmick/kton-examples/commit/3619db4)
 - **fixed at (reproduction now fails):** kx [`0f3dafa`](https://github.com/gitmick/kton-examples/commit/0f3dafa)
 - **PoC:** [`attacks/envtally-CF2.sh`](attacks/envtally-CF2.sh)
+- **why this is OPEN, not closed.** It was recorded closed against a kton-examples commit. When the
+  PoC's path to the shipped release gate was repaired, the gate ran and ticked **none of its seven
+  conditions** in this scenario - so "env-qualified stayed unticked" is true with and *without* the
+  attack, and decides nothing. `check.sh` lists it under OPEN and it reports `INCONCLUSIVE`, never a
+  pass. Filed as [gitmick/kton-examples#14](https://github.com/gitmick/kton-examples/issues/14),
+  still open. Promoting it back needs a 3/3 control run in which env-qualified actually lights.
 
 ### `export-attribution` — RED · ✅ closed
 - **class:** `export-trusts-claimed-keyid`
@@ -236,6 +281,14 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **vulnerable at:** kx [`ac188cb`](https://github.com/gitmick/kton-examples/commit/ac188cb)
 - **fixed at (reproduction now fails):** kx [`4931c42`](https://github.com/gitmick/kton-examples/commit/4931c42)
 - **PoC:** [`attacks/fourEyes-graphpoll.sh`](attacks/fourEyes-graphpoll.sh)
+- **the PoC proved nothing for a long time, and now does.** Its closing
+  `grep -E 'two distinct PRINCIPALS'` could never match the string `release.py` actually prints, and
+  `|| true` swallowed that - so it exited 0 having printed nothing, and emitted **no `VERDICT:` line
+  at all**, which `check.sh` could not have read even with the grep repaired. The scenario also left
+  all seven conditions unticked, so "four-eyes stayed unticked" was true with and without the attack.
+  Rebuilt to four scenarios with a decisive verdict (honest=TICKED, self-review=UNTICKED,
+  attack=UNTICKED → PREVENTED, poisoned=TICKED). The finding above was always real; the proof of it
+  was not. Reported by the examples workstream's red-team pass.
 
 ### `fourEyes-max` — RED · ✅ closed
 - **class:** `gate-trusts-mutable-graph-edge`
