@@ -38,6 +38,32 @@ run_one() {  # <id> -> echoes the verdict word
 }
 
 fail=0
+
+# WHICH binaries. Every PoC here resolves plankton/nekton/kton off PATH, so a green gate is a
+# statement about whatever binaries happened to be there - and a RED one may be too. Four findings
+# once read as REGRESSION against stale binaries in ~/bin while the working tree was clean. A gate
+# whose verdicts cannot be attributed to a build is not evidence, so the build is now on the record.
+newest_src=$(find "$HERE/.." -name '*.go' -not -path '*/.git/*' -newer /dev/null -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
+stale=0
+echo "binaries under test:"
+for b in plankton nekton kton; do
+  bp=$(command -v "$b" 2>/dev/null)
+  if [ -z "$bp" ]; then
+    printf '  %-9s %s\n' "$b" "NOT ON PATH - every PoC needing it reports N-A"
+    continue
+  fi
+  bt=$(stat -c %Y "$bp" 2>/dev/null || echo 0)
+  age=""
+  if [ -n "$newest_src" ] && [ "${bt%.*}" -lt "${newest_src%.*}" ]; then
+    age="  <- OLDER THAN THE SOURCE IN THIS TREE"; stale=1
+  fi
+  printf '  %-9s %s%s\n' "$b" "$bp" "$age"
+done
+if [ "$stale" = 1 ]; then
+  echo "::warning::a binary under test predates this working tree - rebuild before believing any verdict below"
+fi
+echo
+
 printf '%-26s %-12s %s\n' "attack" "verdict" "meaning"
 printf '%-26s %-12s %s\n' "------" "-------" "-------"
 

@@ -710,7 +710,21 @@ func run(cmd string, args []string) error {
 			// A consumer previously inferred the level from whether --via was passed, which mislabels
 			// a genuine L0 as L1 whenever a default normalizer is configured - which is exactly why
 			// the string was being parsed instead of guessed (#89).
-			return printJSON(map[string]any{"level": level, "matched": true, "via": nullableVia(via)})
+			out := map[string]any{"level": level, "matched": true, "via": nullableVia(via)}
+			if level == "L1" && via != "" {
+				// §9 says the reference "surfaces this obligation on EVERY L1 result". The human line
+				// below does; this did not, and --json exists precisely so a consumer stops reading
+				// prose (#89). An L1 match holds only if the normalizer is itself L0-qualified, and a
+				// machine consumer that never sees that requirement will treat L1 as settled.
+				out["consumerObligation"] = map[string]any{
+					"clause": "9",
+					"requires": "the normalizer must itself be L0-qualified (a byte-exact re-run) before " +
+						"this L1 result is relied upon",
+					"normalizer":    via,
+					"establishWith": "plankton reproductions --trust-keys <dir> <normalizer-output>",
+				}
+			}
+			return printJSON(out)
 		}
 		if identical {
 			// The expected PASS: two independent runs producing the same bytes hash to the same value, so
