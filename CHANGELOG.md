@@ -184,6 +184,21 @@ Both were added earlier the same day, and both had the defect they were written 
   test gained a fixture that varies the payload spelling, and the script now names its own missing
   prerequisite rather than letting every case fail under a misleading summary.
 
+### Fixed — adding an empty source to a union removed evidence from the sync feed
+
+`OpenUnion` zeroes foreign positions on purpose: a number issued by another store means nothing here.
+The position was then reassigned on one `settle` path only — and a **co-signature row** takes the
+already-seen path, which never reaches `index()`. So it kept `Seq 0`, and `Records(since)` answers
+`Seq > since`, which filters `0` out of every answer including `Records(0)`.
+
+The claim still carried both signatures in the index. The feed simply stopped offering the second one
+to any peer — **merely widening a union reduced what the public sync API delivers**, with an empty
+store as the second source.
+
+Every record entering the feed is now positioned, deferred ones included: held and owed to a peer,
+but never delivered, is the same loss. The old line also read `r.maxSeq + 1` without moving `maxSeq`,
+which was harmless only where `index()` advanced it afterwards — a collision on any other path.
+
 ### Fixed — two ways to lose work: a torn log tail, and a number that costs seconds
 
 - **An acknowledged write was lost to somebody else's interrupted one.** A crash mid-append leaves a
