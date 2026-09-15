@@ -24,7 +24,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"kton.dev/plankton/core"
@@ -133,44 +132,24 @@ func (spec Spec) Validate() error {
 	return validateFiles("output", spec.Outputs, false)
 }
 
-// validateFiles checks one slot list. dedupePaths is true for inputs only: the §6.3 action key is a
-// {relpath -> hash} map, so two inputs at one path cannot both be in the computation's identity -
-// a silent last-wins would erase an input and let a 2-input foton falsely reuse a 1-input result.
-// Outputs are not in the action key, so they carry no such ambiguity.
+// validateFiles delegates to core.Foton.ValidateStructure, the ONE definition of a foton's
+// context-free structure.
+//
+// It used to hold its own copy of those rules, and ingest and the read path had none - so a record
+// authored here was held to rules a record arriving by mirror or by a git merge was not. Two copies
+// would have drifted the same way; there is one, and every boundary calls it.
 func validateFiles(kind string, fs []FileSpec, dedupePaths bool) error {
-	seen := map[string]string{}
-	for i, f := range fs {
-		// A BOUND slot must carry a hash this substrate can actually resolve. `sha256:garbage` used
-		// to be signed and indexed.
-		if f.Hash != "" {
-			if _, ok := core.NormalizeContentHash(f.Hash); !ok {
-				return fmt.Errorf("%s[%d] %q: %q is not a sha256 content hash (SPEC §5.1)", kind, i, f.Path, f.Hash)
-			}
-		}
-		// A path is a location INSIDE the work tree, and it is structural: it goes into the action
-		// key. An absolute path, or one that escapes upward, describes a different machine's
-		// filesystem rather than a reproducible computation (SPEC §6.1).
-		if f.Path != "" {
-			if filepath.IsAbs(f.Path) || strings.HasPrefix(f.Path, "/") || strings.HasPrefix(f.Path, `\`) {
-				return fmt.Errorf("%s[%d] path %q is absolute; a foton's paths are relative to the "+
-					"work tree (SPEC §6.1)", kind, i, f.Path)
-			}
-			if p := filepath.ToSlash(filepath.Clean(f.Path)); p == ".." || strings.HasPrefix(p, "../") {
-				return fmt.Errorf("%s[%d] path %q escapes the work tree (SPEC §6.1)", kind, i, f.Path)
-			}
-		}
-		if !dedupePaths || f.Path == "" {
-			continue
-		}
-		key := filepath.ToSlash(filepath.Clean(f.Path))
-		if prev, dup := seen[key]; dup && prev != f.Hash {
-			return fmt.Errorf("two inputs share path %q with different hashes (%s, %s) - the action "+
-				"key is a {path -> hash} map and could hold only one, so an input would silently "+
-				"vanish from the computation's identity (SPEC §6.3)", f.Path, prev, f.Hash)
-		}
-		seen[key] = f.Hash
+	refs := make([]core.FileRef, 0, len(fs))
+	for _, f := range fs {
+		refs = append(refs, core.FileRef{Hash: f.Hash, Path: f.Path})
 	}
-	return nil
+	var f core.Foton
+	if dedupePaths {
+		f.Inputs = refs // inputs are the slots the §6.3 action key is keyed by
+	} else {
+		f.Outputs = refs
+	}
+	return f.ValidateStructure()
 }
 
 // normalized returns spec with every BOUND hash in canonical form (SPEC §5.1). This is the ONE
