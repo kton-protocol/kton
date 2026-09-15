@@ -16,11 +16,32 @@ func TestWriteKeyFileNeverOverwritesAnIdentity(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "alice.key")
 
-	if _, err := core.WriteKeyFile(p, []byte("first"), 0o600, false); err != nil {
+	w, err := core.WriteKeyFile(p, []byte("first"), 0o600, false)
+	if err != nil {
 		t.Fatalf("first write: %v", err)
 	}
-	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %v, %v; want 0600", fi.Mode().Perm(), err)
+	// The assertion is not "the mode is 0600" - on Windows it is 0666 and no amount of asking
+	// changes that. It is that the code KNOWS which of the two happened, because every claim this
+	// project makes about private keys rests on the mode and the one unacceptable outcome is
+	// asserting protection without looking. Either the request was honoured, or the shortfall is
+	// reported; silently neither is the bug.
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	got := fi.Mode().Perm()
+	switch {
+	case got&^0o600 == 0:
+		if w.ModeUnenforced != 0 {
+			t.Errorf("mode %v honours the 0600 request, but ModeUnenforced reports %v", got, w.ModeUnenforced)
+		}
+	default:
+		if w.ModeUnenforced != got {
+			t.Errorf("mode is %v, which grants more than the requested 0600, and ModeUnenforced says %v - "+
+				"a caller would tell its user the key is protected when it is not", got, w.ModeUnenforced)
+		}
+		t.Logf("this platform does not enforce 0600 (got %v); WriteKeyFile reports it, which is the "+
+			"contract being tested here", got)
 	}
 
 	t.Run("a different key is refused and the bytes are untouched", func(t *testing.T) {

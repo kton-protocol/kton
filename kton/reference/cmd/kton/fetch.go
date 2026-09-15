@@ -8,6 +8,7 @@ package main
 // sha256(bytes) == hash before trusting a byte. Multiple claims = multiple signed suggestions.
 
 import (
+	"context"
 	"crypto/ed25519"
 	"fmt"
 	"io"
@@ -171,9 +172,17 @@ func deref(uri string, allowLocal bool) ([]byte, error) {
 	case strings.HasPrefix(uri, "http://"), strings.HasPrefix(uri, "https://"):
 		c := &http.Client{
 			Timeout: 120 * time.Second,
-			// A redirect is a SECOND destination the locator did not name, so it is checked like
-			// the first. Without this, a public URL that 302s to 169.254.169.254 walks straight
-			// through the check below.
+			// THE address check happens in the dialer, not here: see guardedDial. Checking a
+			// hostname and then handing the URL to a client that resolves it AGAIN means the
+			// address checked is not the address contacted, and a resolver that answers
+			// differently the second time walks straight through (dev review R01).
+			Transport: &http.Transport{
+				DialContext:           guardedDial(allowLocal),
+				TLSHandshakeTimeout:   30 * time.Second,
+				ResponseHeaderTimeout: 60 * time.Second,
+			},
+			// A redirect is a SECOND destination the locator did not name. The dialer checks it
+			// too - this is the early, friendlier refusal, and a bound on redirect depth.
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) >= 5 {
 					return fmt.Errorf("too many redirects")
@@ -226,10 +235,17 @@ func checkDestination(host string, allowLocal bool) error {
 	if host == "" {
 		return fmt.Errorf("locator has no host")
 	}
-	ips, err := net.LookupIP(host)
+	ips, err := lookupIP(host)
 	if err != nil {
 		return fmt.Errorf("cannot resolve %q: %w", host, err)
 	}
+	return checkIPs(ips)
+}
+
+// checkIPs is the policy itself, over addresses rather than a name. Separated from the lookup so
+// that the DIALER can apply it to the addresses it is about to connect to - which is the only place
+// the check is load-bearing.
+func checkIPs(ips []net.IP) error {
 	for _, ip := range ips {
 		switch {
 		case ip.IsLoopback():
@@ -243,6 +259,67 @@ func checkDestination(host string, allowLocal bool) error {
 		}
 	}
 	return nil
+}
+
+// lookupIP is net.LookupIP behind a variable so a test can answer differently on each call - which
+// is precisely the attack: a resolver that returns a public address to the check and a loopback
+// address to the connection.
+var lookupIP = net.LookupIP
+
+// guardedDial closes the gap between the address CHECKED and the address CONNECTED TO.
+//
+// The old path called checkDestination(hostname) and then handed the URL to an http.Client whose
+// transport resolved that hostname again. Two lookups, and nothing tied them together: a resolver
+// under the attacker's control (or a TTL-0 record) answers 93.184.216.34 to the first and 127.0.0.1
+// to the second, and `--allow-local` is bypassed without ever being passed. That is DNS rebinding,
+// and a hash check afterwards does not help - the request has already been made, and making the
+// request IS the exploit against a metadata service or an internal host.
+//
+// Here the name is resolved ONCE, every address it returns is checked, and the connection is then
+// made to a checked address as an IP LITERAL. There is no second lookup for a second answer to come
+// back from. TLS still verifies against the URL's hostname: net/http sets the ServerName from the
+// request, not from what the dialer connected to.
+func guardedDial(allowLocal bool) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	var d net.Dialer
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			// Already a literal - nothing can change under us, but it still has to pass.
+			if !allowLocal {
+				if err := checkIPs([]net.IP{ip}); err != nil {
+					return nil, err
+				}
+			}
+			return d.DialContext(ctx, network, addr)
+		}
+		ips, err := lookupIP(host)
+		if err != nil {
+			return nil, fmt.Errorf("cannot resolve %q: %w", host, err)
+		}
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("%q resolved to no addresses", host)
+		}
+		if !allowLocal {
+			// ALL of them, not the one we happen to dial: a host answering with one public and one
+			// loopback address is not a host this should talk to at all. Refusing outright also
+			// keeps the refusal independent of which address the dial happens to succeed on.
+			if err := checkIPs(ips); err != nil {
+				return nil, err
+			}
+		}
+		var lastErr error
+		for _, ip := range ips {
+			conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, lastErr
+	}
 }
 
 // loadTrustKeys reads a directory of *.pub keys. Mirrors plankton's loader deliberately: a consumer

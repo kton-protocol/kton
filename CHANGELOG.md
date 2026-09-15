@@ -152,6 +152,39 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
+### Fixed — the two findings that would have shipped as documented instead of fixed
+
+Both raised against the release PR. Both were real, and in both cases the honest answer was to fix
+the thing rather than describe it.
+
+- **`kton fetch` followed a DNS rebind (R01).** `checkDestination` resolved the hostname, and the
+  `http.Client` then resolved it **again** on its own — two lookups with nothing tying them together,
+  so a resolver answering a public address to the check and a loopback address to the connection
+  bypassed `--allow-local` without it ever being passed. A hash check afterwards does not help: the
+  request has already been made, and making the request *is* the exploit against a metadata service
+  or an internal host.
+
+  The previous release note said this "leaves with #103". That was a deferral dressed as a
+  mitigation: `kton fetch` **ships in 0.2**, so the binary in the archive had the bypass whatever a
+  future issue says. Fixed here instead. The name is resolved once, every address it returns is
+  checked, and the connection is made to a checked address **as an IP literal** — there is no second
+  lookup for a second answer to come back from. TLS still verifies against the URL's hostname.
+
+- **CI never ran on two of the five platforms we publish (R15).** `release.yml` ships linux/amd64,
+  linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64; every CI job ran on ubuntu. A packaged
+  target with no passing native baseline is a claim nobody checked, and it was hiding two real
+  failures — a test-setup bug that built a directory name out of an absolute path (a drive letter
+  produced `...\reg\C::`), and one that matters:
+
+  **A private key file asks for `0600` and gets `0666` on Windows.** Every statement this project
+  makes about a private key being unreadable by other users rests on that mode. `WriteKeyFile` now
+  **verifies** the mode after writing rather than assuming the platform honoured the request, reports
+  the shortfall to its caller, and `keygen` prints a warning naming the mode it actually got — at the
+  one moment the operator can still act on it. Implementing Windows ACLs would need
+  `golang.org/x/sys`, and the kernels carry no third-party dependencies; what changed is that the
+  protection is now checked instead of asserted. A new `platforms` job builds and tests natively on
+  windows-latest and macos-latest.
+
 ### Fixed — first patch group from the external development-branch review
 
 An independent review of `dev` at `edcbfa1` returned fifteen findings, four of them P1. Four are
@@ -214,8 +247,8 @@ four reproduced exactly as reported.
 Not in this group, deliberately: **R03** (signature loss between canonically equivalent
 serializations) and **R02** (`verify` accepting records `Add` rejects) need a storage and a shared
 validator decision respectively, and the review is right that a careless canonicalization fix can
-invalidate signatures. **R01** (DNS rebinding in `kton fetch`) is a cockpit concern that leaves
-with #103.
+invalidate signatures. *(**R01** was in this list as "a cockpit concern that leaves with #103" and is
+no longer: `kton fetch` ships in 0.2, so it was fixed rather than deferred — see above.)*
 
 ### Fixed — the kernel reported a verification verdict it is forbidden to have
 

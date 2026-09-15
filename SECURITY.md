@@ -31,25 +31,21 @@ maliciously large inputs to the cockpit.
 
 ## Known open issues
 
-Stated here rather than left for a reporter to rediscover. Both come from an external review of the
-development branch.
+Stated here rather than left for a reporter to rediscover. Both come from external review.
 
 - **A claim can lose a signature when one statement arrives in two serializations.** Same canonical
   claim id, different literal signed bytes; the second arrival is misread as a duplicate and its
   signature is dropped, order-dependently. Loss of signing evidence, not forgery. Details and the
   reproduction are in `CHANGELOG.md` under 0.2.0.
 
-- **`kton fetch` can be steered to a local address by DNS rebinding.** `checkDestination` resolves
-  the hostname with `net.LookupIP`, then hands the URL to an `http.Client` that resolves it again on
-  its own — so the address checked is not necessarily the address contacted, and `--allow-local` can
-  be bypassed by a resolver that answers differently the second time. The redirect handler re-checks
-  the host the same way and inherits the same gap. *(The reviewer reproduced this against a mock
-  resolver and a loopback server; what is verified here is the code path, not a live exploit.)*
-
-  This is the cockpit, not a kernel: the kernels open no socket at all. `kton fetch` moves to the
-  cockpit repository with #103 and the fix belongs there — bind the checked address, by resolving
-  once and dialling that address through a custom `DialContext`. Until then, do not point
-  `kton fetch` at hostnames you do not control from a host whose local network matters.
+- **Private key files are not protected by their mode on every platform.** `keygen` asks for `0600`;
+  Windows maps a Go file mode to little more than a read-only attribute, so the key lands `0666`, and
+  FAT/exFAT and some network mounts behave similarly. `WriteKeyFile` now **verifies** the mode after
+  writing instead of assuming it, and `keygen` prints a warning naming the mode it actually got — but
+  the underlying fact stands: on those platforms, file permissions are not what keeps a private key
+  from other users of the machine. Restrict access by other means, or generate keys elsewhere.
+  Implementing Windows ACLs would need `golang.org/x/sys`, and the kernels carry no third-party
+  dependencies.
 
 ## Supported versions
 
