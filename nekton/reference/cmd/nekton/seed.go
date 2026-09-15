@@ -91,11 +91,9 @@ func seed(args []string) error {
 		"when":    stamp,
 	}
 	if parent != "" {
-		// `parent` is a Ref (nekton SPEC §7.4), and a Ref is {hash?, uri?}. This used to emit the
-		// SUBJECT shape, {"digest":{"sha256":...}} - which claim.Ref does not read, so a seed signed
-		// with --parent round-tripped to an empty Hash and an empty Parent.Key(): the scope
-		// hierarchy the operator asked for was signed in a form the library's own parser could not
-		// interpret (dev review R11).
+		// `parent` is a Ref (nekton SPEC §7.4): {hash?, uri?}. NOT the subject shape,
+		// {"digest":{"sha256":...}} - the two look interchangeable and are not. claim.Ref does not
+		// read `digest`, so emitting it signs a parent nothing can resolve into a permanent claim id.
 		if h, ok := core.NormalizeContentHash(parent); ok {
 			body["parent"] = map[string]any{"hash": h}
 		} else if strings.Contains(parent, ":") && !strings.HasPrefix(parent, "sha256:") {

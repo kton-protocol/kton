@@ -50,12 +50,12 @@ fail=0
 
 # PREREQUISITES, checked before a single verdict is printed.
 #
-# Every PoC here answers "VERDICT: N-A" when a tool it needs is absent, and N-A used to be accepted
-# in the GATED list as if it were fine. With an empty PATH all sixteen said N-A and the gate still
-# printed "every finding recorded as fixed is still PREVENTED" and exited 0 - a security claim over
-# zero executed proofs (dev review R08). Worse, the banner below ALREADY printed "NOT ON PATH" three
-# times: the evidence was on screen and the verdict ignored it, which makes a hollow run look
-# thorough. A gate that cannot tell "nothing attacked me" from "nothing ran" is not a gate.
+# Every PoC here answers "VERDICT: N-A" when a tool it needs is absent. Accepting that in the GATED
+# list makes an empty PATH indistinguishable from a clean run: all sixteen say N-A, and the gate
+# would print "every finding recorded as fixed is still PREVENTED" over zero executed proofs. Note
+# that printing the reason is not enough on its own - the banner below names every missing binary,
+# and a verdict that ignores what the banner says makes a hollow run look thorough. A gate that
+# cannot tell "nothing attacked me" from "nothing ran" is not a gate.
 missing=""
 for t in plankton nekton kton jq; do
   command -v "$t" >/dev/null 2>&1 || missing="$missing $t"

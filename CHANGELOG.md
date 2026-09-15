@@ -4,8 +4,7 @@
 
 ### ⚠️ Known limitation in 0.2: a claim can lose a signature when the same claim arrives twice
 
-**Not fixed in this release.** Reported by an external review of `dev`, reproduced here before being
-written down.
+**Not fixed in this release.**
 
 A claim id is `sha256(canon(Statement))`, so two DIFFERENT serializations of one statement — a
 compact one and a pretty-printed one, say — share a claim id while carrying signatures over
@@ -70,8 +69,6 @@ build reading a format it does not know refuses loudly instead of reporting an e
 
 ### Fixed — a gated proof that proved nothing, and a coverage claim that was not true
 
-Both reported by the examples workstream's red-team pass.
-
 - **`fourEyes-graphpoll` could not conclude anything, twice over.** Its closing
   `grep -E 'two distinct PRINCIPALS'` could never match — `release.py` prints "two distinct
   **authority-vouched** PRINCIPALS" — and `|| true` swallowed that, so it exited 0 having printed
@@ -107,7 +104,7 @@ Both reported by the examples workstream's red-team pass.
   purpose: it demonstrates *specified* behaviour, and the property it points at is tested by example
   12's Act 8a.
 
-### Fixed — specification vs. implementation audit
+### Fixed — five divergences between the specification and the reference
 
 A clause-by-clause sweep of `spec/SPEC.md` against both kernels. §5 (canonicalization), §6 (foton
 identity and the action key), §7 (claims, opaque predicates, the scope/seed grammar) and §8
@@ -152,7 +149,7 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
-### Fixed — `nekton verify` said yes to records `add` refuses (R02)
+### Fixed — `nekton verify` said yes to records `add` refuses
 
 `verify`'s exit 0 is documented to mean *"this claim is genuine AND storable"*. It answered only the
 first half.
@@ -172,7 +169,7 @@ $ echo $?                                            # was 0; `add` rejects this
 A parse failure is now a structural failure: exit 3, with the reason printed. So is a predicate that
 will not parse, whose error was being discarded into `_`.
 
-**And the seed rules moved to where both commands can see them.** The second half of R02 was a
+**And the seed rules moved to where both commands can see them.** The second case was a
 scope/v0 seed carrying `genesis:false`: it parses, so `verify` said `structure: VALID`, and `add`
 refused it. The rule lived *only* in the registry's chain check, and `verify` never reaches a
 registry. The context-free part of §7.4 — where `genesis` may appear, that a seed carries no `prev` —
@@ -180,15 +177,12 @@ is now `claim.ValidateChainStructure`, called from **both** the registry and `ve
 a rule is how two commands come to disagree about what a storable record is.
 
 What stays with the registry is what needs registry state: whether a scope resolves, whether a `prev`
-links to something present. That split is the point — it is the first piece of the shared validator
-the review asks for, done where it is context-free rather than declared everywhere at once.
+links to something present. That split is the point: a shared validator is worth having where the
+rules are context-free, and moving a context-dependent check into one would break it.
 
-### Fixed — the two findings that would have shipped as documented instead of fixed
+### Fixed — a DNS rebind in `kton fetch`, and no native test on two shipped platforms
 
-Both raised against the release PR. Both were real, and in both cases the honest answer was to fix
-the thing rather than describe it.
-
-- **`kton fetch` followed a DNS rebind (R01).** `checkDestination` resolved the hostname, and the
+- **`kton fetch` followed a DNS rebind.** `checkDestination` resolved the hostname, and the
   `http.Client` then resolved it **again** on its own — two lookups with nothing tying them together,
   so a resolver answering a public address to the check and a loopback address to the connection
   bypassed `--allow-local` without it ever being passed. A hash check afterwards does not help: the
@@ -201,7 +195,7 @@ the thing rather than describe it.
   checked, and the connection is made to a checked address **as an IP literal** — there is no second
   lookup for a second answer to come back from. TLS still verifies against the URL's hostname.
 
-- **CI never ran on two of the five platforms we publish (R15).** `release.yml` ships linux/amd64,
+- **CI never ran on two of the five platforms we publish.** `release.yml` ships linux/amd64,
   linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64; every CI job ran on ubuntu. A packaged
   target with no passing native baseline is a claim nobody checked, and it was hiding two real
   failures — a test-setup bug that built a directory name out of an absolute path (a drive letter
@@ -216,13 +210,9 @@ the thing rather than describe it.
   protection is now checked instead of asserted. A new `platforms` job builds and tests natively on
   windows-latest and macos-latest.
 
-### Fixed — first patch group from the external development-branch review
+### Fixed — a gate that proved nothing, a keygen that deleted keys, and two false answers
 
-An independent review of `dev` at `edcbfa1` returned fifteen findings, four of them P1. Four are
-closed here; the reproductions were re-run against the code before any of it was touched, and all
-four reproduced exactly as reported.
-
-- **The security gate printed PASS having executed nothing** (R08). With the binaries absent from
+- **The security gate printed PASS having executed nothing.** With the binaries absent from
   `PATH` every one of the sixteen gated attacks reported `N-A`, `N-A` was accepted in the GATED list
   as though it were a pass, and the gate ended with *"every finding recorded as fixed is still
   PREVENTED"* and exit 0 — a security claim over zero executed proofs. Worse, the banner added days
@@ -235,10 +225,10 @@ four reproduced exactly as reported.
   **NOT RUN** and the gate ends `INCOMPLETE`, naming how many of its proofs actually executed.
   `KTON_GATE_STRICT=1` — now set in CI — makes missing coverage fail the build, and CI's
   kton-examples checkout is no longer `continue-on-error`: two gated attacks can only run against it,
-  and a fixture allowed to fail silently is R08 one level up. With it present the gate runs
+  and a fixture allowed to fail silently is the same defect one level up. With it present the gate runs
   **16 of 16** rather than 14.
 
-- **`keygen` deleted a private key it had never written** (R04). `WriteKeyFile` returns success for a
+- **`keygen` deleted a private key it had never written.** `WriteKeyFile` returns success for a
   file that already holds exactly the requested key, so the caller could not tell *I created this*
   from *it was already here* — and on a failure writing the public half it removed `name.key`
   unconditionally. Re-running `keygen` over an existing identity whose `.pub` had drifted therefore
@@ -251,14 +241,14 @@ four reproduced exactly as reported.
   rolled back; a `--force` replacement that fails restores the original from its backup. Four cases,
   four tests, in both kernels, verified to fail against the old code.
 
-- **`reproduces` claimed a byte-identity match between two malformed strings** (R14). Hash
+- **`reproduces` claimed a byte-identity match between two malformed strings.** Hash
   normalization was attempted and its failure ignored, so `reproduces not-a-hash not-a-hash --json`
   answered `{"level":"L0","matched":true}` with exit 0. L0 means *the same output bytes*; neither
   argument named any bytes. Both compared arguments must now normalize. Equivalent spellings — bare
   hex, uppercase, surrounding whitespace — still compare equal, which is why normalizing happens at
   all.
 
-- **`seed --parent` signed a reference its own parser cannot read** (R11). It emitted the *subject*
+- **`seed --parent` signed a reference its own parser cannot read.** It emitted the *subject*
   shape, `{"digest":{"sha256":…}}`, while `claim.Ref` reads `{hash?, uri?}` (nekton SPEC §7.4:
   `parent?: Ref`). A seed authored with `--parent` round-tripped to an empty `Hash` and an empty
   `Parent.Key()`: the scope hierarchy the operator asked for was signed into a permanent claim id in
@@ -274,12 +264,6 @@ four reproduced exactly as reported.
   real one needs. The key and timestamps are now fixed, so the ids are identical on every machine and
   every run, and an unbuildable precondition reports `INCONCLUSIVE` — *I could not set up the attack*
   and *the attack worked* are different answers.
-
-Not in this group, deliberately: **R03** (signature loss between canonically equivalent
-serializations) and **R02** (`verify` accepting records `Add` rejects) need a storage and a shared
-validator decision respectively, and the review is right that a careless canonicalization fix can
-invalidate signatures. *(**R01** was in this list as "a cockpit concern that leaves with #103" and is
-no longer: `kton fetch` ships in 0.2, so it was fixed rather than deferred — see above.)*
 
 ### Fixed — the kernel reported a verification verdict it is forbidden to have
 
@@ -308,11 +292,10 @@ no longer: `kton fetch` ships in 0.2, so it was fixed rather than deferred — s
   at a three-way vocabulary — *verified here* (naming who checked), *carried*, *failed* — because a
   single boolean cannot hold those three apart.
 
-### Fixed — the line-by-line spec audit (#127)
+### Fixed — six divergences between the specification and the reference
 
-A second, exhaustive pass: all **103** normative statements in `spec/SPEC.md` walked one at a time,
-each checked with a purpose-built probe rather than by reading it and agreeing with it. Ninety-seven
-held. Six did not, and each is closed on the side that was actually wrong.
+All **103** normative statements in `spec/SPEC.md` were checked against the reference. Ninety-seven
+held; six did not, and each is closed on the side that was actually wrong.
 
 - **`reproduces --via` did not surface the consumer's obligation in `--json`** (§9). The human line
   did; `--json` did not — and `--json` exists precisely so a machine consumer stops parsing prose. An
@@ -366,17 +349,16 @@ held. Six did not, and each is closed on the side that was actually wrong.
 ### Added — properties, not just examples
 
 - **Fuzz targets over the canonicalization boundary**, and a CI job that actually searches (30 s per
-  target) rather than only replaying the seed corpus. The audit noted there were no `Fuzz`
-  entrypoints at all, and AUD-07 is why it matters: a whole class of numbers where
-  `canon(canon(x)) != canon(x)`, which no example-based test would have found because they all used
-  values someone had already thought of. Measured locally at **1.48 M executions, 406 new
+  target) rather than only replaying the seed corpus. There were no `Fuzz` entrypoints at all, and
+  what makes that matter is a whole class of numbers where `canon(canon(x)) != canon(x)` — which no
+  example-based test would have found, because they all used values someone had already thought of. Measured locally at **1.48 M executions, 406 new
   interesting inputs, no failure**.
 
   The job is separate from the main gate deliberately: a find is *not* a regression in the pull
   request's own code, and a red mark in `verify` would say exactly that.
 
 - **Sync convergence as a property** (nekton). §12's cursor makes one promise — follow it and you
-  lose nothing — and the audit's closing note on AUD-04 was that a full rescan recovers what an
+  lose nothing — and the failure mode it has to exclude is one where a full rescan recovers what an
   incremental follow cannot. The test drives the interleavings that broke it (a co-signature arriving
   after the peer is past the claim; a chain whose seed arrives late) and asserts the **consumer's
   final state**: a peer that only ever followed cursors must hold exactly what a peer reading from
@@ -432,7 +414,7 @@ held. Six did not, and each is closed on the side that was actually wrong.
   a footer claimed they "resolve for repo members". The hashes are kept as plain text, so the trail
   survives for anyone holding the archive and nothing claims to be checkable that is not.
 
-### Fixed — the cursor contract (external audit, AUD-04)
+### Fixed — the cursor contract: `sync(since)` delivers what it promises
 
 - **A change to a record that a peer is already past now reaches it, and the feed no longer hides
   what the store holds.** Two failures, both measured, and neither was really a numbering problem:
@@ -481,10 +463,9 @@ held. Six did not, and each is closed on the side that was actually wrong.
   finding, which is whether a co-signer can be **lost**. It now counts distinct signers surviving a
   mirror *and* asks `by signer` for each, which is what the finding was about.
 
-### Fixed — boundary and identity rules (external audit, step 3)
+### Fixed — boundary and identity rules
 
-- **Canonicalization is idempotent, and the number rule is on the value rather than the spelling**
-  (AUD-07). The exactness check ran only when the literal held no `.`, `e` or `E`, so acceptance
+- **Canonicalization is idempotent, and the number rule is on the value rather than the spelling**. The exactness check ran only when the literal held no `.`, `e` or `E`, so acceptance
   depended on how a number was written:
 
   ```
@@ -506,7 +487,7 @@ held. Six did not, and each is closed on the side that was actually wrong.
   two records differing by one would share a content address. §5.3 now states the restriction, and
   its normative example list no longer implies `1E30` is accepted.
 
-- **A field that would vanish before signing is refused** (AUD-08). Both authoring parsers decoded
+- **A field that would vanish before signing is refused**. Both authoring parsers decoded
   straight into structs, which destroys the evidence: Go keeps the **last** of a duplicate name and
   stops at the end of the first document. `"why":"first","why":"second"` was signed as `"second"`;
   `CanonJSON` accepted `{"x":1} {"ignored":2}` and returned only `{"x":1}`. The new
@@ -514,13 +495,13 @@ held. Six did not, and each is closed on the side that was actually wrong.
   plankton's foton spec additionally rejects unknown fields, so a misspelled `inputs` no longer
   disappears. The opaque `descriptor` stays fully extensible.
 
-- **A precomputed foton id now equals the id of the record signed** (AUD-09). `FotonID` used the
+- **A precomputed foton id now equals the id of the record signed**. `FotonID` used the
   supplied hash strings verbatim while the signing path normalized them, so an accepted uppercase
   hash produced two different ids for one spec — a cockpit that precomputes a result id held a
   reference that did not resolve to the record it went on to sign. Both paths go through one
   normalized representation.
 
-- **Structural foton validation is complete, and its failures are refusals** (AUD-10). A signed
+- **Structural foton validation is complete, and its failures are refusals**. A signed
   foton with two different hashes at the same **absolute** input path was accepted *and indexed*;
   its action key then failed to compute and the registry silently omitted the action-key index while
   leaving the record queryable everywhere else. `Validate` now checks bound-hash syntax, relative
@@ -531,27 +512,26 @@ held. Six did not, and each is closed on the side that was actually wrong.
   object let an arbitrary incorrect ref through unchecked and shared the bare-ref action-key
   namespace. Only `nil` is absent now; a present descriptor is hashed, empty or not.
 
-### Changed — release and contributor plumbing (external audit)
+### Changed — release and contributor plumbing
 
 - **CI runs on `dev`, not only `main`** — a direct push to the active development branch was
   ungated; only pull requests were ever checked.
 
-- **The gate and released binaries build on a supported Go line** (AUD-13). 1.22 is outside Go's
+- **The gate and released binaries build on a supported Go line**. 1.22 is outside Go's
   support window, and the standard library ships inside every released binary — having no
   third-party modules does not remove toolchain maintenance. The declared `go 1.22` floor is now
   *proven* by a separate `compat` job rather than doubling as the release baseline.
 
-- **`CONTRIBUTING` no longer tells readers to run `go test ./...` from the repo root** (AUD-12),
+- **`CONTRIBUTING` no longer tells readers to run `go test ./...` from the repo root**,
   which fails: the workspace root is not a module. It gives the per-module loop CI actually runs.
 
 - Stale capability claims removed: the root README advertised `serve`, Annex C said the reference
   ships the HTTP federation **client** (deleted in #101), §13 said `kton anchor` cannot store a
   proof though `--store` does, and `kton/README` gave a build command from the wrong directory.
 
-### Fixed — a union is now commutative (external audit, step 2)
+### Fixed — a union is now commutative
 
-- **A multi-source read gave a different answer depending on argument order** (AUD-02, AUD-03,
-  AUD-11). §11–§12 promise a conflict-free set union, and an operation whose result depends on the
+- **A multi-source read gave a different answer depending on argument order**. §11–§12 promise a conflict-free set union, and an operation whose result depends on the
   order of its arguments is not one. Three separate ways it did:
 
   | | before | after |
@@ -560,18 +540,18 @@ held. Six did not, and each is closed on the side that was actually wrong.
   | the same claim signed by two parties | 1 signature; which signer survived depended on order | 2 signatures either way |
   | material attached in the second source | lost (plankton: lost even to an **empty** second source) | merged from every source |
 
-  **AUD-02:** `OpenUnion` opened `dirs[0]` normally — which *settled it alone* and **dropped**
+  `OpenUnion` opened `dirs[0]` normally — which *settled it alone* and **dropped**
   whatever did not resolve — and then settled only the remaining sources against that finished
   view. A's unresolved child was therefore discarded before B had even been read. Every source's
   raw records are now collected first and settled **together**, once.
 
-  **AUD-03:** `settle` skipped a claim id it had already seen. A claim id covers the **payload**
+  `settle` skipped a claim id it had already seen. A claim id covers the **payload**
   only, so two independent signers of identical bytes are one claim with two signatures — which is
   what `Add` already did at ingest. The union now merges them in memory (never writing: a read must
   not mutate a source), and refreshes the signer index so `BySigner` finds both. `unionSignatures`
   still refuses to merge across **differing** payload bytes, which is the point and is preserved.
 
-  **AUD-11:** plankton allocated an empty material map for a union and never filled it; nekton kept
+  plankton allocated an empty material map for a union and never filled it; nekton kept
   only the first source's. Material is now merged from every source, deduplicated by attachment, and
   independently of settling — §8.1 says a record's validity never depends on its material, and the
   converse has to hold too.
@@ -580,10 +560,9 @@ held. Six did not, and each is closed on the side that was actually wrong.
   orders of a co-signed twin, and material in every source position including empty and duplicate
   sources — each verified to fail without its fix.
 
-### Fixed — identities and truthful failures (external audit, step 1)
+### Fixed — identities are protected, and failed writes say so
 
-- **`keygen` no longer overwrites an identity, and no longer inherits a file's permissions**
-  (AUD-01). `os.WriteFile(path, seed, 0600)` looks safe and is not: the mode applies only when the
+- **`keygen` no longer overwrites an identity, and no longer inherits a file's permissions**. `os.WriteFile(path, seed, 0600)` looks safe and is not: the mode applies only when the
   call *creates* the file, so a pre-existing world-readable `alice.key` kept `0644` and received the
   new private seed. And `keygen alice` twice succeeded twice — the first seed was gone, and records
   signed with it could no longer be checked against that filename. The signatures stayed
@@ -596,7 +575,7 @@ held. Six did not, and each is closed on the side that was actually wrong.
   re-runs without `--force`. A failure writing the public half removes the private half rather than
   leaving a keypair whose public key nobody has.
 
-- **A mirror that cannot write now fails, loudly** (AUD-05). All three entrypoints reported success
+- **A mirror that cannot write now fails, loudly**. All three entrypoints reported success
   after storing nothing:
 
   ```
@@ -616,7 +595,7 @@ held. Six did not, and each is closed on the side that was actually wrong.
   returns non-zero and names the cause; a refused peer record is counted, named, and also exits
   non-zero, because a silent skip is how an incomplete mirror looks complete.
 
-- **`nanopublish --rsa` no longer claims to have saved a key it lost** (AUD-06). With a path whose
+- **`nanopublish --rsa` no longer claims to have saved a key it lost**. With a path whose
   parent did not exist, the command generated an RSA key, published, printed *"generated a new RSA
   key and saved it to …"* and exited 0 — and the file did not exist, so the next run minted a
   different identity. The save's error was discarded with `_ =`. Separately, **any** read error was
@@ -641,7 +620,7 @@ held. Six did not, and each is closed on the side that was actually wrong.
   from the signed one. Reads still resolve pre-0.2 per-claim objects, and a write migrates a record
   the first time it touches it, so an existing store keeps working and converts as it is used.
 
-- **`sync(since)` stops losing records** (#97, AUD-02). §12 always said the answer is "records with
+- **`sync(since)` stops losing records** (#97). §12 always said the answer is "records with
   a local sequence above `since`, **in append order**". Both kernels instead derived that sequence
   from the record's rank in the hash-sorted store, recomputed on every load — so the one guarantee a
   cursor exists to give (*ask again with this number and you lose nothing*) did not hold. In plain

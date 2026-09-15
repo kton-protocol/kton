@@ -821,9 +821,9 @@ func (r *Registry) checkChain(id string, st *claim.Statement, p *claim.Predicate
 	if p == nil {
 		return nil
 	}
-	// The context-free half of §7.4 lives in the claim package and is called from here AND from
-	// `verify`. It used to be defined only here, so verify - which never reaches a registry -
-	// passed records this refuses (dev review R02). Two copies is how they drifted; there is one.
+	// The context-free half of §7.4 lives in the claim package, called from here AND from `verify`.
+	// Defined once on purpose: `verify` never reaches a registry, so a copy of these rules here is
+	// how the two commands come to disagree about what a storable record is.
 	if err := claim.ValidateChainStructure(st, p); err != nil {
 		return err
 	}

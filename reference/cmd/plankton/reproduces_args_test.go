@@ -6,11 +6,10 @@ import (
 	"testing"
 )
 
-// `reproduces` normalized its two arguments and IGNORED the failure, so two equal malformed strings
-// fell into the byte-identity branch: `reproduces not-a-hash not-a-hash --json` answered
-// {"level":"L0","matched":true} with exit 0 (dev review R14). L0 means "the same output bytes";
-// neither argument named any bytes. A caller passing through a broken variable got a successful
-// reproduction claim instead of an error.
+// L0 means "the same output bytes", and `ref == cand` is how that is decided - so both arguments
+// have to BE content hashes before they are compared. If normalization can fail silently, two equal
+// malformed strings report a match over strings that name no bytes, and a caller passing through a
+// broken variable gets a successful reproduction claim instead of an error.
 func TestReproducesRefusesArgumentsThatAreNotHashes(t *testing.T) {
 	h := "sha256:" + strings.Repeat("a", 64)
 
