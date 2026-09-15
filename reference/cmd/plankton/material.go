@@ -98,9 +98,19 @@ func listMaterial(args []string) error {
 	if subject == "" {
 		return fmt.Errorf("usage: plankton material <sha256:fotonId> [--json]")
 	}
-	if n, ok := core.NormalizeContentHash(subject); ok {
-		subject = n
+	// SPEC §12: "An unrecognised or absent query parameter MUST be an error, never an empty result:
+	// an empty answer to a malformed question is a successful wrong answer." `material` asks about a
+	// RECORD, so its argument is a content address and nothing else - and `material -x` answered
+	// "(none) - no verification material attached to -x" and exited 0. A caller checking whether a
+	// record carries evidence reads that as "checked, none there", which is a different fact from
+	// "that is not a record id". The same rule already refused a bare word in `about`.
+	norm, ok := core.NormalizeContentHash(subject)
+	if !ok {
+		return fmt.Errorf("%q is not a foton id - material attaches to a record, so this takes a "+
+			"content address (\"sha256:<64 hex>\"). Answering \"no material\" would report a fact "+
+			"about a record that does not exist (SPEC §12)", subject)
 	}
+	subject = norm
 	r, err := registry.Open(dir())
 	if err != nil {
 		return err
