@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,9 +31,28 @@ func TestTemplatesRejectsSubcommandsInsteadOfReadingThemAsNames(t *testing.T) {
 		t.Errorf("two positionals: %v; want a refusal naming both", err)
 	}
 
-	// A single unknown name is still the honest not-found error - this must not swallow that.
+	// A single unknown name is still the honest not-found error - this must not swallow that. It
+	// needs a template DIRECTORY to be about a missing template at all: with no directory the honest
+	// answer is that the directory is missing, which is a different fact and says so.
+	dir := t.TempDir()
+	if werr := os.WriteFile(filepath.Join(dir, "pmx-model-role.json"),
+		[]byte(`{"name":"pmx/model-role","predicate":"https://kton.dev/v/pmx/model-role"}`), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	t.Setenv("NEKTON_TEMPLATES", dir)
+	t.Setenv("NEKTON_ALIASES", filepath.Join(dir, "aliases.json"))
 	err = listTemplates([]string{"definitely-not-a-template"})
 	if err == nil || !strings.Contains(err.Error(), "no template") {
 		t.Errorf("single unknown name: %v; want the not-found error", err)
+	}
+	// And a name that IS there still works, so the not-found path is not simply always taken.
+	if err := listTemplates([]string{"pmx/model-role"}); err != nil {
+		t.Errorf("an existing template was not shown: %v", err)
+	}
+	// With no directory at all, the honest answer is about the directory.
+	t.Setenv("NEKTON_TEMPLATES", filepath.Join(dir, "absent"))
+	if err := listTemplates([]string{"anything"}); err == nil ||
+		!strings.Contains(err.Error(), "no template directory") {
+		t.Errorf("missing directory: %v; want it named as the missing thing", err)
 	}
 }
