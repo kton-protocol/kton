@@ -82,13 +82,22 @@ jobs:
           ( cd reference        && go build -o "$RUNNER_TEMP/bin/plankton" ./cmd/plankton )
           ( cd nekton/reference && go build -o "$RUNNER_TEMP/bin/nekton"   ./cmd/nekton )
           ( cd kton/reference   && go build -o "$RUNNER_TEMP/bin/kton"     ./cmd/kton )
-      - name: checkout kton-examples (for the viewer attack)
+      - name: checkout kton-examples (two gated attacks reproduce there)
+        # NOT continue-on-error any more. Two GATED attacks - screenshot-viewer-labels and
+        # fourEyes-graphpoll - can only run against this checkout. Letting it fail silently meant CI
+        # went green over a gate that had quietly lost coverage, which is the same shape as R08 one
+        # level up. If the fixture cannot be fetched, that is a fact about this run and it should be
+        # loud.
         uses: actions/checkout@v4
-        continue-on-error: true
         with:
           repository: gitmick/kton-examples
           path: kton-examples
       - name: security regression gate (every fixed attack must stay PREVENTED)
+        env:
+          # Strict: an attack that did not run fails the job. Locally the gate reports INCOMPLETE and
+          # exits 0, because a developer without the companion checkout should still get the other
+          # fourteen verdicts. CI has no such excuse - it fetched the fixture above.
+          KTON_GATE_STRICT: '1'
         run: |
           export PATH="$RUNNER_TEMP/bin:$PATH"
           bash security/check.sh "$GITHUB_WORKSPACE/kton-examples"

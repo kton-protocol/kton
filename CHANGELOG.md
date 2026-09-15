@@ -169,10 +169,10 @@ four reproduced exactly as reported.
   printed, and a missing one refuses to produce a verdict at all. `N-A` in the gated list is no
   longer a pass: the only honest reason left is the companion checkout, so those attacks report
   **NOT RUN** and the gate ends `INCOMPLETE`, naming how many of its proofs actually executed.
-  `KTON_GATE_STRICT=1` makes missing coverage fail the build. With the companion checkout present
-  the gate runs **16 of 16** rather than 14. *(Setting that variable in `ci.yml`, and making CI's
-  kton-examples checkout fatal rather than `continue-on-error`, is a separate one-hunk change: this
-  token cannot push workflow files.)*
+  `KTON_GATE_STRICT=1` — now set in CI — makes missing coverage fail the build, and CI's
+  kton-examples checkout is no longer `continue-on-error`: two gated attacks can only run against it,
+  and a fixture allowed to fail silently is R08 one level up. With it present the gate runs
+  **16 of 16** rather than 14.
 
 - **`keygen` deleted a private key it had never written** (R04). `WriteKeyFile` returns success for a
   file that already holds exactly the requested key, so the caller could not tell *I created this*
