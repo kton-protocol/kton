@@ -149,6 +149,23 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
+### Fixed — identity and the action key disagreed about an empty descriptor
+
+`FotonID` marshalled `Protocol` through `descriptor,omitempty`, and for a map `omitempty` drops an
+**empty** map as well as a nil one — so `descriptor: {}` and no descriptor at all produced the same
+covered bytes and the same foton id. `EffectiveRef` and `ActionKey` draw the opposite distinction,
+and deliberately: only nil is absent there, because a bare ref is an unverifiable pointer to an
+off-record protocol and must not share an action key with an inline descriptor.
+
+Identical id, different action key. Ingest took the `{}` form for a duplicate of the descriptor-less
+one (`new=false`, no error) and it never acquired its own entry in the reuse index — one record,
+two answers about what it is.
+
+Presence is now explicit in the covered projection. A non-empty descriptor and a nil one produce
+exactly the bytes they produced before — the key set is unchanged and canonicalization sorts — so
+**no existing foton id moves**; only `{}` becomes distinct, and no record in this repository or in
+the example suite carries one. Checked before changing it, because covered bytes are identity.
+
 ### Fixed — two checks of my own that could report a pass without having looked
 
 Both were added earlier the same day, and both had the defect they were written to prevent.
