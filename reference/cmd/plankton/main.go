@@ -857,19 +857,28 @@ func run(cmd string, args []string) error {
 			// handed `{fotonId, kind, inputs, outputs}` cannot verify a signature, cannot re-derive the
 			// id, and has to come back for the record it was just told about. The summary fields stay
 			// alongside it - they are useful and removing them would break readers for nothing.
-			recs := make([]map[string]any, 0, len(ids))
+			// SPEC §12 pins two different wire forms, and this is the second one: `sync` answers
+			// records wrapped with their position, and "the record queries answer
+			// { "records": [ <envelope> ... ] }" - bare envelopes. They were summary objects with an
+			// envelope nested inside, so a consumer decoding the declared shape got an array of
+			// things that were not envelopes and could neither verify nor re-ingest them. Only the
+			// sync form had a conformance fixture, which is why the other half went unnoticed.
+			//
+			// The summary is not lost, it moves: keyed by foton id beside the array, so a reader that
+			// wants `kind` or the slot counts still has them without another lookup, and the
+			// normative array is what the clause says it is.
+			recs := make([]any, 0, len(ids))
+			summary := map[string]any{}
 			for _, id := range ids {
 				f, _ := r.Foton(id)
-				rec := map[string]any{
-					"fotonId": id, "kind": f.Protocol.Kind,
-					"inputs": len(f.Inputs), "outputs": len(f.Outputs),
+				summary[id] = map[string]any{
+					"kind": f.Protocol.Kind, "inputs": len(f.Inputs), "outputs": len(f.Outputs),
 				}
 				if env, ok := r.Envelope(id); ok {
-					rec["envelope"] = env
+					recs = append(recs, env)
 				}
-				recs = append(recs, rec)
 			}
-			out := map[string]any{"relation": cmd, "query": q, "records": recs}
+			out := map[string]any{"relation": cmd, "query": q, "records": recs, "summary": summary}
 			if len(sources) > 0 {
 				out["sources"] = sources
 			}

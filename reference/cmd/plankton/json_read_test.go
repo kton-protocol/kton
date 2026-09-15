@@ -42,14 +42,22 @@ func TestReadSurfaceEmitsJSONWithNamedIDs(t *testing.T) {
 	})
 	outHash = strings.TrimSpace(outHash)
 
+	// The id is still a NAMED field - it moved, and this is the one place where the two requirements
+	// on this command meet. SPEC §12 pins the record-query answer as `{"records":[<envelope>…]}`,
+	// bare envelopes, so an id cannot live inside an element without making that element something
+	// other than an envelope. It lives in `summary`, KEYED by id: a consumer still never has to
+	// regex an id out of prose, which is what this test was written to guarantee, and the array is
+	// what the clause says it is.
 	t.Run("producer", func(t *testing.T) {
 		var got struct {
 			Relation string `json:"relation"`
 			Query    string `json:"query"`
 			Records  []struct {
-				FotonID string `json:"fotonId"`
-				Kind    string `json:"kind"`
+				PayloadType string `json:"payloadType"`
 			} `json:"records"`
+			Summary map[string]struct {
+				Kind string `json:"kind"`
+			} `json:"summary"`
 		}
 		raw := captureStdout(t, func() {
 			if err := run("producer", []string{outHash, "--json"}); err != nil {
@@ -62,8 +70,20 @@ func TestReadSurfaceEmitsJSONWithNamedIDs(t *testing.T) {
 		if got.Relation != "producer" || got.Query != outHash {
 			t.Errorf("relation/query = %q/%q", got.Relation, got.Query)
 		}
-		if len(got.Records) != 1 || !strings.HasPrefix(got.Records[0].FotonID, "sha256:") {
-			t.Errorf("records = %+v; want one record carrying its id as a NAMED field", got.Records)
+		if len(got.Records) != 1 || got.Records[0].PayloadType == "" {
+			t.Errorf("records = %+v; §12 wants one bare ENVELOPE here", got.Records)
+		}
+		if len(got.Summary) != 1 {
+			t.Fatalf("summary = %+v; want one entry keyed by the record's id", got.Summary)
+		}
+		for id, sum := range got.Summary {
+			if !strings.HasPrefix(id, "sha256:") {
+				t.Errorf("summary key %q is not a foton id - the id must still be a NAMED thing a "+
+					"consumer can read, never something it has to parse out of prose", id)
+			}
+			if sum.Kind == "" {
+				t.Errorf("summary for %s lost `kind`", id)
+			}
 		}
 	})
 

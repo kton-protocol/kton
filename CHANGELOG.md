@@ -228,6 +228,39 @@ Both were added earlier the same day, and both had the defect they were written 
   test gained a fixture that varies the payload spelling, and the script now names its own missing
   prerequisite rather than letting every case fail under a misleading summary.
 
+### Fixed — the record queries did not answer the wire form §12 pins for them
+
+§12 fixes **two** shapes and they are not the same:
+
+```
+sync            { "records": [ { "seq", "fotonId", "envelope" } … ], "max", "epoch" }
+record queries  { "records": [ <envelope> … ] }
+```
+
+`producer --json` and `uses --json` answered summary objects with an envelope nested inside. A
+consumer decoding the declared shape therefore got an array of things that were not envelopes —
+empty `payloadType`, no signatures, nothing to verify or re-ingest:
+
+```
+records=1, payload="", payloadType="", signatures=0
+```
+
+`records` now carries bare envelopes. The summary is not lost, it moves: **keyed by foton id** beside
+the array, so a reader that wants `kind` or the slot counts still has them without a second lookup
+and without index-matching two parallel arrays.
+
+*Why this survived two spec audits: `reference/testdata/federation/` holds a conformance fixture for
+the `sync` answer and none for the record queries, so half the clause was never exercised. The tests
+now decode the record-query answer through `[]core.Envelope` — the declared shape — because that is
+precisely what a conforming consumer must be able to do.*
+
+**Two requirements meet here and the resolution is worth stating.** An earlier change made the id a
+NAMED field on each record, so a consumer would never have to regex one out of prose. §12 wants bare
+envelopes, and an id inside an element makes that element something other than an envelope. The id
+therefore moved rather than went: `summary` is keyed by it, so it is still a named thing a reader
+looks up rather than parses, and the array is what the clause says it is.
+
+
 ### Fixed — adding an empty source to a union removed evidence from the sync feed
 
 `OpenUnion` zeroes foreign positions on purpose: a number issued by another store means nothing here.
