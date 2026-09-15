@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"kton.dev/nekton/claim"
+	"kton.dev/nekton/template"
 	"kton.dev/plankton/core"
 )
 
@@ -67,16 +68,16 @@ type trigCtx struct {
 	prefixes  map[string]string // prefix -> IRI namespace
 	revExp    []struct{ pfx, ns string }
 	fieldNS   string // default namespace for unresolved object-field keys
-	al        aliasFile
+	al        template.Set
 	trustKeys []ed25519.PublicKey // verifier's trusted keys; attribution is derived from these, not the claimed keyid
 }
 
-func newTrigCtx(al aliasFile) *trigCtx {
+func newTrigCtx(al template.Set) *trigCtx {
 	pfx := map[string]string{}
 	for k, v := range defaultPrefixes {
 		pfx[k] = v
 	}
-	for k, v := range al.Prefixes {
+	for k, v := range al.Prefixes() {
 		pfx[k] = v
 	}
 	c := &trigCtx{prefixes: pfx, fieldNS: pfx["lab"], al: al}
@@ -143,7 +144,7 @@ func (c *trigCtx) curie(iri string) string {
 // fieldIRI resolves an object-field key (e.g. "outcome") to a term IRI, via the aliases if it is a
 // known term/CURIE, else minting it in the default lab namespace.
 func (c *trigCtx) fieldIRI(key string) string {
-	if r := c.al.resolve(key); strings.Contains(r, "://") {
+	if r := c.al.Resolve(key); strings.Contains(r, "://") {
 		return c.curie(r)
 	}
 	return c.curie(c.fieldNS + key)
@@ -216,7 +217,7 @@ func exportNanopub(args []string) error {
 		return err
 	}
 	id := strings.TrimPrefix(claim.ClaimID(payload), "sha256:")
-	c := newTrigCtx(loadAliases(aliasesPath))
+	c := newTrigCtx(mustTemplateSet(aliasesPath))
 	if trustDir != "" {
 		ks, err := loadTrustKeys(trustDir)
 		if err != nil {
