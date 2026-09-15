@@ -47,29 +47,13 @@ never requires them. They live in aliases/templates, not the spec.
   under a validated process, a qualified environment, an accepted risk, a deviation, a CAPA.
   **Use such a term only when a real validated process stands behind the claim.**
 
-  **There is no established property for "reviewed by", and this annex used to name one that does not
-  exist.** `pav:reviewedBy` was cited here, in Annex A and in the examples for the whole of 0.1, and
-  it was published into signed nanopublications. PAV defines 33 terms - `authoredBy`, `createdBy`,
-  `curatedBy`, `importedBy`, `retrievedBy` among them - and `reviewedBy` is not one of them. It read
-  as plausible, which is exactly why nobody checked it.
+  Review uses an application term of its own. No published ontology defines a "reviewed by"
+  property, and a passive one would be the wrong shape anyway: its object is the reviewer, where
+  the verdict belongs. The object is the verdict; the reviewer is the signature.
 
-  Two lessons, both worth more than the term: a reused vocabulary is a claim ABOUT someone else's
-  document, so it has to be looked up rather than remembered; and `reviewedBy` would have been the
-  wrong SHAPE even had it existed - it is passive, "X was reviewed **by** Y", so its object is the
-  reviewer's identity, and putting a verdict there asserts that the record was reviewed by "looks
-  correct". Review therefore uses an application term of the example suite's own, whose object is the
-  verdict and whose reviewer is the signature.
-
-  `oa:assessing` is the right *motivation* in the Web Annotation vocabulary and is real - but it is an
-  instance of `oa:Motivation`, not a property, so it belongs in `oa:motivatedBy oa:assessing` on an
-  `oa:Annotation`, never in a predicate slot. Naming it as one would repeat the mistake in a better
-  disguise.
-
-  This annex deliberately does **not** name that namespace or enumerate its terms. It once reserved a
-  specific prefix and named the template that carried it - and then the example suite renamed both,
-  which is exactly what the sentence above this list says will happen: application vocabulary lives in
-  aliases and templates, not here. A specification that reserves a moving target ends up documenting
-  a vocabulary no example uses. The live set is whatever
+  This annex does not name that namespace or enumerate its terms. Application vocabulary lives in
+  aliases and templates and moves independently of the specification; an annex that reserved it
+  would document a vocabulary no example uses. The live set is whatever
   [`gitmick/kton-examples`](https://github.com/gitmick/kton-examples) ships in `templates/` and
   `aliases`, and the kernel requires none of it (Clause 7.1).
 - **Domain example:** `pmx:model-role` (pharmacometrics); `ddmore-entry`, `workbench-run` (integrations).
