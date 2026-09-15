@@ -68,9 +68,19 @@ scenario() {
       --sign keys/analyst.key --add -o "$F/fit.dsse.json" 2>/dev/null | awk '/indexed foton/{print $3}')
 
     printf 'PDF qc review\n' > "$F/qc.pdf"; printf 'PDF second review\n' > "$F/second.pdf"
-    nekton annotate --foton "$F/fit.dsse.json" --template gxp/review --set outcome=pass \
+    # DISCOVER the review template; do not hard-code the companion repository's name for it. That
+    # vocabulary belongs to the examples and it moves, while this PoC is about whether four-eyes can
+    # be forged - a property that has nothing to do with what the template is called. A hard-coded
+    # name turns a rename over there into a red gate here, and an `annotate` that silently resolves
+    # nothing is how this PoC came to prove nothing at all.
+    REVIEW_TPL=$(nekton templates 2>/dev/null | awk '$1 ~ /(^|\/)review$/ {print $1; exit}')
+    if [ -z "$REVIEW_TPL" ]; then
+      echo "no */review template in ${NEKTON_TEMPLATES:-the template dir} - cannot build the scenario"
+      echo "VERDICT: INCONCLUSIVE"; exit 0
+    fi
+    nekton annotate --foton "$F/fit.dsse.json" --template "$REVIEW_TPL" --set outcome=pass \
       --set sop=SOP-REV-002 --set report="$F/qc.pdf" --by "CN=qc" --sign keys/qc.key --add >/dev/null 2>&1
-    nekton annotate --foton "$F/fit.dsse.json" --template gxp/review --set outcome=pass \
+    nekton annotate --foton "$F/fit.dsse.json" --template "$REVIEW_TPL" --set outcome=pass \
       --set sop=SOP-REV-002 --set report="$F/second.pdf" --by "CN=$second" --sign "keys/$second.key" --add >/dev/null 2>&1
 
     if [ "$decoy" = "yes" ]; then

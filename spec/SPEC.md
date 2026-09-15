@@ -765,8 +765,9 @@ W3C **PROV-O**. General review provenance: **PAV** (`pav:reviewedBy`). Location/
 `located-at` mechanism, Clause 12): **DCAT** (`dcat:downloadURL`). Equivalence/hierarchy: **OWL/SKOS**.
 Licensing identifiers: SPDX. Publication: nanopublication / Trusty URI (Clause 14). Domain vocabularies
 used by *examples* (not the protocol) - EDAM/SWO/STATO/OBI, Cell Ontology, HGNC, SEPIO/micropublication
-for evidence - are application vocabulary, not normative kton terms. The full reuse ↔ native mapping and
-the reserved `gxp:*` set are in [`vocabulary.md`](vocabulary.md).
+for evidence - are application vocabulary, not normative kton terms. The full reuse ↔ native mapping is
+in [`vocabulary.md`](vocabulary.md), which also says why this specification names no application
+namespace of its own.
 
 ## Annex B *(informative)* - scenario → clause map
 
