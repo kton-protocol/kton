@@ -501,6 +501,22 @@ func openAt(dir string, create bool) (*Registry, error) {
 // full pass adds nothing (a scoped child settles once its seed + prev are indexed), then drops
 // the remainder as orphans / structurally-invalid. Used on replay so a planted or reordered
 // on-disk object is not trusted, and reusable for out-of-order federation batches.
+// positioned gives a record this store's own position if it does not already have one, and moves
+// the cursor past it.
+//
+// EVERY record that enters the feed needs one. Records(since) answers `Seq > since`, so a Seq of 0 -
+// which is what OpenUnion leaves on a foreign record, deliberately, because a number issued by
+// another store means nothing here - is filtered out of every answer including Records(0). The
+// assignment used to sit on one path only, and it also read `r.maxSeq + 1` without moving maxSeq:
+// harmless where index() advanced it afterwards, a collision anywhere else.
+func (r *Registry) positioned(rec Record) Record {
+	if rec.Seq == 0 {
+		r.maxSeq++
+		rec.Seq = r.maxSeq
+	}
+	return rec
+}
+
 func (r *Registry) settle(pending []Record) (dropped int) {
 	for {
 		progress := false
@@ -517,6 +533,13 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 				// per claim id; the feed holds the lines that produced it, each with its own
 				// position - that is what lets a peer past the original claim receive the
 				// co-signature and union it for itself.
+				//
+				// POSITIONED first. This path does not reach index(), which is where a record's Seq
+				// used to be settled, so a co-signature arriving through OpenUnion - which zeroes
+				// foreign positions - kept Seq 0 and Records(since) filtered it out of every answer,
+				// Records(0) included. Adding an empty source to a union was enough to stop the
+				// public sync API delivering a signature the store still held.
+				rec = r.positioned(rec)
 				r.feed = append(r.feed, rec)
 				continue
 			}
@@ -534,11 +557,7 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 				// would hand on something we ourselves refuse.
 				continue
 			}
-			if rec.Seq == 0 {
-				// Only reached from OpenUnion, which zeroes foreign positions: a number issued by
-				// another store means nothing here, so it is appended above this store's own.
-				rec.Seq = r.maxSeq + 1
-			}
+			rec = r.positioned(rec)
 			r.index(rec)
 			r.feed = append(r.feed, rec)
 			progress = true
@@ -556,8 +575,9 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 						}
 						r.unresolved[p.Scope]++
 					}
-					// Held, unresolvable, and still owed to a peer (see Records).
-					r.feed = append(r.feed, rec)
+					// Held, unresolvable, and still owed to a peer (see Records) - so it needs a
+					// position like anything else in the feed, or it is owed and never delivered.
+					r.feed = append(r.feed, r.positioned(rec))
 					r.deferredCount++
 				}
 			}
