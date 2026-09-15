@@ -149,6 +149,47 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
+### Fixed — four more from the development-branch review
+
+- **`sync(since)` did not answer in append order.** §12 promises *"records with a local sequence above
+  `since`, **in append order**"*. `Records(since)` filtered the in-memory slice and never sorted it,
+  and after a reopen that slice is in object-filename order — hash order, which has nothing to do
+  with when anything was appended. A consumer that checkpoints incrementally reads a batch in order
+  and keeps the last seq it saw; handed a descending batch it either mis-checkpoints or has to
+  re-sort a promise it was already given. Sorted on a copy, so the store's own slice is never
+  reordered under a concurrent reader. Tested before and after a reopen and with a non-zero cursor,
+  which is how a peer actually calls it.
+
+- **`spectrum define` replaced a manifest it could not read.** Every `loadSpectrum` error was treated
+  as "not there yet", so a manifest that was malformed, truncated or unreadable was overwritten with
+  a fresh one holding only what that invocation named — a qualification corpus silently reduced, and
+  a later check then run over fewer cases than the operator believed. **A file we cannot read is not
+  a file that is not there:** only `os.IsNotExist` starts a fresh manifest now; anything else refuses
+  and says why.
+
+- **The JSON export showed one claim as two rows.** `buildClaims` iterated the arrival feed. Two
+  envelopes carrying the same payload signed by different keys are two feed entries with **one** claim
+  id, so the claim exported twice — same `claimId`, and with only one key trusted, contradictory
+  `signerVerified`. A consumer keying a map by claim id kept whichever row arrived second, making the
+  projection depend on arrival order rather than on evidence. It now iterates the unique indexed
+  claims and computes trust over the merged record's whole signature set: `keyids` lists every
+  declared signer and `verifiedSigners` every trusted key that actually signed — a co-signed claim
+  with two trusted signers is the case four-eyes rests on, and reporting one of them loses exactly
+  the fact that matters. *(The RDF/nanopub projection is a separate path and is unchanged.)*
+
+- **`sigstore-sign-claim.sh` signed the envelope file.** §8.1 requires an external scheme to sign the
+  canonical Statement bytes and says outright it "MUST NOT rest on … a particular serialization of
+  the envelope". Handing cosign the whole `.dsse.json` meant re-indenting the file, or adding a
+  co-signature, changed the signed artifact while the claim was unchanged. It now decodes the
+  payload, checks it really is an in-toto Statement, and signs those bytes — the same bytes the claim
+  id is computed over.
+
+  **`scripts/sigstore-sign-claim_test.sh`** proves it without OIDC, network or real cosign: a stub
+  records which bytes the helper hands the signer. Three serializations of one claim — compact,
+  pretty-printed, co-signed — must produce **one** signed artifact. Against the old script they
+  produced three. Runs in CI; a live round-trip against real cosign is opt-in (`--live`), because it
+  needs a human at an OIDC prompt and writes a permanent public Rekor entry.
+
 ### Fixed — three declared shapes that did not match the bytes
 
 A second pass over the specification, asking one question the earlier passes did not: **does the

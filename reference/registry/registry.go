@@ -479,6 +479,15 @@ func (r *Registry) Records(since int) []Record {
 			out = append(out, rec)
 		}
 	}
+	// SORTED BY SEQ, because that is what §12 answers: "records with a local sequence above `since`,
+	// in append order". r.records is whatever order the store was walked in - after a reopen that is
+	// object-filename order, which has nothing to do with when anything was appended, and a
+	// co-signature can renumber a record in place. A consumer that checkpoints incrementally reads
+	// this batch in order and keeps the last seq it saw; handed a descending batch it either
+	// mis-checkpoints or has to re-sort a promise it was already given.
+	//
+	// A copy, so the store's own slice is never reordered underneath a concurrent reader.
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
 	return out
 }
 
