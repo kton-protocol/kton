@@ -75,7 +75,7 @@ func TestJCSNumbers(t *testing.T) {
 //
 // The rule used to be gated on the SPELLING - it ran only when the literal held no `.`, `e` or `E`.
 // So 100000000000000000000 was refused while 1e20 was accepted and canonicalized TO
-// 100000000000000000000, which this same function then refused on a later parse (AUD-07).
+// 100000000000000000000, which this same function then refused on a later parse.
 func TestLargeIntegersAreRefusedInEverySpelling(t *testing.T) {
 	for _, refused := range []string{
 		`{"n":9007199254740993}`,   // 2^53+1, integer token

@@ -313,7 +313,7 @@ func trustyURI(canon []byte) string {
 // loadOrGenRSA reuses the key at path, or generates one and SAVES it there. When path is empty the
 // key is deliberately ephemeral.
 //
-// Two failures used to be silent, and both cost the caller the identity they asked for (AUD-06):
+// Two failures used to be silent, and both cost the caller the identity they asked for:
 //
 //   - ANY read error was treated as "no key here" and fell through to generating a new one. A
 //     permission problem, or a directory in the way, therefore produced a different identity on

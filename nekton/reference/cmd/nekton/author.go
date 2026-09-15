@@ -104,7 +104,7 @@ func keygen(args []string) error {
 
 	// core.WriteKeyFile refuses to overwrite an identity and creates with the mode it asks for -
 	// os.WriteFile's mode applies only to a NEW file, so an existing 0644 key file kept 0644 and
-	// took the new private seed (AUD-01). The public half is written second, and a failure there
+	// took the new private seed. The public half is written second, and a failure there
 	// removes the private half rather than leaving a keypair whose public key nobody has.
 	kw, err := core.WriteKeyFile(name+".key", []byte(hex.EncodeToString(priv.Seed())), 0o600, force)
 	if err != nil {

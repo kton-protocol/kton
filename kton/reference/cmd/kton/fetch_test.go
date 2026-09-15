@@ -12,7 +12,7 @@ import (
 //
 // Dereferencing is a request made from this host, and for file:// a read of this disk. The hash
 // check that follows proves what the bytes ARE; it cannot undo the request, and for a file whose
-// hash is known it does not even reject the result (AUD-03).
+// hash is known it does not even reject the result.
 func TestDerefRefusesWhatASignatureCannotVouchFor(t *testing.T) {
 	// file:// names a path on THIS machine. Even a verified signer's signature is about CONTENT and
 	// says nothing about the local filesystem, so it needs a second, explicit yes.

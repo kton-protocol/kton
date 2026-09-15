@@ -11,9 +11,9 @@ import (
 
 func hex64(b string) string { return "sha256:" + strings.Repeat(b, 32) }
 
-// AUD-09. FotonID took the supplied hash strings verbatim while the signing path normalized them on
-// the way through the in-toto subject, so an ACCEPTED uppercase hash gave the helper and the signed
-// record different ids for the same spec. A cockpit that precomputes a result id then held a
+// FotonID and the signing path must normalize hashes the same way. If FotonID takes the supplied
+// strings verbatim while signing normalizes them through the in-toto subject, an ACCEPTED uppercase
+// hash gives the helper and the signed record different ids for the same spec. A cockpit that precomputes a result id then held a
 // reference that did not resolve to the record it went on to sign - and that helper is part of the
 // public authoring API extracted for exactly such integrations.
 func TestPrecomputedIDMatchesTheSignedID(t *testing.T) {
@@ -55,8 +55,8 @@ func TestPrecomputedIDMatchesTheSignedID(t *testing.T) {
 	}
 }
 
-// AUD-10. Validate checked only the predicate and the presence of a protocol. A signed foton with
-// two different hashes at the same ABSOLUTE input path was accepted and indexed; computing its
+// Validate must cover more than the predicate and the presence of a protocol: without the rest, a
+// signed foton with two different hashes at the same ABSOLUTE input path is accepted and indexed; computing its
 // action key then failed, and the registry silently omitted the action-key index while leaving the
 // record queryable everywhere else. A structural violation must be refused at the boundary, not
 // turned into a missing index nobody is told about.
@@ -106,7 +106,7 @@ func TestValidateRefusesStructurallyInvalidSpecs(t *testing.T) {
 	}
 }
 
-// AUD-08. The authoring parser decoded straight into a struct, which destroys the evidence: Go keeps
+// An authoring parser must not decode straight into a struct, which destroys the evidence: Go keeps
 // the LAST of a duplicate name and stops at the end of the first document. A misspelled field
 // vanished silently, so the signed foton was not the one described.
 func TestParseSpecRefusesWhatWouldVanish(t *testing.T) {
@@ -145,7 +145,7 @@ func TestParseSpecRefusesWhatWouldVanish(t *testing.T) {
 	})
 }
 
-// AUD-10. `len(descriptor) == 0` conflated `descriptor: {}` with no descriptor at all, so an empty
+// `len(descriptor) == 0` conflates `descriptor: {}` with no descriptor at all, so an empty
 // object let an arbitrary incorrect ref through unchecked and put it in the bare/unverifiable
 // action-key namespace. §6.2 requires hashing any descriptor that is PRESENT; only absent is
 // unverifiable.

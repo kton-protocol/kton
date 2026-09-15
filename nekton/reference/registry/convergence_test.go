@@ -10,7 +10,7 @@ import (
 // SYNC CONVERGENCE, as a property rather than a scenario.
 //
 // §12's cursor exists to make one promise: follow it and you lose nothing. The audit's closing note
-// on AUD-04 was that a full rescan can recover what an incremental follow cannot - so the thing to
+// is that a full rescan can recover what an incremental follow cannot - so the thing to
 // assert is the CONSUMER'S FINAL STATE after repeatedly following the returned cursor, not that some
 // counter went up.
 //

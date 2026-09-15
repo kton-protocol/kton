@@ -131,7 +131,7 @@ func openAt(dir string, create bool) (*Registry, error) {
 	// Number the records from objects/.seq, offering the ids in the stable sorted-path order above
 	// rather than in apply order. The positions come off disk, so one already handed to a peer can
 	// never move - which is what stops a planted record whose hash sorts EARLY from shifting every
-	// later record down and pushing it back under a peer's cursor (AUD-02).
+	// later record down and pushing it back under a peer's cursor.
 	ids := make([]string, 0, len(loaded))
 	for _, of := range loaded {
 		ids = append(ids, core.EnvelopeKey(of.Envelope))
@@ -192,7 +192,7 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 		}
 		// Material is merged from EVERY source. The union used to allocate an empty map and never
 		// fill it, so one foton with one attachment had one item read alone and ZERO as soon as any
-		// second source was added - even an empty one (AUD-11). §8.1 says a record's validity never
+		// second source was added - even an empty one. §8.1 says a record's validity never
 		// depends on its material; the converse has to hold too, or an advertised union API silently
 		// drops evidence its named sources hold.
 		mergeMaterial(u.material, r.material)
@@ -252,7 +252,7 @@ func (r *Registry) apply(rec Record) {
 			r.degraded++
 			return
 		}
-		// The rest of what Add enforces, applied HERE too (AUD-09). The read path re-derived the id
+		// The rest of what Add enforces, applied HERE too. The read path re-derived the id
 		// and stopped, so a record that Add refuses was fully indexed if it arrived by any other
 		// route - and both packages document git merge as a supported federation transport, which
 		// bypasses Add entirely. Every ingest-gate finding was therefore re-openable through a path
@@ -366,7 +366,7 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	// relative path with different hashes, so the {path -> hash} map could hold only one and an input
 	// would silently vanish from the computation's identity. Such a record used to be accepted and
 	// indexed EVERYWHERE EXCEPT byAction: the action-key error was swallowed on the way in, leaving
-	// the record fully queryable while missing from the reuse index, with nobody told (AUD-10). A
+	// the record fully queryable while missing from the reuse index, with nobody told. A
 	// structural violation is refused here instead of becoming an invisible gap.
 	if _, err := f.ActionKey(); err != nil {
 		return "", false, fmt.Errorf("foton is structurally invalid: %w", err)
@@ -389,7 +389,7 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 			// A plankton store keeps one file per record and fotons are an unordered set of
 			// content-addressed facts - there is no order here to preserve, which is why the record
 			// simply moves up rather than (as in nekton) leaving its old entry in place. Without
-			// this, a co-signature was invisible to every peer past the record's cursor (AUD-04).
+			// this, a co-signature was invisible to every peer past the record's cursor.
 			seq := r.records[i].Seq
 			ek := core.EnvelopeKey(merged)
 			if ek != core.EnvelopeKey(r.records[i].Envelope) {

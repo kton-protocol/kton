@@ -586,7 +586,7 @@ func run(cmd string, args []string) error {
 		// environmental (a local write failure); retrying either is useless. So the loop retried
 		// nothing that could heal, and then labelled whatever was left "unresolved (missing
 		// dependency - an incomplete chain)". A local write failure was reported in exactly those
-		// words, with exit 0 (AUD-05). That is not imprecision, it is a wrong diagnosis of the one
+		// words, with exit 0. That is not imprecision, it is a wrong diagnosis of the one
 		// class of error that could arrive.
 		added, refused := 0, 0
 		var refusedIDs []string

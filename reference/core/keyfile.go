@@ -21,7 +21,7 @@ import (
 //   - `keygen alice` twice used to succeed twice. The old private seed is gone, and if the .pub
 //     was the only retained copy of the public half, records signed with the old key can no
 //     longer be checked against that filename. The signatures stay cryptographically valid;
-//     what is destroyed is the ability to check them. (AUD-01)
+//     what is destroyed is the ability to check them.
 //
 // Three cases, in order:
 //
@@ -84,7 +84,7 @@ func WriteKeyFile(path string, content []byte, mode os.FileMode, force bool) (Ke
 		w.Backup = path + ".old"
 	case !os.IsNotExist(err):
 		// An unreadable existing file is NOT an absent one. Falling through to "create it" here
-		// would be the AUD-06 shape: a read failure silently becoming a fresh identity.
+		// would be a read failure silently becoming a fresh identity.
 		return w, fmt.Errorf("cannot read the existing %s: %w", path, err)
 	}
 

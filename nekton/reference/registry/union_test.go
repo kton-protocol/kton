@@ -22,7 +22,7 @@ import (
 //	OpenUnion(child-only, seed-only) -> child NOT held, 1 unresolved
 //	OpenUnion(seed-only, child-only) -> child held,     0 unresolved
 //
-// Same signed bytes, both times (AUD-02). This walks every permutation of a three-link chain across
+// Same signed bytes, both times. This walks every permutation of a three-link chain across
 // three stores and requires one identical answer.
 func TestUnionResolvesAChainInAnySourceOrder(t *testing.T) {
 	k := testKey(t)
@@ -88,7 +88,7 @@ func TestUnionResolvesAChainInAnySourceOrder(t *testing.T) {
 	})
 }
 
-// AUD-03. Two sources hold the SAME canonical claim - identical signed payload bytes - signed by
+// Two sources hold the SAME canonical claim - identical signed payload bytes - signed by
 // different keys. That is one claim with two signatures, which is what Add already does at ingest.
 // settle discarded the second, so the surviving co-signer depended on argument order and BySigner
 // could not find the other.
@@ -133,9 +133,9 @@ func TestUnionKeepsEveryCoSignature(t *testing.T) {
 	}
 }
 
-// AUD-11. Material attached in the SECOND source used to vanish; nekton kept only the first
-// source's. §8.1 makes producing material optional - silently losing evidence the named sources
-// hold through an advertised union API is a different thing.
+// Material attached in the SECOND source must not vanish - a union that keeps only the first
+// source's is not a union. §8.1 makes PRODUCING material optional; silently losing evidence the
+// named sources hold, through an advertised union API, is a different thing.
 func TestUnionMergesMaterialFromEverySource(t *testing.T) {
 	k := testKey(t)
 	env := unscopedClaimSignedBy(t, k)

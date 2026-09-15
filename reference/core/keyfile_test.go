@@ -8,7 +8,7 @@ import (
 	"kton.dev/plankton/core"
 )
 
-// AUD-01. `os.WriteFile(path, seed, 0600)` loses a key in two ways, and both were live:
+// `os.WriteFile(path, seed, 0600)` loses a key in two ways, and both are live:
 // the mode applies only to a NEW file, so an existing 0644 key file kept 0644 and took the new
 // private seed; and `keygen alice` twice succeeded twice, destroying the only copy of the first
 // seed. The signatures made with it stay valid - what is destroyed is the ability to check them.
@@ -103,7 +103,7 @@ func TestWriteKeyFileNeverOverwritesAnIdentity(t *testing.T) {
 	})
 
 	t.Run("an unreadable destination is not treated as absent", func(t *testing.T) {
-		// The AUD-06 shape: a read error silently becoming "nothing here, generate a fresh one".
+		// The shape to avoid: a read error silently becoming "nothing here, generate a fresh one".
 		d := filepath.Join(dir, "adir.key")
 		if err := os.Mkdir(d, 0o755); err != nil {
 			t.Fatal(err)

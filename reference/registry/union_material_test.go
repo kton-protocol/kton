@@ -12,7 +12,7 @@ import (
 	"kton.dev/plankton/registry"
 )
 
-// AUD-11. OpenUnion allocated an empty material map and never filled it, so one foton with one
+// OpenUnion must fill the material map it allocates: an empty one leaves a foton with one
 // attachment had ONE item read alone and ZERO as soon as any second source was added - including a
 // completely empty one. §8.1 makes producing material optional; silently losing evidence the named
 // sources hold, through an advertised union API, is a different thing.

@@ -80,7 +80,7 @@ func (f Foton) FotonID() (string, error) {
 func (p Protocol) EffectiveRef() (string, error) {
 	// PRESENT, including empty: `descriptor: {}` is a descriptor and is hashed. `len(...) > 0`
 	// treated it as absent, which both skipped the §6.2 check and put the ref in the
-	// bare/unverifiable action-key namespace (AUD-10). Only nil is absent.
+	// bare/unverifiable action-key namespace. Only nil is absent.
 	if p.Descriptor != nil {
 		return ComputeProtocolRef(p.Descriptor)
 	}
@@ -93,7 +93,7 @@ func (p Protocol) EffectiveRef() (string, error) {
 func (f Foton) CheckProtocolRef() error {
 	// A PRESENT descriptor is hashed, even when it is empty. `len(...) == 0` conflated
 	// `descriptor: {}` with no descriptor at all, so an empty object let an arbitrary incorrect ref
-	// through unchecked (AUD-10). §6.2 requires hashing any descriptor that is there, and
+	// through unchecked. §6.2 requires hashing any descriptor that is there, and
 	// `{}` canonicalizes and hashes perfectly well; only ABSENT means unverifiable.
 	if f.Protocol.Descriptor == nil {
 		return nil

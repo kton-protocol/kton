@@ -14,7 +14,7 @@ import (
 //   - it must not PANIC. A crash on a malformed record is a denial of service on a store: one
 //     planted file is read by every process that opens it.
 //   - whatever it ACCEPTS, it must accept again unchanged. canon(canon(x)) == canon(x) failed for a
-//     whole class of numbers (AUD-07) and no example-based test would have caught it, because they
+//     whole class of numbers and no example-based test would have caught it, because they
 //     all used values someone had already thought of.
 //
 // Search with: go test ./core/ -fuzz FuzzCanonJSON

@@ -130,7 +130,7 @@ func TestCoSignerTwinUnion(t *testing.T) {
 		//
 		// A subnekton is an APPEND-ONLY log, because in nekton the order carries meaning (prev,
 		// head, seal). A co-signature is therefore a new LINE, not a rewrite of the existing one -
-		// which is what gives it a position of its own and lets a cursor deliver it (AUD-04). Two
+		// which is what gives it a position of its own and lets a cursor deliver it. Two
 		// peers that received A-then-B and B-then-A hold the same lines in a different order, so the
 		// FILES differ by construction and comparing their first line asserts the wrong thing.
 		//
