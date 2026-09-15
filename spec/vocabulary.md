@@ -43,11 +43,19 @@ These demonstrate the protocol; the kernel treats every predicate as an opaque I
 never requires them. They live in aliases/templates, not the spec.
 
 - **Governance example:** `vote`, `vote-initialised`, `delegate` (liquid democracy).
-- **Regulated (RESERVED):** the `gxp:*` set - `gxp:reviewed`, `gxp:validation-performed`,
-  `gxp:env-qualified`, `gxp:risk-accepted`, `gxp:approved`, `gxp:deviation`, `gxp:capa`. **Use only when
-  a real GxP-validated process stands behind the claim.** Ordinary review uses `pav:reviewedBy`; the
-  `gxp:reviewed` specialization is `gxpReviewed` in the aliases, and the `gxp/review` template carries
-  it because it *is* a GxP review.
+- **Regulated:** a namespace of its own for claims that assert regulated weight - a review performed
+  under a validated process, a qualified environment, an accepted risk, a deviation, a CAPA.
+  **Use such a term only when a real validated process stands behind the claim**; ordinary review is
+  `pav:reviewedBy`, and a specialization is worth minting only when it means something `pav:reviewedBy`
+  does not.
+
+  This annex deliberately does **not** name that namespace or enumerate its terms. It once reserved a
+  specific prefix and named the template that carried it - and then the example suite renamed both,
+  which is exactly what the sentence above this list says will happen: application vocabulary lives in
+  aliases and templates, not here. A specification that reserves a moving target ends up documenting
+  a vocabulary no example uses. The live set is whatever
+  [`gitmick/kton-examples`](https://github.com/gitmick/kton-examples) ships in `templates/` and
+  `aliases`, and the kernel requires none of it (Clause 7.1).
 - **Domain example:** `pmx:model-role` (pharmacometrics); `ddmore-entry`, `workbench-run` (integrations).
 
 ## 4. Deprecated

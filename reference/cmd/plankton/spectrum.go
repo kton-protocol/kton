@@ -15,7 +15,8 @@ package main
 //
 // plankton reports *fulfilment* (does the candidate reproduce the reference set?). Whether that
 // fulfilment is CALLED "L0" or "L1", and whether a human ACCEPTS it as a tool validation, is
-// semantics on top - a signed nekton attestation (gxp/tool-validation), not the kernel's verdict.
+// semantics on top - a signed nekton attestation under whatever term the reader's vocabulary
+// uses for it, not the kernel's verdict.
 
 import (
 	"encoding/json"
@@ -291,7 +292,11 @@ func spectrumCheck(args []string) error {
 		}
 	}
 	fmt.Printf("spectrum %q: %d/%d member(s) fulfilled (reproducible fact).\n", s.Spectrum, fulfilled, len(s.Members))
-	fmt.Println("the \"validated at L0/L1\" judgment is semantics on top - record it in nekton (gxp/tool-validation).")
+	// Names no template. Which term carries that judgment is APPLICATION vocabulary (SPEC §7.1: the
+	// kernel treats every predicate as an opaque IRI), it lives in whatever alias set the reader
+	// uses, and it is not the kernel's to pick - naming one here made a plankton command depend on
+	// what a template in another repository happened to be called.
+	fmt.Println("the \"validated at L0/L1\" judgment is semantics on top - record it as a claim in nekton.")
 	// Distinct exit codes so a scripted gate can tell the three cases apart (not a verdict, a fact):
 	//   0 = every member fulfilled; 1 = genuine FAILURE (a candidate was given but did not reproduce);
 	//   2 = INCOMPLETE (a member had no candidate, so it was never checked). A failure outranks an

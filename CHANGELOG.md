@@ -149,6 +149,35 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
+### Changed — the specification no longer reserves an application vocabulary
+
+`spec/vocabulary.md` said, in one paragraph, both that application vocabulary "live[s] in
+aliases/templates, not the spec" **and** that a specific namespace was RESERVED, enumerating seven
+terms and naming the template that carried one of them. The example suite then renamed that
+namespace, and the two sides contradicted each other: a published specification reserving a
+vocabulary no example uses.
+
+The reservation is gone; the substance is not. What mattered was the warning — **use a term that
+asserts regulated weight only when a real validated process stands behind the claim** — and that
+stays, without naming a prefix or a template. The live set is whatever the example suite ships, and
+the kernel requires none of it (§7.1: every predicate is an opaque IRI).
+
+- **`plankton spectrum check` stopped naming a template in its own output.** It printed *"record it
+  in nekton (…/tool-validation)"* — a kernel command telling the operator which application term to
+  use, and depending on what a template in another repository happened to be called. It now says to
+  record the judgment as a claim, and leaves the term to the reader's vocabulary.
+
+- **A gated attack no longer hard-codes the companion suite's names.** `fourEyes-graphpoll` built its
+  scenario with `--template <a fixed name>`. When the example suite renamed that template the
+  `annotate` calls resolved to nothing, the honest control stopped ticking, and the PoC reported
+  `INCONCLUSIVE` — correctly, and the gate went red. It now **discovers** the review template
+  (`nekton templates`, first `*/review`) and refuses with a reason if none exists. Verified against
+  both the pre-rename and post-rename example suites, so the two repositories can merge in either
+  order.
+
+  The property under test — whether four-eyes can be forged — never had anything to do with what the
+  template is called.
+
 ### Fixed — `nekton verify` said yes to records `add` refuses
 
 `verify`'s exit 0 is documented to mean *"this claim is genuine AND storable"*. It answered only the
