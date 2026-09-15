@@ -152,6 +152,37 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
+### Fixed — `nekton verify` said yes to records `add` refuses (R02)
+
+`verify`'s exit 0 is documented to mean *"this claim is genuine AND storable"*. It answered only the
+first half.
+
+The structural check sat inside `if st, _, perr := claim.ParseEnvelope(env); perr == nil { … }`, so a
+payload that could not be parsed at all — duplicate JSON member names, say — fell through to
+`return nil`. The command printed a clean signature verdict, **no `structure:` line**, and exited 0.
+The absence of a line was the only signal, and no automation reads an absence. `add` refused the same
+file outright:
+
+```
+$ nekton verify duplicate-members.dsse.json k.pub
+signature:       VALID - verified as keyid 790901b82a89fe50
+$ echo $?                                            # was 0; `add` rejects this file
+```
+
+A parse failure is now a structural failure: exit 3, with the reason printed. So is a predicate that
+will not parse, whose error was being discarded into `_`.
+
+**And the seed rules moved to where both commands can see them.** The second half of R02 was a
+scope/v0 seed carrying `genesis:false`: it parses, so `verify` said `structure: VALID`, and `add`
+refused it. The rule lived *only* in the registry's chain check, and `verify` never reaches a
+registry. The context-free part of §7.4 — where `genesis` may appear, that a seed carries no `prev` —
+is now `claim.ValidateChainStructure`, called from **both** the registry and `verify`. Two copies of
+a rule is how two commands come to disagree about what a storable record is.
+
+What stays with the registry is what needs registry state: whether a scope resolves, whether a `prev`
+links to something present. That split is the point — it is the first piece of the shared validator
+the review asks for, done where it is context-free rather than declared everywhere at once.
+
 ### Fixed — the two findings that would have shipped as documented instead of fixed
 
 Both raised against the release PR. Both were real, and in both cases the honest answer was to fix

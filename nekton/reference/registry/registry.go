@@ -821,26 +821,14 @@ func (r *Registry) checkChain(id string, st *claim.Statement, p *claim.Predicate
 	if p == nil {
 		return nil
 	}
-	// A top-level `genesis` field is never valid (genesis lives inside a scope/v0 predicate, §7.4);
-	// reject it so it cannot slip past the predicate.genesis guard below (cold-session finding).
-	if st.Genesis {
-		return fmt.Errorf("genesis must live inside a scope/v0 predicate, not at the statement top level (SPEC §7.4)")
+	// The context-free half of §7.4 lives in the claim package and is called from here AND from
+	// `verify`. It used to be defined only here, so verify - which never reaches a registry -
+	// passed records this refuses (dev review R02). Two copies is how they drifted; there is one.
+	if err := claim.ValidateChainStructure(st, p); err != nil {
+		return err
 	}
 	if st.IsSeed() {
-		// A seed opens its own scope (scope_id = this claim id). SPEC §7.4: it MUST set genesis
-		// and MUST NOT carry prev.
-		if p.Prev != "" {
-			return fmt.Errorf("a seed MUST NOT carry prev (SPEC §7.4)")
-		}
-		if !p.Genesis {
-			return fmt.Errorf("a scope seed MUST set genesis:true (SPEC §7.4)")
-		}
-		return nil
-	}
-	// genesis:true is a seed-only structural flag; on a non-seed it is an attempt to mint a
-	// scope without a scope/v0 statement - reject it (defense for the §7.4 identity guarantee).
-	if p.Genesis {
-		return fmt.Errorf("genesis:true is only valid on a scope/v0 seed (SPEC §7.4)")
+		return nil // the rest of §7.4 for a seed is context-free and already checked above
 	}
 	if p.Scope == "" {
 		return nil // unscoped claim - allowed (SPEC §7.4 governs only scoped statements)
