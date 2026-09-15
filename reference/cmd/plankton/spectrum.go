@@ -133,9 +133,22 @@ func spectrumDefine(args []string) error {
 		out = id + ".spectrum.json"
 	}
 	// Extend an existing manifest if present, so a spectrum can start as a bare id and grow.
+	//
+	// ONLY a genuinely absent file starts a fresh one. Treating every read error as "nothing there"
+	// meant a manifest that was malformed, unreadable or truncated got REPLACED by a fresh one on the
+	// next `define` - a qualification corpus silently reduced to whatever this invocation named, with
+	// a downstream check then run over fewer cases than the operator believed. A file we cannot read
+	// is not a file that is not there.
 	s, err := loadSpectrum(out)
-	if err != nil {
+	switch {
+	case err == nil:
+		// extend it
+	case os.IsNotExist(err):
 		s = spectrumDef{}
+	default:
+		return fmt.Errorf("refusing to overwrite %s: it exists but could not be read (%w).\n"+
+			"  `define` extends a manifest, and extending one it cannot read would replace it with a\n"+
+			"  fresh one holding only what this command named. Repair or move the file aside.", out, err)
 	}
 	if id != "" {
 		s.Spectrum = id

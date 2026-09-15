@@ -7,7 +7,8 @@
 # (your GitHub / email), with NO long-lived key to distribute and a Rekor transparency-log witness.
 # Neither kernel nor kton may spawn a process (CI guard: no os/exec), so this composition lives here.
 #
-#   cosign sign-blob <claim> --bundle <claim>.sigstore.json   → OIDC login → Fulcio cert → Rekor
+#   cosign sign-blob <the claim's canonical Statement bytes> --bundle <claim>.sigstore.json
+#       → OIDC login → Fulcio cert → Rekor
 #
 # Requires: `cosign` (via --cosign or $COSIGN, else `cosign` on PATH). Running it opens an OIDC flow
 # (a URL / browser) where YOU authenticate as yourself - an agent cannot do this for you.
@@ -30,14 +31,46 @@ done
 [[ -n "$claim" && -f "$claim" ]] || usage
 [[ -n "$bundle" ]] || bundle="${claim%.dsse.json}.sigstore.json"
 
+# SIGN THE STATEMENT BYTES, NOT THE ENVELOPE FILE.
+#
+# SPEC §8.1: "a scheme that signs bytes MUST sign the canonical Statement bytes, which are exactly
+# the envelope's `payload`. It MUST NOT rest on a filename, on a particular serialization of the
+# envelope, or on co-location."
+#
+# Handing cosign the whole .dsse.json binds the signature to one serialization of the envelope:
+# re-indenting the file, or adding a co-signature to the signatures array, changes the signed
+# artifact while the claim itself is unchanged - and the bundle then cannot be consumed as material
+# ABOUT that claim without also preserving and interpreting that particular file.
+#
+# The payload is base64 of the canonical Statement. Decode it to a temp file and sign THAT, so the
+# signed bytes are the same bytes the claim id is computed over, whatever the envelope looks like.
+payload_b64=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["payload"])' "$claim") || {
+  echo "cannot read a DSSE payload from $claim - is it an envelope?" >&2; exit 1; }
+stmt=$(mktemp -t kton-statement.XXXXXX.json)
+trap 'rm -f "$stmt"' EXIT
+python3 -c 'import base64,sys; open(sys.argv[2],"wb").write(base64.b64decode(sys.argv[1]))' \
+  "$payload_b64" "$stmt"
+# It must BE the canonical statement, not merely decode: signing bytes the claim id is not computed
+# over would reintroduce the same defect one layer down.
+python3 - "$stmt" <<'PYCHK' || exit 1
+import json,sys
+raw=open(sys.argv[1],'rb').read()
+try: st=json.loads(raw)
+except Exception as e: print("decoded payload is not JSON: %s"%e, file=sys.stderr); sys.exit(1)
+if st.get("_type") != "https://in-toto.io/Statement/v1":
+    print("decoded payload is not an in-toto Statement", file=sys.stderr); sys.exit(1)
+PYCHK
+
 echo "signing (keyless) - this opens a GitHub/OIDC login; approve as yourself:"
-"$cosign" sign-blob "$claim" --bundle "$bundle" --yes
+echo "  signing the canonical Statement bytes ($(wc -c < "$stmt") bytes), not $claim"
+"$cosign" sign-blob "$stmt" --bundle "$bundle" --yes
 
 echo "signed → $bundle  (Fulcio cert + signature + Rekor entry, bound to your OIDC identity)"
+echo "  attach it to the record with: nekton attach <claim-id> --scheme sigstore-bundle --file $bundle"
 
 if [[ -n "$verify_identity" ]]; then
   echo "verifying the bundle against identity: $verify_identity"
-  "$cosign" verify-blob "$claim" --bundle "$bundle" \
+  "$cosign" verify-blob "$stmt" --bundle "$bundle" \
     --certificate-identity-regexp "$verify_identity" \
     --certificate-oidc-issuer-regexp '.*'
 fi

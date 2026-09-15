@@ -45,6 +45,14 @@ jobs:
       - name: scope guard (the two scope statements must not diverge)
         run: bash scripts/check-scope-drift.sh
 
+      - name: the sigstore helper signs the Statement, not the envelope file
+        # SPEC §8.1 requires an external scheme to sign the canonical Statement bytes and NOT to rest
+        # on a particular serialization of the envelope. A cosign STUB records which bytes the helper
+        # hands the signer, so this runs with no OIDC and no network - the property is about the
+        # binding, not about the signing service. The live round-trip is opt-in (--live) and is a
+        # human's job: it opens an OIDC login and writes a permanent public Rekor entry.
+        run: bash scripts/sigstore-sign-claim_test.sh
+
       # The guard above reads IMPORTS; this one COMPILES for the browser target. WASM-cleanliness
       # that is only grepped is cleanliness only until something breaks that grep cannot see, and a
       # tag build is the wrong place to find out - it runs after the version is cut. The kernels are
