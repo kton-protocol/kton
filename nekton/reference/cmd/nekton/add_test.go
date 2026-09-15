@@ -87,7 +87,10 @@ func TestCoSignerTwinUnion(t *testing.T) {
 	var objBytes [2][]byte
 	orders := [][]string{{envAPath, envBPath}, {envBPath, envAPath}}
 	for i, order := range orders {
-		reg, err := registry.Open(filepath.Join(dir, "reg", order[0]+"-first"))
+		// A LABEL, not a path. This used to be order[0]+"-first", where order[0] is an absolute
+		// path - which on Windows contains a drive letter and produced `...\\reg\\C::`, an invalid
+		// name. A test-setup bug, but it kept the whole package red on a platform we ship.
+		reg, err := registry.Open(filepath.Join(dir, "reg", fmt.Sprintf("order-%d", i)))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -122,6 +122,18 @@ func keygen(args []string) error {
 		return fmt.Errorf("could not write %s.pub; the existing %s.key was already this key and is UNTOUCHED: %w",
 			name, name, err)
 	}
+	// The private key's protection is a FILE MODE, and a file mode is a request the platform may
+	// decline. On Windows a 0600 request lands as 0666 and every statement this project makes about
+	// private keys being unreadable by other users is false there. Saying so at keygen time is the
+	// only moment the operator can still act on it.
+	if kw.ModeUnenforced != 0 {
+		fmt.Fprintf(os.Stderr,
+			"warning: %s.key was created with mode %v, not the 0600 that was requested - this\n"+
+				"  platform or filesystem does not enforce it (Windows, FAT/exFAT, some network mounts).\n"+
+				"  The private key is NOT protected by file permissions here. Restrict access by other\n"+
+				"  means (an ACL, a container, an encrypted volume) or generate the key elsewhere.\n",
+			name, kw.ModeUnenforced)
+	}
 	fmt.Printf("keypair %s  keyid=%s\n", name, keyidHex(pub))
 	return nil
 }

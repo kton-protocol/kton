@@ -12,7 +12,12 @@ import (
 //
 //   - The mode applies only when the call CREATES the file. An existing world-readable
 //     `alice.key` keeps its 0644 and receives the new private seed. O_EXCL removes the case:
-//     the file is always new, so the mode is the one this call asked for.
+//     the file is always new, so the mode is the one this call ASKED for - which is not the
+//     same as the mode it GOT. Windows maps a Go FileMode to little more than a read-only
+//     attribute, so a 0600 request lands as 0666 and the protection this function documents
+//     does not exist there. The mode is therefore VERIFIED after the write, not assumed, and a
+//     shortfall is reported to the caller (KeyWrite.ModeUnenforced) rather than left for the
+//     operator to discover from a file listing.
 //   - `keygen alice` twice used to succeed twice. The old private seed is gone, and if the .pub
 //     was the only retained copy of the public half, records signed with the old key can no
 //     longer be checked against that filename. The signatures stay cryptographically valid;
@@ -36,6 +41,13 @@ import (
 type KeyWrite struct {
 	Created bool   // this call created the file; nothing of the caller's was there before
 	Backup  string // non-empty: --force renamed the previous file here; restore it to undo
+
+	// ModeUnenforced is non-zero when the file ended up with permissions the requested mode did
+	// NOT grant - i.e. the filesystem or platform did not honour the request. It holds the mode
+	// actually observed. Zero means the request was honoured (or the file was already correct and
+	// nothing was written). A caller that tells its user the key is protected by file permissions
+	// MUST check this: on Windows, and on FAT/exFAT/SMB mounts, it will not be.
+	ModeUnenforced os.FileMode
 }
 
 // Undo reverses what this call did, and only what this call did. A file that was already there with
@@ -88,5 +100,17 @@ func WriteKeyFile(path string, content []byte, mode os.FileMode, force bool) (Ke
 		w.Created = false
 		return w, err
 	}
-	return w, f.Close()
+	if err := f.Close(); err != nil {
+		return w, err
+	}
+	// Check the protection rather than assume it. Asking for 0600 is a request, and on Windows it
+	// is one the platform largely ignores - the file lands 0666. Every claim this repository makes
+	// about private keys being unreadable by other users rests on this mode, so the one thing that
+	// must not happen is stating the protection without ever looking.
+	if fi, serr := os.Stat(path); serr == nil {
+		if got := fi.Mode().Perm(); got&^mode.Perm() != 0 {
+			w.ModeUnenforced = got
+		}
+	}
+	return w, nil
 }
