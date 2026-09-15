@@ -139,9 +139,21 @@ if [ "$attack" = "TICKED" ]; then
   echo "review then counted: two eyes presented as four"
   echo "VERDICT: VULNERABLE"; exit 0
 fi
+# A negative scenario must have EXPLICITLY come back UNTICKED. Testing only for TICKED let NORUN -
+# the gate produced no checklist at all - fall through to PREVENTED below: "the attack did not tick"
+# read as evidence when the attack had not run. The honest control above proves the branch CAN
+# light; it says nothing about whether these two were evaluated.
+for n in "self-review:$selfrev" "attack:$attack"; do
+  case "${n#*:}" in
+    UNTICKED) ;;
+    *) echo "the ${n%%:*} scenario did not produce a checklist (${n#*:}), so its not-ticking is not a"
+       echo "result. An attack that did not run cannot have been prevented."
+       echo "VERDICT: INCONCLUSIVE"; exit 0 ;;
+  esac
+done
 echo "honest=TICKED, self-review=$selfrev, attack=$attack: the branch lights for two genuine"
 echo "reviewers, refuses a self-review, and the injected attribution edge does not rescue it."
-if [ "$poisoned" != "TICKED" ]; then
+if [ "$poisoned" = "UNTICKED" ]; then
   echo
   echo "NOTE, not a failure of this check: injecting the same edge into the HONEST case un-ticks it"
   echo "($poisoned). release.py fails CLOSED when the fit has more than one verified author, so any"

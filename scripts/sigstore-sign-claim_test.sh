@@ -12,6 +12,17 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+# PREREQUISITES first. The helper asks the kernel what canonical means, so without nekton every
+# case fails - and the summary at the bottom would blame the helper for signing the wrong artifact
+# when the truth is that nothing was checked. A check that cannot run says so.
+missing=""
+for t in nekton python3; do command -v "$t" >/dev/null 2>&1 || missing="$missing $t"; done
+if [ -n "$missing" ]; then
+  echo "::error::cannot check the sigstore helper - missing:$missing"
+  echo "::error::nekton is the authority on canonical form here; without it nothing below is evidence."
+  exit 1
+fi
+
 fail=0
 say() { printf '  %-52s %s\n' "$1" "$2"; }
 
@@ -34,6 +45,14 @@ open(w + "/plain.dsse.json", "w").write(json.dumps(env, separators=(',', ':')))
 open(w + "/pretty.dsse.json", "w").write(json.dumps(env, indent=2))       # reformatted
 env2 = dict(env); env2["signatures"] = env["signatures"] + [{"keyid": "bbbb", "sig": "c2ln"}]
 open(w + "/cosigned.dsse.json", "w").write(json.dumps(env2, indent=4))    # + a co-signature
+# The PAYLOAD itself in a non-canonical spelling. A DSSE payload need not be canonical - the
+# kernel canonicalizes when deriving the claim id - so this is a valid claim with the SAME id,
+# and its bytes are not the ones the id is derived from. Varying only the envelope missed this.
+pretty_payload = json.dumps(stmt, indent=2).encode()
+envp = {"payloadType": "application/vnd.in-toto+json",
+        "payload": base64.b64encode(pretty_payload).decode(),
+        "signatures": [{"keyid": "aaaa", "sig": "c2ln"}]}
+open(w + "/noncanonical-payload.dsse.json", "w").write(json.dumps(envp, separators=(",", ":")))
 open(w + "/expected.sha256", "w").write(hashlib.sha256(payload).hexdigest())
 PY
 
@@ -74,6 +93,22 @@ if [ "$n" = 1 ]; then
   say "across all three serializations" "one signed artifact - envelope form does not move it"
 else
   say "across all three serializations" "$n DIFFERENT signed artifacts"; fail=1
+fi
+
+# A payload in a NON-CANONICAL spelling must not be signed in that spelling. It is a valid claim
+# with the same id; its bytes are simply not the ones the id is derived from, and binding an
+# external identity to them is the same defect one layer down.
+export SIGNED_LOG="$W/noncanon.log"; : > "$SIGNED_LOG"
+if bash "$HERE/sigstore-sign-claim.sh" "$W/noncanonical-payload.dsse.json" --cosign "$W/cosign-stub" \
+      --bundle "$W/noncanon.sigstore.json" >/dev/null 2>&1; then
+  got=$(head -1 "$SIGNED_LOG")
+  if [ "$got" = "$expected" ]; then
+    say "a non-canonical payload" "canonicalized before signing"
+  else
+    say "a non-canonical payload" "SIGNED THE STORED SPELLING ($got)"; fail=1
+  fi
+else
+  say "a non-canonical payload" "refused"
 fi
 
 # A payload that is not an in-toto Statement must be refused rather than signed.

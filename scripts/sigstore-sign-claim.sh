@@ -50,12 +50,44 @@ stmt=$(mktemp -t kton-statement.XXXXXX.json)
 trap 'rm -f "$stmt"' EXIT
 python3 -c 'import base64,sys; open(sys.argv[2],"wb").write(base64.b64decode(sys.argv[1]))' \
   "$payload_b64" "$stmt"
-# It must BE the canonical statement, not merely decode: signing bytes the claim id is not computed
-# over would reintroduce the same defect one layer down.
+# It must BE the canonical statement, not merely decode to one.
+#
+# A DSSE payload is not required to be canonical: the kernel canonicalizes it when deriving the claim
+# id, so an envelope whose payload is pretty-printed is a valid, genuinely signed claim with the same
+# id as its compact twin. Signing those bytes unchanged would hand the external scheme a different
+# artifact for each serialization - the same defect one layer down from the one this script fixes,
+# and invisible because both calls succeed.
+#
+# It is REFUSED rather than canonicalized, deliberately. Signing canon(payload) would leave the
+# Sigstore bundle standing over different bytes than the envelope's own DSSE signatures, so a
+# verifier holding the envelope would have to know to canonicalize before checking the bundle - one
+# claim, two signatures, two artifacts. Refusing keeps both over the same bytes. Re-author the claim
+# through the kernel, which always emits canonical, and sign that.
+#
+# The test uses the kernel as the authority rather than reimplementing JCS here: a claim id IS
+# sha256(canon(payload)), so a payload whose own sha256 equals the claim id is canonical, and one
+# whose does not, is not.
+nekton_bin="${NEKTON:-nekton}"
+command -v "$nekton_bin" >/dev/null 2>&1 || {
+  echo "need \`nekton\` on PATH (or \$NEKTON): the canonical form is the kernel's to decide, and" >&2
+  echo "  reimplementing JCS in this script is how the two would come to disagree." >&2
+  exit 1; }
+claim_id=$("$nekton_bin" show "$claim" --json 2>/dev/null \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("claimId",""))' 2>/dev/null)
+[[ -n "$claim_id" ]] || { echo "cannot read a claim id from $claim - is it a nekton claim?" >&2; exit 1; }
+payload_sha="sha256:$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$stmt")"
+if [[ "$payload_sha" != "$claim_id" ]]; then
+  echo "refusing: this envelope's payload is not in canonical form." >&2
+  echo "  claim id (sha256 of the CANONICAL statement): $claim_id" >&2
+  echo "  sha256 of the payload as stored:              $payload_sha" >&2
+  echo "  Signing the stored spelling would bind the external identity to bytes that are not the" >&2
+  echo "  ones this claim is addressed by (SPEC §8.1). Re-author the claim with \`nekton claim\`," >&2
+  echo "  which emits canonical bytes, and sign that." >&2
+  exit 1
+fi
 python3 - "$stmt" <<'PYCHK' || exit 1
 import json,sys
-raw=open(sys.argv[1],'rb').read()
-try: st=json.loads(raw)
+try: st=json.loads(open(sys.argv[1],'rb').read())
 except Exception as e: print("decoded payload is not JSON: %s"%e, file=sys.stderr); sys.exit(1)
 if st.get("_type") != "https://in-toto.io/Statement/v1":
     print("decoded payload is not an in-toto Statement", file=sys.stderr); sys.exit(1)
