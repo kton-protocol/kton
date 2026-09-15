@@ -8,14 +8,17 @@ project: excluding a patent from the grant.*
 
 ## Code of Conduct
 
-Contact for Code of Conduct issues or inquiries: **NOT YET DESIGNATED.**
+Contact for Code of Conduct issues or inquiries:
 
-> This is deliberately left blank rather than filled in with a plausible name. Someone submitting a
-> complaint needs to know exactly who receives it, and the Community Specification guidance asks for
-> **two** individuals so that a complaint about one of them still has somewhere to go. Naming people
-> to a role is the Working Group's decision, not a formatting exercise. Until this is filled in, the
-> Code of Conduct ([`community-specification/08-code-of-conduct.md`](community-specification/08-code-of-conduct.md))
-> has no named recipient.
+- **Michael Hackl** — <michael.hackl@scinteco.com>
+
+> **One recipient is a known gap, not an oversight.** The Code of Conduct
+> ([`community-specification/08-code-of-conduct.md`](community-specification/08-code-of-conduct.md) §
+> Enforcement) directs reports to "the community leaders responsible for enforcement as set forth in
+> the repository's Notice.md file" — plural. With a single name, a complaint *about that person* has
+> nowhere else to go, and the reporter can see that before deciding whether to report at all. A
+> second recipient is to be named; adding one is a pull request against this file, which is how every
+> other notice under this licence is made.
 
 
 ## License Acceptance
