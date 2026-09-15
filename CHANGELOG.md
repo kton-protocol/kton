@@ -227,6 +227,13 @@ the `sync` answer and none for the record queries, so half the clause was never 
 now decode the record-query answer through `[]core.Envelope` — the declared shape — because that is
 precisely what a conforming consumer must be able to do.*
 
+**Two requirements meet here and the resolution is worth stating.** An earlier change made the id a
+NAMED field on each record, so a consumer would never have to regex one out of prose. §12 wants bare
+envelopes, and an id inside an element makes that element something other than an envelope. The id
+therefore moved rather than went: `summary` is keyed by it, so it is still a named thing a reader
+looks up rather than parses, and the array is what the clause says it is.
+
+
 ### Fixed — adding an empty source to a union removed evidence from the sync feed
 
 `OpenUnion` zeroes foreign positions on purpose: a number issued by another store means nothing here.
