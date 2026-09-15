@@ -350,15 +350,30 @@ func run(cmd string, args []string) error {
 			//
 			// Exit 3, not 1 or 0: the signature verdict keeps its meaning (1 = invalid/tampered,
 			// 2 = wrong key), and 0 still means "this claim is genuine AND storable".
-			if st, _, perr := claim.ParseEnvelope(env); perr == nil {
-				p, _ := st.ParsePredicate()
-				if serr := st.Validate(p); serr != nil {
-					fmt.Printf("structure:       INVALID - %v\n", serr)
-					fmt.Println("                 the signature is genuine; the claim is still one `add` refuses.")
-					os.Exit(3)
-				}
-				fmt.Println("structure:       VALID - the fields SPEC §7.2/§7.3 require are present")
+			//
+			// A PARSE failure is a structural failure, not a reason to skip the check. This block used
+			// to be `if perr == nil { ... }`, so a payload that could not be parsed at all - duplicate
+			// JSON member names, say - fell through to `return nil` and exit 0, printing a clean
+			// signature verdict and NO structure line. The only signal was the absence of a line, which
+			// no automation reads, and `add` refused the same file outright (dev review R02).
+			st, _, perr := claim.ParseEnvelope(env)
+			if perr != nil {
+				fmt.Printf("structure:       INVALID - %v\n", perr)
+				fmt.Println("                 the signature is genuine; the payload is not a claim this substrate can store.")
+				os.Exit(3)
 			}
+			p, pperr := st.ParsePredicate()
+			if pperr != nil {
+				fmt.Printf("structure:       INVALID - %v\n", pperr)
+				fmt.Println("                 the signature is genuine; the claim is still one `add` refuses.")
+				os.Exit(3)
+			}
+			if serr := st.Validate(p); serr != nil {
+				fmt.Printf("structure:       INVALID - %v\n", serr)
+				fmt.Println("                 the signature is genuine; the claim is still one `add` refuses.")
+				os.Exit(3)
+			}
+			fmt.Println("structure:       VALID - the fields SPEC §7.2/§7.3 require are present")
 			return nil
 		case suppliedKeyid != signerKeyid:
 			fmt.Println("signature:       UNVERIFIED - WRONG KEY: this key did not sign the record")

@@ -191,6 +191,13 @@ func ClaimID(payload []byte) string {
 // a predicate term, a signer, and a timestamp. Seeds are governed by the structural §7.4 fields
 // instead and are exempt here.
 func (st *Statement) Validate(p *Predicate) error {
+	// The CONTEXT-FREE part of §7.4 first, for seeds and non-seeds alike. It used to live only in
+	// the registry's chain check, so `verify` - which never reaches the registry - reported
+	// "structure: VALID" for a seed carrying genesis:false that `add` then refused (dev review R02).
+	// One definition, called from both, is the only arrangement in which the two cannot drift.
+	if err := ValidateChainStructure(st, p); err != nil {
+		return err
+	}
 	if st.IsSeed() {
 		return nil
 	}
@@ -227,6 +234,42 @@ func (st *Statement) Validate(p *Predicate) error {
 	// a boundary, not enforced by this format check.
 	if _, err := time.Parse(time.RFC3339, p.When); err != nil {
 		return fmt.Errorf("claim `when` is not an RFC 3339 timestamp (SPEC §7.2): %q", p.When)
+	}
+	return nil
+}
+
+// ValidateChainStructure enforces the part of SPEC §7.4 that needs NO registry state: where
+// `genesis` may appear, and that a seed carries no `prev`. Whether a scope resolves, and whether a
+// `prev` links to something present, are context-DEPENDENT and stay with the registry, which is the
+// only thing that knows what it holds.
+//
+// Split out so authoring, `verify` and ingest can share one definition. The registry had these
+// rules; `verify` did not, so the two disagreed about what a storable record is - which is the whole
+// defect: a command whose exit 0 is documented to mean "genuine AND storable" answered only the
+// first half.
+func ValidateChainStructure(st *Statement, p *Predicate) error {
+	// A top-level `genesis` is never valid: genesis lives inside a scope/v0 predicate (§7.4). Rejected
+	// here so it cannot slip past the predicate.genesis guards below.
+	if st.Genesis {
+		return fmt.Errorf("genesis must live inside a scope/v0 predicate, not at the statement top level (SPEC §7.4)")
+	}
+	if p == nil {
+		return nil
+	}
+	if st.IsSeed() {
+		// A seed opens its own scope (scope_id = this claim id): it MUST set genesis and MUST NOT
+		// carry prev.
+		if p.Prev != "" {
+			return fmt.Errorf("a seed MUST NOT carry prev (SPEC §7.4)")
+		}
+		if !p.Genesis {
+			return fmt.Errorf("a scope seed MUST set genesis:true (SPEC §7.4)")
+		}
+		return nil
+	}
+	// genesis:true on a non-seed is an attempt to mint a scope without a scope/v0 statement.
+	if p.Genesis {
+		return fmt.Errorf("genesis:true is only valid on a scope/v0 seed (SPEC §7.4)")
 	}
 	return nil
 }
