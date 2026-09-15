@@ -26,11 +26,20 @@ GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated sile
 OPEN="envtally-CF2"
 SKIPPED=""
 
+# Attacks whose reproduction lives in the companion example repository. Without that checkout they
+# cannot run - a fact about this invocation, NOT about the code under test - so they are reported as
+# SKIPPED with the reason. Every OTHER N-A means a prerequisite is missing, which is a broken run.
+NEEDS_KX="screenshot-viewer-labels fourEyes-graphpoll"
+
+HAVE_KX=0
 if [ -n "$KX" ] && [ -f "$KX/viewer/build_union.py" ]; then
+  HAVE_KX=1
   GATED="$GATED screenshot-viewer-labels"
 else
   SKIPPED="screenshot-viewer-labels"
 fi
+
+needs_kx() { case " $NEEDS_KX " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 run_one() {  # <id> -> echoes the verdict word
   bash "$HERE/attacks/$1.sh" "$KX" 2>/dev/null \
@@ -38,6 +47,26 @@ run_one() {  # <id> -> echoes the verdict word
 }
 
 fail=0
+
+# PREREQUISITES, checked before a single verdict is printed.
+#
+# Every PoC here answers "VERDICT: N-A" when a tool it needs is absent, and N-A used to be accepted
+# in the GATED list as if it were fine. With an empty PATH all sixteen said N-A and the gate still
+# printed "every finding recorded as fixed is still PREVENTED" and exited 0 - a security claim over
+# zero executed proofs (dev review R08). Worse, the banner below ALREADY printed "NOT ON PATH" three
+# times: the evidence was on screen and the verdict ignored it, which makes a hollow run look
+# thorough. A gate that cannot tell "nothing attacked me" from "nothing ran" is not a gate.
+missing=""
+for t in plankton nekton kton jq; do
+  command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
+done
+if [ -n "$missing" ]; then
+  echo "::error::the security gate CANNOT RUN - missing prerequisite(s):$missing"
+  echo "::error::every PoC would report N-A, which proves nothing. Build the binaries first:"
+  echo "::error::  ( cd reference && go build -o <bindir>/plankton ./cmd/plankton )   # and nekton, kton"
+  echo "::error::then put <bindir> on PATH. Refusing to print a verdict over zero executed proofs."
+  exit 1
+fi
 
 # WHICH binaries. Every PoC here resolves plankton/nekton/kton off PATH, so a green gate is a
 # statement about whatever binaries happened to be there - and a RED one may be too. Four findings
@@ -67,11 +96,18 @@ echo
 printf '%-26s %-12s %s\n' "attack" "verdict" "meaning"
 printf '%-26s %-12s %s\n' "------" "-------" "-------"
 
+proved=0; unrun=0
 for a in $GATED; do
   v=$(run_one "$a"); v=${v:-NO-VERDICT}
   case "$v" in
-    PREVENTED)    note="fix holds" ;;
-    N-A)          note="not applicable here" ;;
+    PREVENTED)    note="fix holds"; proved=$((proved+1)) ;;
+    # N-A means "this PoC did not run". Prerequisites are checked above, so the only honest reason
+    # left is the companion checkout - and that is coverage this run does NOT have, never a pass.
+    N-A)          if needs_kx "$a"; then
+                    note="NOT RUN - needs a kton-examples checkout"; unrun=$((unrun+1))
+                  else
+                    note="NOT RUN - no reason this gate knows; it proves nothing"; fail=1
+                  fi ;;
     # A PoC that could not build its own precondition proves NOTHING. It must not read as a pass -
     # that is how a check ends up unable to fail, which is a defect this suite has now found in
     # itself five times.
@@ -149,9 +185,17 @@ else
 fi
 echo
 
-if [ "$fail" = 0 ]; then
-  echo "SECURITY GATE: PASS - every finding recorded as fixed is still PREVENTED"
+gated_n=$(printf '%s\n' $GATED | grep -c .)
+if [ "$fail" != 0 ]; then
+  echo "::error::SECURITY REGRESSION - a finding recorded as fixed is exploitable again, or a gated PoC did not run"
+elif [ "$unrun" != 0 ]; then
+  # Not a pass and not a regression: a run that is missing coverage it is supposed to have. Saying
+  # PASS here is how "every finding is still PREVENTED" gets printed over proofs nobody executed.
+  echo "SECURITY GATE: INCOMPLETE - $proved of $gated_n gated attacks PREVENTED, $unrun did not run"
+  echo "  pass a kton-examples checkout as \$1 to run the rest. This run does NOT support the claim"
+  echo "  that every finding recorded as fixed still holds."
+  [ "${KTON_GATE_STRICT:-0}" = 1 ] && { echo "::error::KTON_GATE_STRICT=1 requires full coverage"; fail=1; }
 else
-  echo "::error::SECURITY REGRESSION - a finding recorded as fixed is exploitable again, or an open PoC failed to run"
+  echo "SECURITY GATE: PASS - all $proved gated attacks ran and every one is still PREVENTED"
 fi
 exit $fail

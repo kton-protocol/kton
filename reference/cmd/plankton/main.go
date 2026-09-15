@@ -670,12 +670,24 @@ func run(cmd string, args []string) error {
 		}
 		// Normalize the output-hash args to canonical lowercase (SPEC §5.1) so a bare/uppercase hash
 		// resolves; --via may be a ref or foton id, so normalize it only if it is a content hash.
-		if n, ok := core.NormalizeContentHash(ref); ok {
-			ref = n
+		// The two compared arguments MUST be content hashes. Normalization used to be attempted and
+		// its failure ignored, so two equal pieces of junk fell straight into the `ref == cand`
+		// branch below and `reproduces not-a-hash not-a-hash --json` answered
+		// {"level":"L0","matched":true} with exit 0 - a byte-identity claim over strings that name no
+		// bytes (dev review R14). Equality of two malformed strings is not a reproduction.
+		refRaw, candRaw := ref, cand
+		var okRef, okCand bool
+		if ref, okRef = core.NormalizeContentHash(ref); !okRef {
+			return fmt.Errorf("%q is not a content hash - reproduces compares OUTPUT HASHES, and two equal\n"+
+				"  malformed strings are not a reproduction. Expected sha256:<64 hex>.", refRaw)
 		}
-		if n, ok := core.NormalizeContentHash(cand); ok {
-			cand = n
+		if cand, okCand = core.NormalizeContentHash(cand); !okCand {
+			return fmt.Errorf("%q is not a content hash - reproduces compares OUTPUT HASHES, and two equal\n"+
+				"  malformed strings are not a reproduction. Expected sha256:<64 hex>.", candRaw)
 		}
+		// --via names a normalizer, which may be a foton id or a ref, so it is normalized only when
+		// it IS a content hash: an unrecognised spelling stays as given and resolves to no
+		// normalized output below.
 		if n, ok := core.NormalizeContentHash(via); ok {
 			via = n
 		}

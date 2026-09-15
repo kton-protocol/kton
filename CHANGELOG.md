@@ -110,6 +110,71 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
+### Fixed — first patch group from the external development-branch review
+
+An independent review of `dev` at `edcbfa1` returned fifteen findings, four of them P1. Four are
+closed here; the reproductions were re-run against the code before any of it was touched, and all
+four reproduced exactly as reported.
+
+- **The security gate printed PASS having executed nothing** (R08). With the binaries absent from
+  `PATH` every one of the sixteen gated attacks reported `N-A`, `N-A` was accepted in the GATED list
+  as though it were a pass, and the gate ended with *"every finding recorded as fixed is still
+  PREVENTED"* and exit 0 — a security claim over zero executed proofs. Worse, the banner added days
+  earlier **already printed "NOT ON PATH" three times**: the evidence was on screen and the verdict
+  ignored it, which makes a hollow run look thorough.
+
+  Prerequisites (`plankton`, `nekton`, `kton`, `jq`) are now checked before a single verdict is
+  printed, and a missing one refuses to produce a verdict at all. `N-A` in the gated list is no
+  longer a pass: the only honest reason left is the companion checkout, so those attacks report
+  **NOT RUN** and the gate ends `INCOMPLETE`, naming how many of its proofs actually executed.
+  `KTON_GATE_STRICT=1` makes missing coverage fail the build. With the companion checkout present
+  the gate runs **16 of 16** rather than 14. *(Setting that variable in `ci.yml`, and making CI's
+  kton-examples checkout fatal rather than `continue-on-error`, is a separate one-hunk change: this
+  token cannot push workflow files.)*
+
+- **`keygen` deleted a private key it had never written** (R04). `WriteKeyFile` returns success for a
+  file that already holds exactly the requested key, so the caller could not tell *I created this*
+  from *it was already here* — and on a failure writing the public half it removed `name.key`
+  unconditionally. Re-running `keygen` over an existing identity whose `.pub` had drifted therefore
+  destroyed the private key, while printing *"refusing to overwrite an identity"* and *"would destroy
+  the only copy of that private seed"* in the same breath. The message described a protection that
+  was not there.
+
+  `WriteKeyFile` now returns a `KeyWrite` saying what it did — created, or renamed a previous file
+  aside — and `Undo` reverses only that. A pre-existing key is left alone; a half-written pair is
+  rolled back; a `--force` replacement that fails restores the original from its backup. Four cases,
+  four tests, in both kernels, verified to fail against the old code.
+
+- **`reproduces` claimed a byte-identity match between two malformed strings** (R14). Hash
+  normalization was attempted and its failure ignored, so `reproduces not-a-hash not-a-hash --json`
+  answered `{"level":"L0","matched":true}` with exit 0. L0 means *the same output bytes*; neither
+  argument named any bytes. Both compared arguments must now normalize. Equivalent spellings — bare
+  hex, uppercase, surrounding whitespace — still compare equal, which is why normalizing happens at
+  all.
+
+- **`seed --parent` signed a reference its own parser cannot read** (R11). It emitted the *subject*
+  shape, `{"digest":{"sha256":…}}`, while `claim.Ref` reads `{hash?, uri?}` (nekton SPEC §7.4:
+  `parent?: Ref`). A seed authored with `--parent` round-tripped to an empty `Hash` and an empty
+  `Parent.Key()`: the scope hierarchy the operator asked for was signed into a permanent claim id in
+  a form nothing could interpret. Now emits `{"hash":"sha256:…"}`, normalizes the argument, and
+  refuses one that is neither a content hash nor a URI. The test asserts the round trip through the
+  public parser, not the shape of the JSON — a test that merely grepped for `"hash"` would pass on
+  output nothing can read.
+
+- **`cursor-shift` was crying wolf** (found while re-running the gate). Its nekton half grinds a
+  scope id that sorts below an existing one, and used a **random** key — so whether the precondition
+  could be built in 60 attempts was luck, and a failure to build it was counted as a miss and
+  reported **VULNERABLE**. A PoC that flakes into a false REGRESSION costs exactly the attention a
+  real one needs. The key and timestamps are now fixed, so the ids are identical on every machine and
+  every run, and an unbuildable precondition reports `INCONCLUSIVE` — *I could not set up the attack*
+  and *the attack worked* are different answers.
+
+Not in this group, deliberately: **R03** (signature loss between canonically equivalent
+serializations) and **R02** (`verify` accepting records `Add` rejects) need a storage and a shared
+validator decision respectively, and the review is right that a careless canonicalization fix can
+invalidate signatures. **R01** (DNS rebinding in `kton fetch`) is a cockpit concern that leaves
+with #103.
+
 ### Fixed — the kernel reported a verification verdict it is forbidden to have
 
 - **`material --json` emitted `"verified": false`, in both kernels.** SPEC §8.1 defines
