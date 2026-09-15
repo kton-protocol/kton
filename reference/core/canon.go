@@ -330,11 +330,23 @@ func jcsNumber(s string) (string, error) {
 	//
 	// Together they make acceptance depend on the number, never on how it was written, and
 	// canon(canon(x)) == canon(x) holds for everything accepted.
-	if !strings.ContainsAny(s, "/") { // a JSON number is never a big.Rat ratio; refuse to parse one
-		if r, ok := new(big.Rat).SetString(s); ok && r.IsInt() {
-			if r.Num().CmpAbs(maxExactInt) > 0 {
-				return "", fmt.Errorf("canon: integer %s is outside the exactly-representable range "+
-					"(|v| <= 2^53, RFC 8785 App D: carry it as a string)", s)
+	//
+	// (a) runs ONLY where it can fire. `big.Rat.SetString` parses the literal exactly, which for
+	// `1e-1000000` means constructing a denominator of 10^1000000 - about 415 KB of digits - for a
+	// value ParseFloat has already underflowed to zero. A 1101-byte document of those took 1.8
+	// seconds against 112 microseconds for the same document with ordinary numbers, and this runs on
+	// externally supplied payloads at ingest and at verify: work decided by an exponent's VALUE
+	// rather than by the input's SIZE is an amplifier. A number below 2^53 cannot be the case (a)
+	// exists for, and a number with a negative exponent cannot be a large integer at all, so the
+	// magnitude decides whether the exact parse is worth doing - computed from the literal by
+	// counting, never by arbitrary-precision arithmetic.
+	if mag, ok := decimalMagnitude(s); ok && mag >= exactDigits {
+		if !strings.ContainsAny(s, "/") { // a JSON number is never a big.Rat ratio; refuse to parse one
+			if r, ok := new(big.Rat).SetString(s); ok && r.IsInt() {
+				if r.Num().CmpAbs(maxExactInt) > 0 {
+					return "", fmt.Errorf("canon: integer %s is outside the exactly-representable range "+
+						"(|v| <= 2^53, RFC 8785 App D: carry it as a string)", s)
+				}
 			}
 		}
 	}
@@ -343,6 +355,49 @@ func jcsNumber(s string) (string, error) {
 			"range (|v| <= 2^53, RFC 8785 App D: carry it as a string)", s, strconv.FormatFloat(f, 'f', -1, 64))
 	}
 	return jcsNumberFloat(f)
+}
+
+// exactDigits is the number of decimal digits below which a value cannot reach 2^53. 10^15 is
+// 1e15 and 2^53 is about 9.007e15, so any literal whose integer part has at most 15 digits is
+// certainly inside the exactly-representable range and needs no exact parse.
+const exactDigits = 16
+
+// decimalMagnitude returns an upper bound on the number of decimal digits in the integer part of a
+// JSON number literal, by counting rather than by evaluating. A result <= 0 means |v| < 1.
+//
+// It exists so the exact-integer check can be skipped where it cannot fire. Being an UPPER bound is
+// what makes that safe: it may say "worth checking" for a value that turns out fine (the exact
+// parse then simply finds nothing), and it must never say "not worth checking" for one that is not.
+// Leading zeros are not significant and are dropped, so `0.0000001e9` is magnitude 3, not 10.
+func decimalMagnitude(s string) (int, bool) {
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "-"), "+")
+	mant, expPart, hasExp := s, "", false
+	if i := strings.IndexAny(s, "eE"); i >= 0 {
+		mant, expPart, hasExp = s[:i], s[i+1:], true
+	}
+	intPart := mant
+	if i := strings.IndexByte(mant, '.'); i >= 0 {
+		intPart = mant[:i]
+	}
+	intPart = strings.TrimLeft(intPart, "0")
+	digits := len(intPart)
+	if digits == 0 {
+		// |mantissa| < 1: the first significant digit sits somewhere after the point, so the integer
+		// part is empty and only a positive exponent can lift the value above 1.
+		digits = 0
+	}
+	exp := 0
+	if hasExp {
+		v, err := strconv.Atoi(strings.TrimPrefix(expPart, "+"))
+		if err != nil {
+			// An exponent too long for an int is enormous in either direction: enormous-positive
+			// would have failed ParseFloat before this point, enormous-negative underflows to zero.
+			// Either way the exact check cannot fire, so report "not worth checking".
+			return 0, true
+		}
+		exp = v
+	}
+	return digits + exp, true
 }
 
 func jcsNumberFloat(f float64) (string, error) {

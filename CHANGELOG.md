@@ -149,6 +149,48 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
+### Fixed — two ways to lose work: a torn log tail, and a number that costs seconds
+
+- **An acknowledged write was lost to somebody else's interrupted one.** A crash mid-append leaves a
+  torn final line with no newline. Losing *that* line is correct — it was never acknowledged. What
+  happened next was not: an `O_APPEND` write landed directly on the fragment, concatenating them, so
+  the reader discarded **both**. `Add` had already returned success and indexed the claim:
+
+  ```
+  Add B: acknowledged
+    in-memory after the acknowledged Add: 2
+    after reopen:                          1
+  ```
+
+  The tail is now isolated before appending — a lone newline turns the fragment into a line of its
+  own, which the reader skips with a warning, and the new record starts clean. Written in one call
+  with the record, so the repair cannot itself be interrupted halfway. A read error on the tail is a
+  persistence failure, not a shrug: appending onto a file we could not inspect is how the record was
+  lost in the first place. The one-file subnekton is 0.2's headline layout change, and this failure
+  arrived with it.
+
+- **A 1,101-byte document took 1.8 seconds to canonicalize.** The exact-integer check parses the
+  literal with `big.Rat`, and `1e-1000000` builds a denominator of 10^1000000 — hundreds of kilobytes
+  of digits — for a value `ParseFloat` has already underflowed to zero. Ingest and verify
+  canonicalize externally supplied payloads, so work decided by an **exponent's value** rather than by
+  the **input's size** is an amplifier: a hundred small numbers, no large document needed.
+
+  ```
+  ordinary                   401 bytes       144µs
+  tiny negative exponent    1101 bytes    1.82235s
+  ```
+
+  The exact parse now runs only where it can fire. A value below 2^53 is not the case it exists for,
+  and a number with a negative exponent cannot be a large integer at all, so an upper bound on the
+  integer magnitude — computed from the literal by counting digits and reading the exponent, never by
+  arbitrary-precision arithmetic — decides whether the parse is worth doing. Every spelling that was
+  refused before is still refused, `canon(canon(x)) == canon(x)` still holds, and the regression test
+  asserts the **ratio** against ordinary numbers of the same size rather than a wall-clock threshold,
+  which would be a property of the machine that ran it.
+
+  *This one arrived with the fix for the earlier canonicalization finding: the exactness check that
+  made acceptance depend on the value rather than the spelling brought an unbounded parse with it.*
+
 ### Fixed — four more from the development-branch review
 
 - **`sync(since)` did not answer in append order.** §12 promises *"records with a local sequence above
