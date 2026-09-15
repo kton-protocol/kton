@@ -149,6 +149,36 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
+### Fixed — three declared shapes that did not match the bytes
+
+A second pass over the specification, asking one question the earlier passes did not: **does the
+reference emit the shape the spec declares?** Every structure in `SPEC.md` was compared field by field
+against a signed record produced by the reference. Three disagreed, and in each case the spec's own
+normative prose elsewhere already said what the code does — so the shape, not the code, was wrong.
+
+- **§6.6's wire form omitted a field the reference signs.** It declared `subject` and
+  `predicate.inputs` as `{name, digest}`, while §6.1 says a `FileRef`'s carried `uri` **is** emitted
+  and round-tripped at 0.1 — and it is, as a list, on inputs and subjects alike. `specVersion` was
+  missing too. An implementer working from §6.6 would have produced records missing a field this one
+  signs. The listing is now complete, says `path`→`name` and `hash`→`digest.sha256`, and states that
+  it is exhaustive.
+
+- **§7.3's claim wire form had no room for a scoped claim.** It listed
+  `{predicate, object?, context?, by, when, why?, evidence?}` — and §7.4 requires `scope` and `prev`
+  on every scoped statement, which the reference duly emits. Two clauses, one set of bytes, no
+  overlap. §7.3 now says the structural fields of §7.4 travel in the same predicate.
+
+- **§7.4 made `responsible` look mandatory.** The seed shape read
+  `{ scope, parent?, responsible: [Identity], genesis: true }` — `parent` marked optional, so the
+  unmarked `responsible` reads as required. The reference never emits it, the kernel never requires
+  it, and the field is `omitempty`; §7.4 itself says its *meaning* is convention rather than kernel.
+  Requiring its presence would be the kernel enforcing a convention it does not interpret. Marked
+  optional, and `by`/`when` — which the reference does emit — added.
+
+Verified afterwards the way the divergence was found: every field in a signed foton, a seed and a
+scoped claim is now named by the clause that declares it, and no clause declares a required field the
+reference omits.
+
 ### Changed — the specification no longer reserves an application vocabulary
 
 `spec/vocabulary.md` said, in one paragraph, both that application vocabulary "live[s] in

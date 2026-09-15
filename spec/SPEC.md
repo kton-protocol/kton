@@ -299,10 +299,16 @@ A foton travels as an in-toto Statement (`_type = "https://in-toto.io/Statement/
 `predicateType = "https://kton.dev/foton/v0"`:
 
 ```
-subject:            outputs            # [{ name, digest: {sha256} }]
-predicate.inputs:   [ {name, digest} ] # materials / dependencies
+subject:            outputs            # [{ name, digest: {sha256}, uri? }]
+predicate.inputs:   [ {name, digest, uri?} ]   # materials / dependencies
 predicate.protocol: { kind, ref, descriptor? }
+predicate.specVersion?:  string        # the spec revision this was authored under (§16)
 ```
+
+A `FileRef`'s `path` travels as `name` and its `hash` as `digest.sha256`. Of the CARRIED fields
+(§6.1) only `uri` is on the wire at 0.1, and it is a **list**; it appears on subjects and on inputs
+alike, and being non-covered it changes no identity. `id`, `mediaType` and `meta` are reserved and
+are not emitted. This listing is exhaustive: a field not named here is not part of the 0.1 wire form.
 
 The kernel records exactly **one** plankton predicate type - the foton. Signed statements *about*
 fotons are nekton claims (Clause 7). The mechanical L0/L1/L2 comparison of two results is itself a
@@ -362,14 +368,21 @@ A claim travels as an in-toto Statement with `predicateType = "https://kton.dev/
 by, when, why?, evidence?}`. A reviewer sign-off, a delegation, and a `sameAs` mapping are all this one
 shape with different `predicate` terms.
 
+A claim that belongs to a **scope** additionally carries the structural fields §7.4 mandates -
+`scope` and `prev` - in the same predicate; a **seed** carries `scope`, `genesis` and an optional
+`parent` instead. Those are not extra shapes but the same one with §7.4's fields present: the kernel
+reads them structurally and interprets none of them.
+
 ### 7.4 Scopes, seeds, and the chain - the one structural grammar
 
 This is the **only** grammar the kernel mandates. It concerns *structure* (identity, order, boundary,
 nesting), never meaning.
 
 - **Seed.** A seed is a signed Statement with `predicateType = "https://kton.dev/scope/v0"` and
-  predicate `{ scope, parent?, responsible: [Identity], genesis: true }`. A scope's identity is
-  `scope_id = sha256(canon(Seed))`. A seed MUST NOT carry `prev`. `genesis: true` is admissible ONLY on
+  predicate `{ scope, genesis: true, by, when, parent?, responsible?: [Identity] }`. A scope's identity
+  is `scope_id = sha256(canon(Seed))`. `by` and `when` are the §7.2 fields every statement carries;
+  `responsible` is OPTIONAL and the reference emits none - its *meaning* is convention (below), so
+  requiring its presence would be the kernel enforcing a convention it does not interpret. A seed MUST NOT carry `prev`. `genesis: true` is admissible ONLY on
   a seed: a conforming kernel MUST reject `genesis: true` on any non-`scope/v0` statement.
 - **Chain.** Every non-genesis statement belonging to a scope MUST carry `scope` (= the `scope_id`) and
   `prev` (the hash of the immediately preceding statement in that scope). **Ingest is monotone:** a
