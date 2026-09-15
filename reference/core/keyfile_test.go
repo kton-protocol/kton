@@ -83,11 +83,19 @@ func TestWriteKeyFileNeverOverwritesAnIdentity(t *testing.T) {
 		if err := os.WriteFile(q, []byte("placeholder"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		// The property is UNTOUCHED, not 0644. Asserting the literal baked in a Unix assumption:
+		// Windows reports 0666 for any writable file regardless of what the create asked for, so the
+		// test failed there over something the code never did.
+		before, err := os.Stat(q)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := core.WriteKeyFile(q, []byte("seed"), 0o600, false); err == nil {
 			t.Fatal("wrote a private seed into a pre-existing file")
 		}
-		if fi, _ := os.Stat(q); fi.Mode().Perm() != 0o644 {
-			t.Fatalf("mode changed to %v - the file should be untouched", fi.Mode().Perm())
+		if fi, _ := os.Stat(q); fi.Mode().Perm() != before.Mode().Perm() {
+			t.Fatalf("mode changed from %v to %v - the file should be untouched",
+				before.Mode().Perm(), fi.Mode().Perm())
 		}
 		if b, _ := os.ReadFile(q); string(b) != "placeholder" {
 			t.Fatalf("content changed to %q", b)
