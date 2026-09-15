@@ -67,6 +67,32 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Added — the two reproduction answers are linkable, not only runnable
+
+`Registry.Reproductions(outputHash, trusted)` and `Registry.Reproduces(refHash, candHash, via)`.
+Both existed only inside `cmd/plankton`, so a cockpit could get them only by running a binary and
+parsing its output — while everything else it needs (authoring via `foton.SignWith` and
+`claim.SignWith`, verifying, reading, material, scopes) is already a package it can link.
+
+The reason is not convenience. A consumer that must not take a reproduction level from whoever is
+asking has to **run** the comparison; if the only implementation is a command, every integrator
+writes a second one — and two implementations of an identity rule are two opinions about identity.
+That is the argument that moved foton and claim authoring out of `package main`; these two are what
+was left.
+
+Methods rather than a package, because both are joins over indexes this type already owns
+(`byOutput`, the envelopes, the normalized-output index) — a separate package would have to be
+handed the registry anyway.
+
+Two things travel with the logic rather than staying behind in the CLI: `Reproductions.Verified`
+says whether the count was checked at all (false means self-declared keyids, which are not covered
+by the DSSE signature and are therefore forgeable), and `Reproduces` refuses arguments that are not
+content hashes — equality of two malformed strings is not a reproduction, and a linked caller needs
+that rule as much as the CLI does.
+
+Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
+are now flag parsing over the methods, the shape `plankton author` already has.
+
 ### Fixed — each kernel now applies its own structure at every boundary
 
 Two findings that get filed together and are **not one fix**. plankton validates fotons — hash
