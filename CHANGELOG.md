@@ -67,6 +67,33 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Fixed — the specification cited a PAV property that does not exist
+
+`pav:reviewedBy` was named in Annex A, in the vocabulary annex and in the examples for the whole of
+0.1 — and **published**, in four triples of signed nanopublications.
+
+PAV defines 33 terms. `authoredBy`, `createdBy`, `curatedBy`, `importedBy`, `retrievedBy`,
+`contributedBy` are among them; `reviewedBy` is not. It reads as plausible, which is exactly why
+nobody looked it up.
+
+Every other borrowed term was checked the same way, against the fetched ontology rather than from
+memory — `prov:` (9 terms), `dct:` (5), `dcat:downloadURL`, `pav:createdBy`, the four `npx:`
+signature terms, the four nanopublication-schema terms, `sec:controller`, `schema:AcceptAction`,
+`owl:sameAs`, `rdfs:label`, `skos:broader`, `xsd:dateTime`. **All real and correctly spelled.** The
+six RDF files the example suite emits parse cleanly, 772 triples. One invented term in the lot.
+
+**And it would have been the wrong shape even if it existed.** `reviewedBy` is passive — "X was
+reviewed **by** Y" — so its object is the reviewer's identity, and putting a verdict there asserts
+that the record was reviewed by "looks correct". The example suite had already found that half in
+September and moved to an application term of its own whose object is the verdict, leaving the
+reviewer to the signature. Nobody checked whether the term being replaced existed at all.
+
+The annex now says so plainly rather than quietly swapping a name, and notes the near-miss for the
+next person: `oa:assessing` is the right *motivation* in the Web Annotation vocabulary and is real,
+but it is an instance of `oa:Motivation`, not a property — it belongs in `oa:motivatedBy
+oa:assessing` on an `oa:Annotation`, never in a predicate slot. Naming it as one would repeat the
+mistake in a better disguise.
+
 ### Fixed — a gated proof that proved nothing, and a coverage claim that was not true
 
 - **`fourEyes-graphpoll` could not conclude anything, twice over.** Its closing

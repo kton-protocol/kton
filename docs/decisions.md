@@ -91,7 +91,7 @@ definitions. The namespace is `kton.dev`.
 | statement structure | in-toto Attestation (the foton shape) + DSSE (envelope) |
 | lineage, derivation, agent, activity | PROV-O (`prov:wasDerivedFrom`, `used`, `wasGeneratedBy`, `Agent`) |
 | evidence, support, dispute, supersession | micropublication + SEPIO-style terms |
-| review by an actor | PAV (`pav:reviewedBy`) |
+| review by an actor | application vocabulary - PAV has no review property (see `spec/vocabulary.md` §3) |
 | identity / key binding | W3C Security Vocabulary (see §21) |
 | file locations | DCAT (`dcat:downloadURL`, `dcat:accessURL`) |
 | licensing | SPDX identifiers |

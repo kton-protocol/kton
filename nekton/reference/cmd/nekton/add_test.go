@@ -27,7 +27,7 @@ func TestClaimAddIngests(t *testing.T) {
 	reg := filepath.Join(t.TempDir(), "reg")
 	spec := claimSpec{
 		Subject:   []subjSpec{{URI: "urn:example:thing"}},
-		Predicate: "pav:reviewedBy",
+		Predicate: "https://kton.dev/v/reviewed",
 		Object:    map[string]any{"value": "ok"},
 		By:        "CN=Tester",
 		When:      "2026-07-15T00:00:00Z",
@@ -197,7 +197,7 @@ func TestBulkAddOpensTheRegistryOnce(t *testing.T) {
 	for i, when := range []string{"2026-07-15T00:00:00Z", "2026-07-16T00:00:00Z", "DRAFTT00:00:00Z"} {
 		spec := claimSpec{
 			Subject:   []subjSpec{{URI: fmt.Sprintf("urn:example:thing-%d", i)}},
-			Predicate: "pav:reviewedBy",
+			Predicate: "https://kton.dev/v/reviewed",
 			Object:    map[string]any{"value": "ok"},
 			By:        "CN=Tester",
 			When:      when,
@@ -247,7 +247,7 @@ func TestReadJSONEmitsRecordsVerbatim(t *testing.T) {
 	}
 	spec := claimSpec{
 		Subject:   []subjSpec{{URI: "urn:example:doc"}},
-		Predicate: "pav:reviewedBy",
+		Predicate: "https://kton.dev/v/reviewed",
 		Object:    map[string]any{"id": "urn:example:person"},
 		By:        "CN=Tester",
 		When:      "2026-07-15T00:00:00Z",
