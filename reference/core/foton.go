@@ -64,12 +64,36 @@ func (f Foton) FotonID() (string, error) {
 	b, err := CanonValue(map[string]any{
 		"inputs":   coveredRefs(f.Inputs),
 		"outputs":  coveredRefs(f.Outputs),
-		"protocol": f.Protocol,
+		"protocol": f.coveredProtocol(),
 	})
 	if err != nil {
 		return "", err
 	}
 	return HashBytes(b), nil
+}
+
+// coveredProtocol is the protocol as IDENTITY sees it. It exists so identity and the action key
+// agree about one thing: whether a descriptor is PRESENT.
+//
+// Marshalling Protocol through its struct tags used `descriptor,omitempty`, and for a map omitempty
+// drops an EMPTY map as well as a nil one - so `descriptor: {}` and no descriptor at all produced
+// the same covered bytes and the same foton id. EffectiveRef and ActionKey draw the opposite
+// distinction, and deliberately: only nil is absent there, because a bare ref is an unverifiable
+// pointer to an off-record protocol and must not share an action key with an inline descriptor.
+//
+// Identical id, different action key: the `{}` form was taken for a duplicate of the descriptor-less
+// one on ingest and never acquired its own entry in the reuse index. One record, two answers about
+// what it is.
+//
+// Presence is therefore explicit here. Non-empty and nil descriptors produce exactly the bytes they
+// produced before - the key set is unchanged and CanonValue sorts - so no existing foton id moves;
+// only `{}`, which no record in this repository or in the example suite carries, becomes distinct.
+func (f Foton) coveredProtocol() map[string]any {
+	p := map[string]any{"kind": f.Protocol.Kind, "ref": f.Protocol.Ref}
+	if f.Protocol.Descriptor != nil {
+		p["descriptor"] = f.Protocol.Descriptor
+	}
+	return p
 }
 
 // EffectiveRef is the protocol ref used for IDENTITY (spec §6.2). When a descriptor is carried the
