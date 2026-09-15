@@ -58,7 +58,7 @@ func fetch(hash string, trustKeysDir string, allowLocal bool) error {
 	if len(trusted) == 0 {
 		// Without a trust policy this LISTS and dereferences nothing. Opening a URI a stranger
 		// named is a request made from this host and, for file://, a read of this host's disk -
-		// neither is undone by the hash check that follows (AUD-03).
+		// neither is undone by the hash check that follows.
 		fmt.Printf("%s: %d located-at claim(s), NONE verified - nothing dereferenced\n", hash, len(locs))
 		for i, l := range locs {
 			fmt.Printf("  [%d] %s  (self-asserted by=%q, signature UNVERIFIED)\n", i+1, l.uri, l.by)

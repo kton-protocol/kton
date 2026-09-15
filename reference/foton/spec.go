@@ -66,7 +66,7 @@ type Spec struct {
 // through float64 before signing.
 //
 // The two raw-bytes checks and DisallowUnknownFields all guard the same thing: a field that
-// disappears between what an author wrote and what gets signed (AUD-08). Duplicates and trailing
+// disappears between what an author wrote and what gets signed. Duplicates and trailing
 // documents have to be caught on the raw bytes, because decoding keeps the last duplicate and stops
 // at the end of the first document. A misspelled `inputs`/`outputs`/`protocol` used to vanish
 // silently, producing a signed foton that was not the one described.
@@ -118,7 +118,7 @@ func SubjectsOf(fs []FileSpec) []any {
 // indexed (SPEC §6.1, §6.3). It used to check only the predicate and the presence of a protocol, so
 // a signed foton with two different hashes at the same absolute input path was accepted AND indexed;
 // its action key then failed to compute, and the registry silently omitted the action-key index
-// while leaving the record queryable everywhere else (AUD-10). A structural violation must be
+// while leaving the record queryable everywhere else. A structural violation must be
 // refused at the boundary, not turned into a missing index nobody is told about.
 func (spec Spec) Validate() error {
 	if spec.Predicate != "" && spec.Predicate != "foton" {
@@ -178,7 +178,7 @@ func validateFiles(kind string, fs []FileSpec, dedupePaths bool) error {
 //
 // FotonID used to take the supplied hash strings verbatim while the signing path normalized them on
 // the way through the in-toto subject, so an accepted UPPERCASE input hash produced two different
-// ids for the same spec (AUD-09):
+// ids for the same spec:
 //
 //	helper: sha256:c51f96efe9abb55724b8d9c5fd17c13b48693c915771de9f11885cf86e15bb46
 //	signed: sha256:409fdf21bd0e10859bd7fb43fb3a40fd7d56a165f8aa1cff5db7f04dac47313a
@@ -222,7 +222,7 @@ func normalizeFiles(fs []FileSpec) []FileSpec {
 // protocol.
 func StatementPayload(spec Spec) ([]byte, error) {
 	// The SAME normalized representation FotonID uses, so the precomputed id and the id of the
-	// record actually signed cannot disagree (AUD-09).
+	// record actually signed cannot disagree.
 	spec, err := spec.normalized()
 	if err != nil {
 		return nil, err

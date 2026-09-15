@@ -43,7 +43,7 @@ func Open(dir string) (*Store, error) {
 // BEFORE the hash comparison that would have rejected it, and /blob?hash= feeds a query parameter
 // straight in, unauthenticated. The mismatch still stopped the bytes being returned as a blob, so
 // this was never byte disclosure - it was an existence-and-timing oracle and a way to pull an
-// arbitrary large file into memory (AUD-04).
+// arbitrary large file into memory.
 //
 // core.NormalizeContentHash already enforces exactly the right thing: canonical lowercase hex of a
 // 32-byte digest, prefix optional and case-insensitive. Anything else stops here.
@@ -93,7 +93,7 @@ func (s *Store) Get(hash string) ([]byte, error) {
 	// Compare against the CANONICAL form, not the caller's spelling. HashBytes always returns
 	// "sha256:<lowerhex>", so comparing to a bare or uppercase argument made a blob that had just
 	// been found on disk report itself corrupt - the hash-split failure NormalizeContentHash exists
-	// to prevent, reached through the one path that had not been routed through it (AUD-04 sibling).
+	// to prevent, reached through the one path that had not been routed through it.
 	want, _ := core.NormalizeContentHash(hash)
 	if got := core.HashBytes(b); got != want {
 		return nil, fmt.Errorf("blob corrupt: stored %s but content is %s", want, got)

@@ -32,7 +32,7 @@ jobs:
         with:
           # Released binaries are built on a SUPPORTED, patched Go line: the standard library ships
           # inside them, so a toolchain outside its support window is the release's problem even
-          # with no third-party modules (AUD-13). The declared 1.22 floor is proven by CI's `compat`
+          # with no third-party modules. The declared 1.22 floor is proven by CI's `compat`
           # job; it is not the security baseline for artifacts we hand out.
           go-version: 'stable'
 

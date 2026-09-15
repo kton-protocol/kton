@@ -15,8 +15,8 @@ import (
 	"kton.dev/plankton/core"
 )
 
-// AUD-05. `nekton mirror` classified EVERY Add error as a retryable missing dependency and, after
-// retrying it pointlessly, reported a local write failure as
+// `nekton mirror` must not classify EVERY Add error as a retryable missing dependency. Doing so
+// retries it pointlessly and reports a local write failure as
 //
 //	"1 unresolved (missing dependency - an incomplete chain)"   exit 0
 //

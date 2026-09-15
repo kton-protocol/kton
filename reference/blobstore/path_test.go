@@ -10,7 +10,7 @@ import (
 // path used to check only that the string was 64 characters long, and 64 characters can contain
 // separators and "..", which filepath.Join then normalises away. os.ReadFile ran on the result
 // BEFORE the hash comparison that would have rejected it, and /blob?hash= feeds a query parameter
-// straight in, unauthenticated (AUD-04).
+// straight in, unauthenticated.
 //
 // The mismatch still stopped the bytes being returned as a blob, so this was never byte disclosure.
 // It was an existence-and-timing oracle and a way to pull an arbitrary large file into memory - and

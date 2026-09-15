@@ -13,7 +13,7 @@
 # displaces, silently withheld from every already-synced peer. Roughly (N-1)/N of new records
 # are lost by accident, so ~2 attempts suffice to place one deliberately.
 #
-# The fix (AUD-02) issues a position ONCE, at append time, into objects/.seq beside the records,
+# The fix issues a position ONCE, at append time, into objects/.seq beside the records,
 # and never recomputes it. This PoC asserts the property that matters, not the mechanism: after
 # syncing to the cursor, adding one record MUST make exactly that record appear above it.
 set -u

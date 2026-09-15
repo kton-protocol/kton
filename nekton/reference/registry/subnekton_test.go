@@ -209,7 +209,7 @@ func TestCoSignatureUnionInsideASubnekton(t *testing.T) {
 	// A co-signature is APPENDED, not written over the existing entry. The subnekton is an
 	// append-only log because in nekton the order carries meaning (prev, head, seal); rewriting an
 	// entry in place erased the record that anything had changed, and with it the only thing a
-	// cursor could have noticed (AUD-04). So: seed + claim + co-signature = three lines.
+	// cursor could have noticed. So: seed + claim + co-signature = three lines.
 	sub := filepath.Join(dir, "objects", "scope", bare(scopeID)+".nekton.jsonl")
 	if n := lines(t, sub); n != 3 {
 		t.Errorf("subnekton holds %d lines, want 3 (seed, claim, co-signature) - a co-signature is "+

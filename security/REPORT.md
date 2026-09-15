@@ -242,7 +242,7 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
   accident; measured at ~2 attempts to place one deliberately. The same defect reached nekton across
   scopes, where the store sorts `objects/scope/<id>.jsonl` by scope id and a new scope sorting first
   pushes every older record up by one.
-- **fixed at:** #97 (AUD-02) - a position is issued **once**, at append time, into `objects/.seq`
+- **fixed at:** #97 - a position is issued **once**, at append time, into `objects/.seq`
   beside the records, and never recomputed. The stored bytes key the position, not the record
   identity, so peers stay byte-identical and a git merge of two stores is still conflict-free.
 - **PoC:** [`attacks/cursor-shift.sh`](attacks/cursor-shift.sh) - gated. It asserts the **property**,

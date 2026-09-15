@@ -36,7 +36,7 @@ NEKTON_DIR=m nekton mirror rA >/dev/null 2>&1; NEKTON_DIR=m nekton mirror rB >/d
 #
 # A subnekton is an append-only log, so a co-signature is its own line carrying the signature it
 # arrived with, and the union is the READER's job (that is what gives it a position and lets a
-# cursor deliver it - AUD-04). Reading `max(signatures per line)` therefore measures the storage
+# cursor deliver it). Reading `max(signatures per line)` therefore measures the storage
 # shape, not the finding: it went red the day the shape changed, exactly as this PoC's own header
 # warns about the pre-#41 glob. What the finding is about is whether a co-signer can be LOST, so
 # ask the two questions a consumer actually asks.

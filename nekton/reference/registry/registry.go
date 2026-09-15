@@ -156,7 +156,7 @@ func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envel
 			}
 			// APPEND, do not rewrite. The subnekton is append-only because in nekton the order
 			// carries meaning (prev, head, seal); rewriting an entry in place erased the record that
-			// anything had changed, and with it the only thing a cursor could have noticed (AUD-04).
+			// anything had changed, and with it the only thing a cursor could have noticed.
 			// The line holds the envelope AS IT ARRIVED - the reader unions, which is what settle and
 			// Add already do for a twin.
 			return appendSubnekton(path, objectFile{ClaimID: id, Envelope: env})
@@ -290,7 +290,7 @@ type Registry struct {
 	// structural gate, each with its own position, in the order they were written. It is
 	// deliberately NOT the index.
 	//
-	// Two things follow, and both were bugs before (AUD-04). A claim whose seed or prev is not held
+	// Two things follow, and both were bugs before. A claim whose seed or prev is not held
 	// is persisted and structurally valid - incomplete is not invalid (§11) - so it is in the feed
 	// even though it answers no query; it used to be in neither, so a peer never received it at all,
 	// and when it later resolved locally it entered the index at its original position, below every
@@ -352,7 +352,7 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 	// This used to open dirs[0] normally - which SETTLED it alone and DROPPED whatever did not
 	// resolve - and then settle only the remaining sources against that finished view. A scoped
 	// child held in A whose seed lives in B was therefore dropped before B had even been read, and
-	// reversing the argument order changed the answer: child_first=false, seed_first=true (AUD-02).
+	// reversing the argument order changed the answer: child_first=false, seed_first=true.
 	// A union whose result depends on argument order is not a union, and §11-§12 promise a
 	// conflict-free set union. Settling once over everything makes the operation commutative.
 	u := newRegistry(dirs[0])
@@ -372,7 +372,7 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 		}
 		// Material is merged from EVERY source, and independently of settling. §8.1 says a record's
 		// validity never depends on its material; the converse has to hold too - already-carried
-		// evidence must not disappear because it happened to arrive in the second source (AUD-11).
+		// evidence must not disappear because it happened to arrive in the second source.
 		mergeMaterial(u.material, readAllMaterial(objects))
 	}
 	// A union's positions are SYNTHETIC: they are assigned per open, over whatever sources were
@@ -475,7 +475,7 @@ func openAt(dir string, create bool) (*Registry, error) {
 	// numbers come off disk, so a position already handed to a peer can never move. Second, the ids
 	// are offered in readStore's stable store order rather than settle's RESOLUTION order - the
 	// latter depends on what else is present, which is exactly how a planted record used to shift
-	// everything after it (AUD-02).
+	// everything after it.
 	keys := make([]string, 0, len(pending))
 	for _, rec := range pending {
 		keys = append(keys, core.EnvelopeKey(rec.Envelope))
@@ -511,12 +511,12 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 				// independent signers of identical bytes are ONE claim with TWO signatures - which is
 				// exactly what Add does at ingest. settle used to `continue` here, so reading A,B kept
 				// only A's signer and reading B,A kept only B's: which co-signature survived depended
-				// on argument order, and BySigner could not find the other one (AUD-03).
+				// on argument order, and BySigner could not find the other one.
 				r.mergeTwinInMemory(rec)
 				// The line is in the STORE, so it is in the FEED. The index holds one unioned record
 				// per claim id; the feed holds the lines that produced it, each with its own
 				// position - that is what lets a peer past the original claim receive the
-				// co-signature (AUD-04) and union it for itself.
+				// co-signature and union it for itself.
 				r.feed = append(r.feed, rec)
 				continue
 			}
@@ -583,7 +583,7 @@ func (r *Registry) index(rec Record) {
 			fmt.Fprintf(os.Stderr, "warning: skipping planted claim: stored id %s but its envelope derives %s\n", rec.ClaimID, derived)
 			return
 		}
-		// The rest of what Add enforces, applied HERE too (AUD-09). The read path re-derived the id
+		// The rest of what Add enforces, applied HERE too. The read path re-derived the id
 		// and stopped, so a claim Add refuses was fully indexed if it arrived by any other route -
 		// and this package documents git merge as a supported federation transport, which bypasses
 		// Add entirely. Concretely: the exact record the GATED `when-unvalidated` attack proves is
@@ -719,8 +719,8 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 		//
 		// It is APPENDED as its own line, not written over the existing one. The subnekton is an
 		// append-only log because in nekton the ORDER carries meaning (prev, head, seal) - rewriting
-		// it in place erased the record of the change, which is precisely why no cursor could see it
-		// (AUD-04). As its own line it gets its own position and is delivered like anything else.
+		// it in place erases the record of the change, which is precisely why no cursor could see it.
+		// As its own line it gets its own position and is delivered like anything else.
 		if old, ok := r.claimByID[id]; ok {
 			merged, err := r.persistClaim(id, scopeOf(st, id), env)
 			if err != nil {
@@ -858,9 +858,9 @@ var errUnresolved = errors.New("unresolved chain reference")
 //
 // Without it, `nekton mirror` classified every Add error as a retryable missing dependency and, after
 // retrying it pointlessly, reported a write failure as "1 unresolved (missing dependency - an
-// incomplete chain)" with exit 0. It was not a dependency problem and the chain was not incomplete
-// (AUD-05). Mirrors that report success while storing nothing are the worst possible outcome for a
-// tool whose job is evidence.
+// incomplete chain)" with exit 0. It was not a dependency problem and the chain was not
+// incomplete. Mirrors that report success while storing nothing are the worst possible outcome
+// for a tool whose job is evidence.
 //
 // Mirrors plankton's registry.ErrPersist, deliberately: both kernels are asked the same question by
 // the same callers.
@@ -1213,7 +1213,7 @@ func readStore(objectsDir string) (recs []Record, hardErr error) {
 // is persisted and structurally valid - incomplete is not invalid (SPEC §11) - but it used to be
 // absent from `records` and therefore from the feed, so a peer NEVER RECEIVED IT AT ALL. When the
 // missing dependency later arrived and the claim resolved locally, it entered the indexed set at its
-// ORIGINAL position, below every cursor already issued, and was never delivered either (AUD-04).
+// ORIGINAL position, below every cursor already issued, and was never delivered either.
 // The feed was hiding a record the store was holding.
 //
 // Offering it is safe in exactly the sense §11 gives: federation is monotone, so handing a peer more

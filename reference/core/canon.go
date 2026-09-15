@@ -96,7 +96,7 @@ func CanonJSON(in []byte) ([]byte, error) {
 // id, different content-as-read.
 //
 // One document: CanonJSON used to accept `{"x":1} {"ignored":2}` and return only `{"x":1}` because
-// neither decoding pass required end-of-input (AUD-08). Nothing after the first document was
+// neither decoding pass required end-of-input. Nothing after the first document was
 // canonicalized, hashed, or signed, and nothing said so.
 //
 // Exported because the AUTHORING parsers need it too. They decode straight into structs, so a
@@ -305,7 +305,7 @@ func jcsNumber(s string) (string, error) {
 	// with its neighbour: 9007199254740993 (2^53+1) becomes 9007199254740992, so two claims differing
 	// by 1 share an id. RFC 8785 App D says such a value MUST be carried as a string.
 	//
-	// The rule is on the VALUE, not the SPELLING, and that is the fix (AUD-07). It used to run only
+	// The rule is on the VALUE, not the SPELLING, and that is the fix. It used to run only
 	// when the literal contained no `.`, `e` or `E`, which made acceptance depend on how a number was
 	// written:
 	//

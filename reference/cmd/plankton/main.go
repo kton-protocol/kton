@@ -1097,7 +1097,7 @@ func run(cmd string, args []string) error {
 		}
 		// Classify, do not swallow. This loop used to drop EVERY Add error, so mirroring into a
 		// destination that could not be written reported "0 new; registry holds 0 fotons" and exited
-		// 0 - a backup or replication script would read that as success (AUD-05).
+		// 0 - a backup or replication script would read that as success.
 		//
 		// A LOCAL persistence failure is fatal and says so: nothing after it can be trusted either,
 		// and the caller needs a non-zero exit at the moment it matters. A record the kernel REFUSES

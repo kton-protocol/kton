@@ -16,7 +16,7 @@ jobs:
         with:
           # The GATE runs on a SUPPORTED Go line. Go's policy supports a major line until two newer
           # majors exist, and the standard library ships inside every binary we release - having no
-          # third-party modules does not remove toolchain maintenance (AUD-13). The `compat` job
+          # third-party modules does not remove toolchain maintenance. The `compat` job
           # below still proves the declared `go 1.22` floor in go.mod, so lowering the floor is a
           # deliberate act rather than an accident.
           go-version: 'stable'
@@ -123,7 +123,7 @@ jobs:
   # The platforms we SHIP. release.yml publishes linux/amd64, linux/arm64, darwin/amd64,
   # darwin/arm64 and windows/amd64 - and every job above runs on ubuntu only, so three of those five
   # had no native test at all. That is not a theoretical gap: it hid two real Windows failures, one
-  # of them the private-key file mode that AUD-01's whole protection is documented to rest on
+  # of them the private-key file mode that the keygen protection is documented to rest on
   # (0600 requested, 0666 delivered). A packaged target with no passing native baseline is a claim
   # nobody checked.
   #
@@ -151,8 +151,9 @@ jobs:
 
   # Fuzzing runs as its OWN job, on purpose. `go test` already executes the seed corpus in `verify`
   # - the seeds are the shapes that have bitten us - but a seed corpus only replays what someone
-  # already thought of, and AUD-07 was a whole class of numbers nobody had. A short search each time
-  # is cheap and is the only part of this suite that can surprise us.
+  # already thought of, and a whole class of numbers where canon(canon(x)) != canon(x) is exactly
+  # what nobody had thought of. A short search each time is cheap and is the only part of this
+  # suite that can surprise us.
   #
   # Separate, because a find here is NOT a regression in the pull request's own code: it is an input
   # the canonicalizer never handled. Reading it as "this PR broke something" would be wrong, and a

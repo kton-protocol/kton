@@ -8,9 +8,9 @@ import (
 	"kton.dev/plankton/core"
 )
 
-// AUD-04, first half. A co-signature used to reach nobody. The subnekton was REWRITTEN in place, so
-// nothing was appended, nothing got a position, and a peer already past the claim never learned that
-// a second party had endorsed it.
+// A co-signature must reach a peer that has already passed the claim it signs. Rewriting the
+// subnekton in place appends nothing, so nothing gets a position, and a peer already past the claim
+// never learns that a second party endorsed it.
 //
 // The subnekton is an append-only log because in nekton the ORDER carries meaning (prev, head,
 // seal). Rewriting an entry erased the record that anything had changed - and with it the only thing
@@ -69,7 +69,7 @@ func TestACoSignatureReachesAPeerPastTheClaim(t *testing.T) {
 	_ = core.PayloadType
 }
 
-// AUD-04, second half, and it is not a numbering problem: the FEED was hiding a record the STORE was
+// Not a numbering problem: the FEED can hide a record the STORE was
 // holding. A claim whose seed is missing is persisted and structurally valid - incomplete is not
 // invalid (§11) - but it was absent from the feed, so a peer never received it. When the seed later
 // arrived and it resolved locally, it entered the index at its ORIGINAL position, below every cursor

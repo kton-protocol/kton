@@ -325,7 +325,7 @@ func mirrorNekton(localDir, peer string) error {
 // dependency is missing is PERSISTED and returns nil (unresolved is incomplete, not invalid,
 // SPEC §11), so it never reached the error branch; every error that did was permanent (unparseable,
 // unsigned, structurally invalid) or environmental (a local write failure). The loop therefore spun,
-// then reported a write failure as "2 skipped" with exit 0 (AUD-05).
+// then reported a write failure as "2 skipped" with exit 0.
 //
 // A local persistence failure is returned: nothing after it can be trusted, and a caller mirroring
 // into a broken destination must not read "skipped" as "the peer sent us junk".

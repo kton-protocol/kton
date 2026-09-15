@@ -14,7 +14,7 @@ import (
 //
 // A record's identity covers its payload, so two stored envelopes can share it - a co-signature is
 // the same claim with a signature added. Keying a position by identity gave both one number, so the
-// co-signature had no position of its own and no cursor could deliver it (AUD-04). Keying by the
+// co-signature had no position of its own and no cursor could deliver it. Keying by the
 // envelope makes "a new stored thing" and "a new position" the same event, and a re-mirror of
 // identical bytes idempotent for free.
 //
@@ -51,7 +51,7 @@ func EnvelopeKey(env Envelope) string {
 // existed, a record's position was its rank in the hash-sorted store, so planting a record whose
 // hash sorts EARLY shifted every later record's position down by one - and a record a peer had
 // already seen fell back to or below the cursor that peer had stored, never to be delivered again.
-// Two hash attempts were enough to hide a record from a peer permanently (AUD-02).
+// Two hash attempts were enough to hide a record from a peer permanently.
 type SeqMap struct {
 	// Epoch identifies THIS numbering. If the numbering is ever lost or replaced - a deleted or
 	// unreadable .seq, a restored backup, a store rebuilt from scratch - positions start again from
@@ -62,7 +62,7 @@ type SeqMap struct {
 	// epoch and a peer whose stored epoch differs MUST discard its cursor and resync from zero. That
 	// is the only thing that turns a silent stall into a loud one. Nothing in the wire form used to
 	// carry a reset signal at all, so the claim that "peers just resync" was a claim the protocol did
-	// not support (AUD-04).
+	// not support.
 	Epoch string         `json:"epoch"`
 	Next  int            `json:"next"` // the next position to hand out; only ever grows
 	Seq   map[string]int `json:"seq"`  // stored-envelope key -> position

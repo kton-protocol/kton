@@ -73,7 +73,7 @@ func ParseSpec(raw []byte) (Spec, error) {
 	// On the RAW bytes first, because decoding destroys the evidence: Go keeps the LAST of a
 	// duplicate name and stops at the end of the first document. DisallowUnknownFields catches a
 	// MISSPELLED field; it does not catch a REPEATED known one, so `"why":"first","why":"second"`
-	// was decoded to "second" and signed without complaint (AUD-08).
+	// was decoded to "second" and signed without complaint.
 	if err := core.CheckJSONDocument(raw); err != nil {
 		return Spec{}, fmt.Errorf("claim spec: %w", err)
 	}
