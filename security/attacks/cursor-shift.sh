@@ -24,6 +24,7 @@ cd "$W" || { echo "VERDICT: N-A"; exit 0; }
 
 ROUNDS=8
 missed=0
+inconclusive=0
 for round in $(seq 1 $ROUNDS); do
   R="$W/r$round"; mkdir -p "$R"
   export PLANKTON_DIR="$R"
@@ -54,22 +55,30 @@ echo "plankton: rounds where a post-sync record was withheld: $missed of $ROUNDS
 # grindable: measured at ~2 attempts (1, 4 across runs).
 if command -v nekton >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   N="$W/nk"; mkdir -p "$N"; export NEKTON_DIR="$N"
-  ( cd "$N" && nekton keygen k >/dev/null 2>&1 )
-  a=$( cd "$N" && nekton seed scopeA --sign k.key --add --print-id 2>/dev/null | tail -1 | tr -d '[:space:]' )
+  # DETERMINISTIC key and timestamps. With a random key the scope ids differ every run, so whether a
+  # lower-sorting scope can be ground out in 60 attempts was luck: when scopeA happened to sort near
+  # the bottom the PoC could not build its precondition and - counting that as a miss - reported
+  # VULNERABLE. A PoC that flakes into a false REGRESSION costs exactly the attention a real one
+  # needs. Fixed seed + fixed --when make the ids the same on every machine and every run.
+  ( cd "$N" && nekton keygen k --seed 5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e >/dev/null 2>&1 )
+  WHEN="--when 2026-07-16T00:00:00Z"
+  a=$( cd "$N" && nekton seed scopeA $WHEN --sign k.key --add --print-id 2>/dev/null | tail -1 | tr -d '[:space:]' )
   cur=$( cd "$N" && nekton records --json 2>/dev/null | jq -r '.max // 0' )
   b=""; tries=0
   for n in $(seq 1 60); do
-    cand=$( cd "$N" && nekton seed "scopeB$n" --sign k.key --add --print-id 2>/dev/null | tail -1 | tr -d '[:space:]' )
+    cand=$( cd "$N" && nekton seed "scopeB$n" $WHEN --sign k.key --add --print-id 2>/dev/null | tail -1 | tr -d '[:space:]' )
     [ -n "$cand" ] || continue
     tries=$n
     if [[ "${cand#sha256:}" < "${a#sha256:}" ]]; then b="$cand"; break; fi
     rm -f "$N/objects/scope/${cand#sha256:}.nekton.jsonl"   # discard: only an EARLIER-sorting scope is the attack
   done
   if [ -z "$b" ]; then
-    # Never silently pass on a precondition we failed to build - that is the defect this whole
-    # suite keeps finding in its own checks.
-    echo "nekton: could not grind a scope id below $a in 60 attempts - PoC INCONCLUSIVE"
-    missed=$((missed+1))
+    # Never silently pass on a precondition we failed to build - and never report it as a BREAK
+    # either. "I could not set up the attack" and "the attack worked" are different answers, and
+    # counting the first as the second is how a suite cries wolf. check.sh reads INCONCLUSIVE as
+    # proves-nothing, which is what this is.
+    echo "nekton: could not grind a scope id below $a in 60 attempts - the precondition, not the property, failed"
+    inconclusive=1
   else
     got=$( cd "$N" && nekton records --json --since "$cur" 2>/dev/null | jq -r --arg b "$b" '[.records[]?|select(.claimId==$b)]|length' )
     echo "nekton: scope $b sorts before $a (found in $tries attempts); returned above cursor $cur: ${got:-0} (expected 1)"
@@ -79,4 +88,6 @@ else
   echo "nekton: nekton or jq not on PATH - plankton half only"
 fi
 
-if [ "$missed" -eq 0 ]; then echo "VERDICT: PREVENTED"; else echo "VERDICT: VULNERABLE"; fi
+if [ "${inconclusive:-0}" -ne 0 ]; then echo "VERDICT: INCONCLUSIVE"
+elif [ "$missed" -eq 0 ]; then echo "VERDICT: PREVENTED"
+else echo "VERDICT: VULNERABLE"; fi

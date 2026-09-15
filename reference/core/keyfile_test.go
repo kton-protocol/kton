@@ -16,7 +16,7 @@ func TestWriteKeyFileNeverOverwritesAnIdentity(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "alice.key")
 
-	if err := core.WriteKeyFile(p, []byte("first"), 0o600, false); err != nil {
+	if _, err := core.WriteKeyFile(p, []byte("first"), 0o600, false); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
 	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0o600 {
@@ -24,7 +24,7 @@ func TestWriteKeyFileNeverOverwritesAnIdentity(t *testing.T) {
 	}
 
 	t.Run("a different key is refused and the bytes are untouched", func(t *testing.T) {
-		if err := core.WriteKeyFile(p, []byte("second"), 0o600, false); err == nil {
+		if _, err := core.WriteKeyFile(p, []byte("second"), 0o600, false); err == nil {
 			t.Fatal("overwrote an existing identity")
 		}
 		if b, _ := os.ReadFile(p); string(b) != "first" {
@@ -35,13 +35,13 @@ func TestWriteKeyFileNeverOverwritesAnIdentity(t *testing.T) {
 	t.Run("the same key is idempotent", func(t *testing.T) {
 		// A deterministic `--seed` re-run must not need --force: reproducible snapshots depend on
 		// generating the same identity twice.
-		if err := core.WriteKeyFile(p, []byte("first"), 0o600, false); err != nil {
+		if _, err := core.WriteKeyFile(p, []byte("first"), 0o600, false); err != nil {
 			t.Fatalf("re-writing identical content must be a no-op: %v", err)
 		}
 	})
 
 	t.Run("force renames, never deletes", func(t *testing.T) {
-		if err := core.WriteKeyFile(p, []byte("second"), 0o600, true); err != nil {
+		if _, err := core.WriteKeyFile(p, []byte("second"), 0o600, true); err != nil {
 			t.Fatalf("--force: %v", err)
 		}
 		if b, _ := os.ReadFile(p + ".old"); string(b) != "first" {
@@ -52,7 +52,7 @@ func TestWriteKeyFileNeverOverwritesAnIdentity(t *testing.T) {
 		}
 		// A second --force would have to clobber the .old copy: refuse instead. This function
 		// destroys key material under no circumstances.
-		if err := core.WriteKeyFile(p, []byte("third"), 0o600, true); err == nil {
+		if _, err := core.WriteKeyFile(p, []byte("third"), 0o600, true); err == nil {
 			t.Fatal("--force overwrote the .old backup")
 		}
 	})
@@ -62,7 +62,7 @@ func TestWriteKeyFileNeverOverwritesAnIdentity(t *testing.T) {
 		if err := os.WriteFile(q, []byte("placeholder"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := core.WriteKeyFile(q, []byte("seed"), 0o600, false); err == nil {
+		if _, err := core.WriteKeyFile(q, []byte("seed"), 0o600, false); err == nil {
 			t.Fatal("wrote a private seed into a pre-existing file")
 		}
 		if fi, _ := os.Stat(q); fi.Mode().Perm() != 0o644 {
@@ -79,7 +79,7 @@ func TestWriteKeyFileNeverOverwritesAnIdentity(t *testing.T) {
 		if err := os.Mkdir(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := core.WriteKeyFile(d, []byte("seed"), 0o600, false); err == nil {
+		if _, err := core.WriteKeyFile(d, []byte("seed"), 0o600, false); err == nil {
 			t.Fatal("a directory in the key's place was treated as an absent key")
 		}
 	})

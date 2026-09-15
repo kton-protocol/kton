@@ -358,7 +358,7 @@ func loadOrGenRSA(path string) (*rsa.PrivateKey, bool, error) {
 			return nil, false, err
 		}
 		pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-		if err := core.WriteKeyFile(path, pemBytes, 0o600, false); err != nil {
+		if _, err := core.WriteKeyFile(path, pemBytes, 0o600, false); err != nil {
 			return nil, false, fmt.Errorf("generated an RSA key but could not save it to %s, so the "+
 				"identity you asked to keep would have been lost: %w", path, err)
 		}

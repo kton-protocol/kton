@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"kton.dev/nekton/claim"
+	"kton.dev/plankton/core"
 )
 
 // whenOr returns an explicit --when, or the wall clock when none was given. `when` is COVERED by
@@ -90,10 +91,18 @@ func seed(args []string) error {
 		"when":    stamp,
 	}
 	if parent != "" {
-		if strings.HasPrefix(parent, "sha256:") {
-			body["parent"] = map[string]any{"digest": map[string]any{"sha256": bareHash(parent)}}
-		} else {
+		// `parent` is a Ref (nekton SPEC §7.4), and a Ref is {hash?, uri?}. This used to emit the
+		// SUBJECT shape, {"digest":{"sha256":...}} - which claim.Ref does not read, so a seed signed
+		// with --parent round-tripped to an empty Hash and an empty Parent.Key(): the scope
+		// hierarchy the operator asked for was signed in a form the library's own parser could not
+		// interpret (dev review R11).
+		if h, ok := core.NormalizeContentHash(parent); ok {
+			body["parent"] = map[string]any{"hash": h}
+		} else if strings.Contains(parent, ":") && !strings.HasPrefix(parent, "sha256:") {
 			body["parent"] = map[string]any{"uri": parent}
+		} else {
+			return fmt.Errorf("--parent %q is neither a content hash nor a URI - a parent scope is named\n"+
+				"  by its scope id (sha256:<64 hex>) or by a URI", parent)
 		}
 	}
 	spec := claimSpec{

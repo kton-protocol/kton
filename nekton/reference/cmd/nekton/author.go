@@ -106,13 +106,21 @@ func keygen(args []string) error {
 	// os.WriteFile's mode applies only to a NEW file, so an existing 0644 key file kept 0644 and
 	// took the new private seed (AUD-01). The public half is written second, and a failure there
 	// removes the private half rather than leaving a keypair whose public key nobody has.
-	if err := core.WriteKeyFile(name+".key", []byte(hex.EncodeToString(priv.Seed())), 0o600, force); err != nil {
+	kw, err := core.WriteKeyFile(name+".key", []byte(hex.EncodeToString(priv.Seed())), 0o600, force)
+	if err != nil {
 		return err
 	}
-	if err := core.WriteKeyFile(name+".pub", []byte(hex.EncodeToString(pub)), 0o644, force); err != nil {
-		os.Remove(name + ".key")
-		return fmt.Errorf("wrote %s.key but could not write %s.pub, so the private half was removed\n"+
-			"  rather than left without its public key: %w", name, name, err)
+	if _, err := core.WriteKeyFile(name+".pub", []byte(hex.EncodeToString(pub)), 0o644, force); err != nil {
+		// Undo only what THIS call did. The old code removed name+".key" unconditionally - so a
+		// re-run over an existing keypair whose .pub had drifted deleted a private key this command
+		// never wrote, while printing that it had protected one (dev review R04).
+		kw.Undo(name + ".key")
+		if kw.Created || kw.Backup != "" {
+			return fmt.Errorf("wrote %s.key but could not write %s.pub, so the private half was rolled back\n"+
+				"  rather than left without its public key: %w", name, name, err)
+		}
+		return fmt.Errorf("could not write %s.pub; the existing %s.key was already this key and is UNTOUCHED: %w",
+			name, name, err)
 	}
 	fmt.Printf("keypair %s  keyid=%s\n", name, keyidHex(pub))
 	return nil
