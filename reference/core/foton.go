@@ -1,6 +1,10 @@
 package core
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
 
 // FileRef references a file by content hash; located by uri; optionally identified by id.
 // Path is the file's RELATIVE path within the foton's work tree (e.g. "raw/data.csv",
@@ -94,6 +98,65 @@ func (f Foton) coveredProtocol() map[string]any {
 		p["descriptor"] = f.Protocol.Descriptor
 	}
 	return p
+}
+
+// ValidateStructure enforces the CONTEXT-FREE structure of a foton: the parts that can be decided
+// from the record alone, with no registry and no other record in hand.
+//
+// It lives here, beside the type, so that authoring, `verify`, ingest and the read path apply one
+// definition. They used not to: authoring refused a malformed hash and an escaping path, ingest
+// checked only the protocol binding and the action key, and the read path matched ingest - so a
+// foton with input digest `sha256:not-a-digest` or path `/outside.csv`, signed elsewhere and
+// arriving by mirror or by a git merge, was accepted and indexed. Every boundary that admits a
+// record has to agree on what a record is.
+//
+// This is PLANKTON's structure and nothing else's. nekton's context-free rules are its own
+// (claim.ValidateChainStructure: where genesis may appear, that a seed carries no prev) and the two
+// share nothing but the envelope layer above them - a foton has no prev, a claim has no inputs.
+func (f Foton) ValidateStructure() error {
+	if err := validateRefStructure("input", f.Inputs, true); err != nil {
+		return err
+	}
+	return validateRefStructure("output", f.Outputs, false)
+}
+
+// validateRefStructure checks one slot list. dedupePaths is true for inputs only: the §6.3 action key
+// is a {relpath -> hash} map, so two inputs at one path cannot both be in the computation's identity
+// - a silent last-wins would erase an input and let a 2-input foton falsely reuse a 1-input result.
+// Outputs are not in the action key, so they carry no such ambiguity.
+func validateRefStructure(kind string, refs []FileRef, dedupePaths bool) error {
+	seen := map[string]string{}
+	for i, r := range refs {
+		// A BOUND slot must carry a hash this substrate can resolve (§5.1).
+		if r.Hash != "" {
+			if _, ok := NormalizeContentHash(r.Hash); !ok {
+				return fmt.Errorf("%s[%d] %q: %q is not a sha256 content hash (SPEC §5.1)", kind, i, r.Path, r.Hash)
+			}
+		}
+		// A path is a location INSIDE the work tree and is structural - it goes into the action key.
+		// An absolute path, or one that escapes upward, describes a different machine's filesystem
+		// rather than a reproducible computation (SPEC §6.1).
+		if r.Path != "" {
+			if filepath.IsAbs(r.Path) || strings.HasPrefix(r.Path, "/") || strings.HasPrefix(r.Path, `\`) {
+				return fmt.Errorf("%s[%d] path %q is absolute; a foton's paths are relative to the "+
+					"work tree (SPEC §6.1)", kind, i, r.Path)
+			}
+			if p := filepath.ToSlash(filepath.Clean(r.Path)); p == ".." || strings.HasPrefix(p, "../") {
+				return fmt.Errorf("%s[%d] path %q escapes the work tree (SPEC §6.1)", kind, i, r.Path)
+			}
+		}
+		if !dedupePaths || r.Path == "" {
+			continue
+		}
+		key := filepath.ToSlash(filepath.Clean(r.Path))
+		if prev, dup := seen[key]; dup && prev != r.Hash {
+			return fmt.Errorf("two inputs share path %q with different hashes (%s, %s) - the action "+
+				"key is a {path -> hash} map and could hold only one, so an input would silently "+
+				"vanish from the computation's identity (SPEC §6.3)", r.Path, prev, r.Hash)
+		}
+		seen[key] = r.Hash
+	}
+	return nil
 }
 
 // EffectiveRef is the protocol ref used for IDENTITY (spec §6.2). When a descriptor is carried the

@@ -272,6 +272,14 @@ func (r *Registry) apply(rec Record) {
 			r.degraded++
 			return
 		}
+		// Structure, on the read path too - same rule, same definition. Skipped and counted rather
+		// than fatal: one planted file must not disable reads over every good record, and --strict
+		// already refuses to answer over a degraded read.
+		if err := f.ValidateStructure(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping structurally invalid record %s: %v\n", rec.FotonID, err)
+			r.degraded++
+			return
+		}
 		// Same rule as Add's, on the read path: an unresolvable action key is structural, and both
 		// packages document a git merge as a supported federation transport, which bypasses Add
 		// entirely. Skipped and counted rather than fatal - one planted file must not disable reads
@@ -361,6 +369,14 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	// reuse cache (cold-session finding).
 	if err := f.CheckProtocolRef(); err != nil {
 		return "", false, err
+	}
+	// The same context-free structure authoring enforces (§5.1 hash grammar, §6.1 relative paths,
+	// §6.3 unambiguous slots). Ingest used to check only the protocol binding and the action key, so
+	// a foton with input digest `sha256:not-a-digest` or path `/outside.csv` - signed elsewhere and
+	// arriving by mirror or by a git merge, which this package documents as a supported transport -
+	// was accepted and indexed, and lineage then exposed references that resolve to nothing.
+	if err := f.ValidateStructure(); err != nil {
+		return "", false, fmt.Errorf("foton is structurally invalid: %w", err)
 	}
 	// A foton whose §6.3 ACTION KEY cannot be computed is structurally ambiguous - two inputs at one
 	// relative path with different hashes, so the {path -> hash} map could hold only one and an input

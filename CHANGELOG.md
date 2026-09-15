@@ -67,6 +67,40 @@ upgrade the server before the peers.
 **Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
 build reading a format it does not know refuses loudly instead of reporting an empty registry.
 
+### Fixed — each kernel now applies its own structure at every boundary
+
+Two findings that get filed together and are **not one fix**. plankton validates fotons — hash
+grammar, work-tree paths, action keys. nekton validates claims — subjects, predicates, scope, `prev`,
+`genesis`. Below the envelope layer they share nothing, and cannot: a foton has no `prev`, a claim
+has no `inputs`. What they share is a defect *shape* — within one kernel, the same context-free rules
+applied at some boundaries and not others.
+
+- **plankton had the rules in one place only.** Authoring refused a malformed hash and an escaping
+  path; ingest checked the protocol binding and the action key; the read path matched ingest. So a
+  foton with input digest `sha256:not-a-digest` or path `/outside.csv`, signed elsewhere and arriving
+  by mirror or by a git merge — a documented federation transport — was accepted and indexed, and
+  lineage then exposed references that resolve to nothing.
+
+  The rules moved to `core.Foton.ValidateStructure`, beside the type they validate, and authoring,
+  ingest and the read path all call it. Authoring keeps no copy: two copies of an identity rule are
+  two opinions about identity.
+
+- **nekton had the plumbing missing, not the rules.** `index()` returned nothing, so `settle` could
+  not learn it had refused a record — the record went into the feed and progress was marked anyway.
+  `records --json` and the JSON export then republished claims the store itself will not serve: a
+  peer refuses them in turn, so a source that looks usable delivers an **incomplete import**. And
+  `Dropped()` did not count them, so the number said everything had arrived.
+
+  `index()` now reports acceptance, only what it accepts reaches the feed, and refused records are
+  counted — separately from deferred ones, because a deferred record may still resolve when its
+  dependency arrives and a refused one never will.
+
+*Not in this group: re-ingesting a valid foton still cannot repair a rejected stored object. That one
+is not a validation gap at all — `persistRecord` unions signatures from an existing object file
+before anything validates it against the requested id, and `Add` reports success when indexing then
+rejects the result. It touches persistence, and rushing persistence is what the signature-loss note
+at the top of this file warns about.*
+
 ### Fixed — the specification cited a PAV property that does not exist
 
 `pav:reviewedBy` was named in Annex A, in the vocabulary annex and in the examples for the whole of

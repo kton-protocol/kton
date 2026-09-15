@@ -518,6 +518,7 @@ func (r *Registry) positioned(rec Record) Record {
 }
 
 func (r *Registry) settle(pending []Record) (dropped int) {
+	refused := 0
 	for {
 		progress := false
 		var next []Record
@@ -558,7 +559,15 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 				continue
 			}
 			rec = r.positioned(rec)
-			r.index(rec)
+			// Only what the index ACCEPTS reaches the feed. Serving a peer a record this store
+			// refuses hands on something we ourselves will not answer for, and the peer refuses it
+			// in turn - an import that looks complete and is not. Counted as refused, which is a
+			// different fact from deferred: one will never resolve, the other is still waiting.
+			if !r.index(rec) {
+				refused++
+				progress = true // it is settled - permanently - so the loop has made progress
+				continue
+			}
 			r.feed = append(r.feed, rec)
 			progress = true
 		}
@@ -581,7 +590,10 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 					r.deferredCount++
 				}
 			}
-			return len(pending)
+			// Deferred and refused are both dropped from the INDEX, and they are not the same
+			// thing: a deferred record may still resolve when its dependency arrives, a refused one
+			// never will. Both are reported so a caller is not told everything arrived.
+			return len(pending) + refused
 		}
 	}
 }
@@ -591,7 +603,17 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 func (r *Registry) Unresolved(scope string) int { return r.unresolved[scope] }
 
 // index records + indexes a claim already assigned a seq (used during replay and after Add).
-func (r *Registry) index(rec Record) {
+//
+// It returns whether it ACCEPTED the record. It used to return nothing, so `settle` could not learn
+// that indexing had refused one: the record went into the feed and progress was marked anyway, and
+// `records --json` and the JSON export then republished claims this store itself will not serve. A
+// receiving peer refuses them, so a source that looks usable delivers an incomplete import - and
+// Dropped() did not count them, so the number said everything had arrived.
+//
+// A refusal is a record this store will not answer for. Already-held and envelope-unparseable are
+// NOT refusals: in both the record is held, and the second is deliberately tolerated so one bad line
+// cannot take a store's readable records with it.
+func (r *Registry) index(rec Record) (accepted bool) {
 	// SECURITY: RE-DERIVE the claim id from the envelope; never trust the on-disk claimId (or filename).
 	// A planted file whose stored claimId equals a target's, but whose envelope is a different claim,
 	// would otherwise SHADOW the real claim in bySubject/bySigner/byPredicate - so `nekton about`/`by`
@@ -601,7 +623,7 @@ func (r *Registry) index(rec Record) {
 	if err == nil && rec.ClaimID != "" {
 		if derived := claim.ClaimID(payload); derived != rec.ClaimID {
 			fmt.Fprintf(os.Stderr, "warning: skipping planted claim: stored id %s but its envelope derives %s\n", rec.ClaimID, derived)
-			return
+			return false
 		}
 		// The rest of what Add enforces, applied HERE too. The read path re-derived the id
 		// and stopped, so a claim Add refuses was fully indexed if it arrived by any other route -
@@ -611,18 +633,18 @@ func (r *Registry) index(rec Record) {
 		// once appended to a store file by hand. The PoC only ever exercised the CLI ingest path.
 		if !rec.Envelope.HasSignature() {
 			fmt.Fprintf(os.Stderr, "warning: skipping claim %s: it carries no signature (SPEC §8; Add refuses these at ingest)\n", rec.ClaimID)
-			return
+			return false
 		}
 		if p, perr := st.ParsePredicate(); perr != nil {
 			fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, perr)
-			return
+			return false
 		} else if verr := st.Validate(p); verr != nil {
 			fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, verr)
-			return
+			return false
 		}
 	}
 	if r.seen[rec.ClaimID] {
-		return
+		return true // already held; not a refusal
 	}
 	r.seen[rec.ClaimID] = true
 	r.records = append(r.records, rec)
@@ -632,7 +654,7 @@ func (r *Registry) index(rec Record) {
 	idx := len(r.records) - 1
 	r.claimByID[rec.ClaimID] = rec
 	if err != nil {
-		return
+		return true // held, but nothing further to index from it
 	}
 	p, _ := st.ParsePredicate()
 	for _, s := range st.Subject {
@@ -670,6 +692,7 @@ func (r *Registry) index(rec Record) {
 			r.inScope[p.Scope][rec.ClaimID] = true
 		}
 	}
+	return true
 }
 
 // reindexSigners adds record idx to bySigner for any signer keyid present in `after` but not in
