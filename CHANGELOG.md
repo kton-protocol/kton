@@ -110,6 +110,33 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
+### Fixed — the kernel reported a verification verdict it is forbidden to have
+
+- **`material --json` emitted `"verified": false`, in both kernels.** SPEC §8.1 defines
+  `VerificationMaterial` as **four** fields and says outright *"The kernel MUST NOT interpret or
+  verify `material`"* — so the JSON projection added a fifth field asserting exactly the posture the
+  clause denies it. The value was a constant, so it carried no information, and it carried the wrong
+  one: a consumer reads `verified: false` as **checked and failed** when the truth is **nobody
+  looked**. One word, two meanings, in the field a cockpit is most likely to key on. Removed; the
+  four fields of §8.1 and nothing else.
+
+  Found by a cockpit implementer building against this surface, before 0.2 froze it. After a release
+  it would have cost a migration note instead of a line.
+
+- **The test that should have caught it could not fail.** nekton's material CLI test read the field
+  into a `bool` and asserted it was false — against a hardcoded `false`. It now asserts the **key
+  set** against §8.1's four fields, which fails when a fifth appears (verified both ways). plankton's
+  `material --json` had no test at all; it has one now, covering a listed scheme and a carried
+  unknown one.
+
+- **SPEC §8.1 now states the read-path boundary** rather than leaving it to be inferred. A kernel
+  does not verify material when it stores it and does not verify it when it hands it back:
+  **presence is not a check.** Whatever verification happened, happened in some tool at some earlier
+  moment under a trust configuration the kernel neither recorded nor can reproduce. The clause also
+  says what a kernel's output must not contain, and points a consumer that *does* evaluate evidence
+  at a three-way vocabulary — *verified here* (naming who checked), *carried*, *failed* — because a
+  single boolean cannot hold those three apart.
+
 ### Fixed — the line-by-line spec audit (#127)
 
 A second, exhaustive pass: all **103** normative statements in `spec/SPEC.md` walked one at a time,
