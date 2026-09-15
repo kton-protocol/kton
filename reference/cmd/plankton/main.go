@@ -336,8 +336,10 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
-		prods := r.Producer(h)
-		if len(prods) == 0 {
+		// The join lives on the registry, which holds the indexes it walks. This command is the
+		// flag parsing over it - the same shape `author` already has over foton.SignWith.
+		rep := r.Reproductions(h, trusted)
+		if rep.ProducerFotons == 0 {
 			// Still emit a parseable answer before the non-zero exit: a consumer must be able to read
 			// "zero producers" as a RESULT, not have to infer it from an exit code and empty stdout.
 			if asJSON {
@@ -347,39 +349,8 @@ func run(cmd string, args []string) error {
 			}
 			os.Exit(1)
 		}
-		type prodInfo struct {
-			id, signer string
-			verified   bool
-		}
-		var infos []prodInfo
-		signers := map[string]bool{}
-		excluded := 0
-		for _, id := range prods {
-			env, ok := r.Envelope(id)
-			if !ok || len(env.Signatures) == 0 {
-				continue
-			}
-			if len(trusted) > 0 {
-				// count EVERY trusted key that actually signed this envelope (a merged twin can carry
-				// several co-signatures over one payload), never the self-declared keyid.
-				matched := false
-				for _, pub := range trusted {
-					if okv, verr := env.Verify(pub); okv && verr == nil {
-						kid := core.KeyIDHex(pub)
-						infos = append(infos, prodInfo{id, kid, true})
-						signers[kid] = true
-						matched = true
-					}
-				}
-				if !matched {
-					excluded++ // signed by no trusted key -> does not count toward ↻N
-				}
-			} else {
-				kid := env.Signatures[0].KeyID // self-declared, UNVERIFIED
-				infos = append(infos, prodInfo{id, kid, false})
-				signers[kid] = true
-			}
-		}
+		infos := rep.Producers
+		excluded := rep.ExcludedUntrusted
 		kind := "self-declared"
 		if len(trusted) > 0 {
 			kind = "verified"
@@ -390,10 +361,10 @@ func run(cmd string, args []string) error {
 				// `verified` per record rather than one word for the whole answer: without --trust-keys
 				// the count is forgeable, and a machine reader must see that on the record it acts on,
 				// not only in a stderr warning it may never read.
-				ps = append(ps, map[string]any{"fotonId": in.id, "keyid": in.signer, "verified": in.verified})
+				ps = append(ps, map[string]any{"fotonId": in.FotonID, "keyid": in.KeyID, "verified": in.Verified})
 			}
 			out := map[string]any{
-				"output": h, "distinctSigners": len(signers), "producerFotons": len(prods),
+				"output": h, "distinctSigners": rep.DistinctSigners, "producerFotons": rep.ProducerFotons,
 				"trust": kind, "producers": ps,
 			}
 			if excluded > 0 {
@@ -404,9 +375,9 @@ func run(cmd string, args []string) error {
 			}
 		} else {
 			fmt.Printf("reproductions: %d distinct %s signer(s) produced %s  (↻%d; %d producer foton(s))\n",
-				len(signers), kind, h, len(signers), len(prods))
+				rep.DistinctSigners, kind, h, rep.DistinctSigners, rep.ProducerFotons)
 			for _, in := range infos {
-				fmt.Printf("  %s  by key:%s (%s)\n", in.id, in.signer, kind)
+				fmt.Printf("  %s  by key:%s (%s)\n", in.FotonID, in.KeyID, kind)
 			}
 		}
 		if len(trusted) == 0 {
@@ -668,41 +639,20 @@ func run(cmd string, args []string) error {
 			return fmt.Errorf("usage: plankton reproduces <ref-output-hash> <cand-output-hash> [--via <normalizer: protocol ref or foton id>] [--json]\n" +
 				"  args are OUTPUT content hashes (e.g. `plankton hash out.csv`), NOT foton ids")
 		}
-		// Normalize the output-hash args to canonical lowercase (SPEC §5.1) so a bare/uppercase hash
-		// resolves; --via may be a ref or foton id, so normalize it only if it is a content hash.
-		// The two compared arguments MUST be content hashes, and normalization failing MUST NOT be
-		// ignored: `ref == cand` below is a byte-identity test, so two equal malformed strings would
-		// otherwise report an L0 match over strings that name no bytes.
-		refRaw, candRaw := ref, cand
-		var okRef, okCand bool
-		if ref, okRef = core.NormalizeContentHash(ref); !okRef {
-			return fmt.Errorf("%q is not a content hash - reproduces compares OUTPUT HASHES, and two equal\n"+
-				"  malformed strings are not a reproduction. Expected sha256:<64 hex>.", refRaw)
-		}
-		if cand, okCand = core.NormalizeContentHash(cand); !okCand {
-			return fmt.Errorf("%q is not a content hash - reproduces compares OUTPUT HASHES, and two equal\n"+
-				"  malformed strings are not a reproduction. Expected sha256:<64 hex>.", candRaw)
-		}
-		// --via names a normalizer, which may be a foton id or a ref, so it is normalized only when
-		// it IS a content hash: an unrecognised spelling stays as given and resolves to no
-		// normalized output below.
-		if n, ok := core.NormalizeContentHash(via); ok {
-			via = n
-		}
+		// The comparison lives on the registry, which owns the normalized-output index it walks. A
+		// consumer that must not take a level from whoever is asking has to RUN the comparison, so it
+		// cannot exist only behind this CLI - the same reason authoring moved to foton.SignWith.
+		// Argument validation is the method's too: equality of two malformed strings is not a
+		// reproduction, and that rule belongs with the comparison rather than with the flag parsing.
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
 		}
-		level := ""
-		identical := false
-		if ref == cand {
-			level = "L0"
-			identical = true // L0 by definition means identical output bytes -> identical hash.
-		} else if via != "" {
-			if nr := r.NormalizedOutput(ref, via); nr != "" && nr == r.NormalizedOutput(cand, via) {
-				level = "L1"
-			}
+		rep, err := r.Reproduces(ref, cand, via)
+		if err != nil {
+			return err
 		}
+		level, via := rep.Level, rep.Via
 		if level == "" {
 			// Emit a parseable answer BEFORE the non-zero exit: "no match" is a RESULT, and a caller
 			// should read it as one rather than infer it from an exit code and an empty stdout.
@@ -736,7 +686,7 @@ func run(cmd string, args []string) error {
 			}
 			return printJSON(out)
 		}
-		if identical {
+		if level == "L0" {
 			// The expected PASS: two independent runs producing the same bytes hash to the same value, so
 			// the args are equal - that is success, not a mistake. Independence is carried by the two
 			// SEPARATE producer fotons + the reproduces claim, not by this byte compare.
