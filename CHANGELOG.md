@@ -2,6 +2,48 @@
 
 ## 0.2.0 — unreleased
 
+### ⚠️ Known limitation in 0.2: a claim can lose a signature when the same claim arrives twice
+
+**Not fixed in this release.** Reported by an external review of `dev`, reproduced here before being
+written down.
+
+A claim id is `sha256(canon(Statement))`, so two DIFFERENT serializations of one statement — a
+compact one and a pretty-printed one, say — share a claim id while carrying signatures over
+**different literal payload bytes**. A DSSE signature stands over `PAE(payloadType, payload)`, so
+these are two genuine signatures over two genuine byte strings, neither of them wrong.
+
+nekton's signature union correctly refuses to attach a signature to bytes its owner did not sign.
+Persistence then misreads that refusal as *nothing new to store*:
+
+```
+Add A (compact, key A):  isNew=true   err=<nil>
+Add B (pretty,  key B):  isNew=false  err=<nil>     <- reported as a duplicate
+same claim id:           true
+after reopen:            1 signature, key A only
+BySigner(A)=1   BySigner(B)=0
+```
+
+Reverse the arrival order and the result reverses with it: `BySigner(A)=0  BySigner(B)=1`.
+
+**What this costs you.** The second signer's evidence is gone, and nothing says so — `Add` returned
+success. Because the outcome depends on which serialization arrived first, **mirroring is
+order-dependent**: two peers that ingest the same two envelopes in different orders end up retaining
+different signatures, and a consumer's ability to verify against the key *it* trusts becomes an
+accident of replication order. This is loss of signing evidence, not signature forgery: nothing here
+lets anyone produce a signature they could not otherwise produce.
+
+**What you can do now.** Within one authoring toolchain the payload is canonical every time, so the
+case does not arise: it needs two producers, or a hand-assembled envelope, signing the same statement
+in different spellings. If you federate signed claims from parties you do not control, and you rely
+on a specific signer's endorsement being present, verify that signer against the envelope you
+received rather than against the merged store.
+
+**Why it is not fixed here.** The fix is a storage decision — preserve distinct signed envelope
+variants under one canonical claim id, and union signatures only where the signed bytes actually
+match — and it changes how claims are persisted. Rushing it risks exactly what it is meant to
+prevent: canonicalizing payloads on the way in would leave old signatures standing over bytes nobody
+signed. It is scheduled with the shared-validator work rather than taken in a hurry before a tag.
+
 ### ⚠️ Read this before upgrading a nekton registry
 
 **A nekton store written by 0.2 reads as EMPTY on 0.1, and 0.1 exits 0 while saying so.**
