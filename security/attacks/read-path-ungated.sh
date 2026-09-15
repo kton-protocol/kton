@@ -53,7 +53,9 @@ PY
 # "whenever-you-like" in `nekton about` and got 0 even against the vulnerable binary, because the
 # prose form does not print `when` that way - it would have reported PREVENTED either way, which is
 # precisely the corrupt-poisons-read defect this suite already carries once.
-nclaims=$(nekton about "$H" --json 2>/dev/null | python3 -c "import json,sys;print(len(json.load(sys.stdin)))" 2>/dev/null || echo 9)
+# `records`, not the top-level length: `about --json` answers SPEC 12's record-query wire form,
+# { "records": [ <envelope> ... ] }, the same shape the plankton count below already reads (#124).
+nclaims=$(nekton about "$H" --json 2>/dev/null | python3 -c "import json,sys;print(len(json.load(sys.stdin)['records']))" 2>/dev/null || echo 9)
 nbad=$(( nclaims - 1 ))
 pn=$(plankton records --json 2>/dev/null | python3 -c "import json,sys;print(len(json.load(sys.stdin)['records']))" 2>/dev/null || echo 9)
 
