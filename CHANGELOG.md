@@ -93,6 +93,31 @@ that rule as much as the CLI does.
 Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
 are now flag parsing over the methods, the shape `plankton author` already has.
 
+### Fixed — nekton's record queries answered a shape the spec does not declare
+
+`about --json` and `by --json` are the `claims(subject | object | signer | predicate)` queries of
+SPEC §12, and the clause pins the answer: `{ "records": [ <envelope> ... ] }`. They returned a bare
+array of `{claimId, envelope}` instead.
+
+The wrapper is the half that bites. Nesting an envelope under a field does not make the array
+element an envelope, so a consumer decoding the declared contract read `payload=""`,
+`payloadType=""`, `signatures=0` — it could neither verify what it held nor re-ingest it, and
+nothing in the answer said why. It had to know a second, undocumented shape.
+
+plankton's record queries had exactly this defect and were fixed earlier in this release; this is
+the nekton half, which stayed open because the test covering it decoded the wrapper the command
+emitted rather than the contract the spec declares. A test shaped like the implementation cannot
+disagree with it. The new one parses the declared types, base64-decodes the payload and re-derives
+the claim id from it — the thing a consumer actually does.
+
+The claim id is not dropped, it moves: keyed by id in a `summary` beside the array, together with
+`predicate`, `by` and the envelope's `declaredKeyid` (named that way because a keyid is
+self-declared and not covered by the signature). For a claim the id is the payload digest, so a
+consumer holding the envelope can also derive it.
+
+**This changes an output shape.** A reader of `nekton about --json` or `nekton by --json` that
+indexes `[0]["claimId"]` or takes the array's length must read `.records` instead.
+
 ### Fixed — each kernel now applies its own structure at every boundary
 
 Two findings that get filed together and are **not one fix**. plankton validates fotons — hash

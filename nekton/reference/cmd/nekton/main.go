@@ -162,21 +162,46 @@ func printClaims(recs []registry.Record) {
 	}
 }
 
-// printClaimsJSON emits the records VERBATIM - {claimId, envelope}, the same shape the registry
-// stores and `add` accepts. Nothing is projected, ranked or interpreted: the caller decodes the
-// payload exactly as the kernel does. The prose form above answers "which records, roughly"; a
-// consumer of the claim axis needs the body, because a claim's meaning IS its body - the object it
-// relates to does not appear in the rendered line at all.
+// printClaimsJSON answers the RECORD-QUERY wire form. `about` and `by` are the `claims(subject |
+// object | signer | predicate)` queries of SPEC §12, and the clause pins what comes back:
+// `{ "records": [ <envelope> ... ] }` - the array elements ARE envelopes.
+//
+// This emitted a BARE ARRAY of `{claimId, envelope}` instead (#124): two departures at once, and
+// the second is the one that bites. Wrapping an envelope in a field does not make the element an
+// envelope, so a consumer decoding the declared contract read `payload=""`, `payloadType=""`,
+// `signatures=0` - it could neither verify what it was handed nor re-ingest it, and nothing in the
+// answer said why. It had to know a second, undocumented shape. plankton's record queries had the
+// same defect and were fixed in d504bba; this is the nekton half of it.
+//
+// The claim id is not dropped, it MOVES: keyed by id beside the array, so a reader that wants it
+// without re-deriving `sha256(canon(Statement))` still has it in one round trip. That placement is
+// deliberate - a named id is what #57 asked for, and it cannot live inside an array whose elements
+// the spec says are envelopes.
+//
+// Nothing is projected, ranked or interpreted beyond that: the caller decodes the payload exactly
+// as the kernel does. The prose form above answers "which records, roughly"; a consumer of the
+// claim axis needs the body, because a claim's meaning IS its body - the object it relates to does
+// not appear in the rendered line at all.
 func printClaimsJSON(recs []registry.Record) error {
-	type rec struct {
-		ClaimID  string        `json:"claimId"`
-		Envelope core.Envelope `json:"envelope"`
-	}
-	out := make([]rec, 0, len(recs))
+	envs := make([]core.Envelope, 0, len(recs))
+	summary := map[string]any{}
 	for _, r := range recs {
-		out = append(out, rec{ClaimID: r.ClaimID, Envelope: r.Envelope})
+		envs = append(envs, r.Envelope)
+		e := map[string]any{}
+		if st, _, err := claim.ParseEnvelope(r.Envelope); err == nil {
+			if p, perr := st.ParsePredicate(); perr == nil && p != nil {
+				e["predicate"], e["by"] = p.Predicate.Key(), p.By
+			}
+		}
+		// The keyid is the envelope's SELF-DECLARED field and is not covered by the signature, so it
+		// is labelled here exactly as the prose form labels it. A summary field called `signer`
+		// would read as an established one.
+		if len(r.Envelope.Signatures) > 0 {
+			e["declaredKeyid"] = r.Envelope.Signatures[0].KeyID
+		}
+		summary[r.ClaimID] = e
 	}
-	b, err := json.MarshalIndent(out, "", "  ")
+	b, err := json.MarshalIndent(map[string]any{"records": envs, "summary": summary}, "", "  ")
 	if err != nil {
 		return err
 	}

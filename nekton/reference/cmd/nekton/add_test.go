@@ -233,11 +233,15 @@ func TestBulkAddOpensTheRegistryOnce(t *testing.T) {
 	}
 }
 
-// TestReadJSONEmitsRecordsVerbatim: `about --json` and `by --json` return {claimId, envelope} - the
-// shape the registry stores and `add` accepts - so a consumer can decode the payload itself. The
-// prose form answers "which records, roughly"; it does not carry the object, and the object is what
-// a claim relates to. A consumer that had to parse the line would be parsing a sentence that does
-// not contain the answer.
+// TestReadJSONEmitsRecordsVerbatim: `about --json` and `by --json` carry the claim BODY, so a
+// consumer can decode the payload itself. The prose form answers "which records, roughly"; it does
+// not carry the object, and the object is what a claim relates to. A consumer that had to parse the
+// line would be parsing a sentence that does not contain the answer.
+//
+// It used to decode `[{claimId, envelope}]` - the wrapper the command emitted, asserted back at the
+// command. A test shaped like the implementation cannot disagree with it, and this one did not: the
+// emitted shape was not the one SPEC §12 declares (#124), and this test passed anyway. It now
+// decodes the DECLARED shape; TestRecordQueryWireForm covers that contract in full.
 func TestReadJSONEmitsRecordsVerbatim(t *testing.T) {
 	dir := t.TempDir()
 	reg := filepath.Join(dir, "reg")
@@ -263,19 +267,19 @@ func TestReadJSONEmitsRecordsVerbatim(t *testing.T) {
 			t.Fatalf("about --json: %v", err)
 		}
 	})
-	var recs []struct {
-		ClaimID  string `json:"claimId"`
-		Envelope struct {
+	var got struct {
+		Records []struct {
 			Payload string `json:"payload"`
-		} `json:"envelope"`
+		} `json:"records"`
+		Summary map[string]map[string]any `json:"summary"`
 	}
-	if err := json.Unmarshal([]byte(out), &recs); err != nil {
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("about --json did not emit JSON: %v\n%s", err, out)
 	}
-	if len(recs) != 1 {
-		t.Fatalf("got %d records, want 1", len(recs))
+	if len(got.Records) != 1 {
+		t.Fatalf("got %d records, want 1", len(got.Records))
 	}
-	raw, err := base64.StdEncoding.DecodeString(recs[0].Envelope.Payload)
+	raw, err := base64.StdEncoding.DecodeString(got.Records[0].Payload)
 	if err != nil {
 		t.Fatalf("payload not base64: %v", err)
 	}
@@ -283,8 +287,10 @@ func TestReadJSONEmitsRecordsVerbatim(t *testing.T) {
 	if !bytes.Contains(raw, []byte("urn:example:person")) {
 		t.Error("the claim's object did not survive into --json output")
 	}
-	if recs[0].ClaimID == "" {
-		t.Error("record carries no claimId")
+	// The id is still a NAMED field, beside the array rather than inside it (#57): a consumer must
+	// not have to assume it is the first hash on a line.
+	if len(got.Summary) != 1 {
+		t.Errorf("summary holds %d entries, want 1 - the claim id is no longer reachable by name", len(got.Summary))
 	}
 }
 
