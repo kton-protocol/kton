@@ -110,10 +110,14 @@ func listMaterial(args []string) error {
 	if asJSON {
 		out := make([]map[string]any, 0, len(mats))
 		for _, m := range mats {
-			// Bytes go out as stored. The kernel does not decode, interpret or verify them.
+			// Exactly the four fields SPEC §8.1 defines, and no fifth. This used to emit
+			// `"verified": false` - a constant, so it carried no information, and a verification
+			// verdict is precisely what §8.1 forbids the kernel to have ("The kernel MUST NOT
+			// interpret or verify `material`"). A consumer reads `false` as CHECKED AND FAILED,
+			// not as NOBODY LOOKED. Bytes go out as stored; judging them is the consumer's job.
 			out = append(out, map[string]any{
 				"subject": m.Subject, "scheme": m.Scheme,
-				"mediaType": m.MediaType, "material": m.Material, "verified": false,
+				"mediaType": m.MediaType, "material": m.Material,
 			})
 		}
 		return printJSON(map[string]any{"subject": subject, "material": out})

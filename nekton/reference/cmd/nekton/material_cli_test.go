@@ -55,8 +55,12 @@ func TestAttachAndListMaterial(t *testing.T) {
 			Scheme    string `json:"scheme"`
 			MediaType string `json:"mediaType"`
 			Material  string `json:"material"`
-			Verified  bool   `json:"verified"`
 		} `json:"material"`
+	}
+	// Decoded a SECOND time as raw maps, because the typed struct above cannot see a field it does
+	// not declare - and the key set is exactly what this test is about.
+	var raw2 struct {
+		Material []map[string]any `json:"material"`
 	}
 	raw := captureStdout(t, func() {
 		if err := listMaterial([]string{id, "--json"}); err != nil {
@@ -69,12 +73,30 @@ func TestAttachAndListMaterial(t *testing.T) {
 	if len(got.Material) != 2 {
 		t.Fatalf("material = %d entries, want 2", len(got.Material))
 	}
-	for _, m := range got.Material {
-		// The kernel stores evidence; it never evaluates it. Reporting anything else here would be
-		// the one lie this whole clause exists to prevent.
-		if m.Verified {
-			t.Errorf("%s reported as verified - the kernel evaluates nothing (§8.1, §15)", m.Scheme)
+	if err := json.Unmarshal([]byte(raw), &raw2); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, raw)
+	}
+	// SPEC §8.1 defines VerificationMaterial as four fields. The kernel MUST NOT interpret or verify
+	// material, so it has no verdict to report and must not emit a field shaped like one: a `verified`
+	// key reads as CHECKED AND FAILED, when the truth is that nobody looked.
+	//
+	// Asserted on the KEY SET, not on a value. The previous version of this test read the field into
+	// a bool and checked it was false - against a hardcoded `false`. It could not fail, which is the
+	// defect this suite keeps finding elsewhere and had here too.
+	want := map[string]bool{"subject": true, "scheme": true, "mediaType": true, "material": true}
+	for _, m := range raw2.Material {
+		for k := range m {
+			if !want[k] {
+				t.Errorf("material carries %q; §8.1 defines only subject/scheme/mediaType/material", k)
+			}
 		}
+		for k := range want {
+			if _, ok := m[k]; !ok {
+				t.Errorf("material is missing §8.1's %q", k)
+			}
+		}
+	}
+	for _, m := range got.Material {
 		b, err := base64.StdEncoding.DecodeString(m.Material)
 		if err != nil || string(b) != `{"pretend":"bundle"}` {
 			t.Errorf("%s: bytes did not survive the round trip: %v", m.Scheme, err)

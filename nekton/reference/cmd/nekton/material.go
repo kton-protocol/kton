@@ -115,11 +115,15 @@ func listMaterial(args []string) error {
 	if asJSON {
 		out := make([]map[string]any, 0, len(mats))
 		for _, m := range mats {
-			// The bytes go out as stored (base64). The kernel does not decode, interpret or verify
-			// them; a consumer that knows the scheme does.
+			// Exactly the four fields SPEC §8.1 defines, and no fifth. This used to emit
+			// `"verified": false` - a constant, so it carried no information, and a verification
+			// verdict is precisely what §8.1 forbids the kernel to have ("The kernel MUST NOT
+			// interpret or verify `material`"). A consumer reads `false` as CHECKED AND FAILED,
+			// not as NOBODY LOOKED. The bytes go out as stored (base64); a consumer that knows
+			// the scheme decodes and judges them.
 			out = append(out, map[string]any{
 				"subject": m.Subject, "scheme": m.Scheme,
-				"mediaType": m.MediaType, "material": m.Material, "verified": false,
+				"mediaType": m.MediaType, "material": m.Material,
 			})
 		}
 		b, err := json.MarshalIndent(map[string]any{"subject": subject, "material": out}, "", "  ")

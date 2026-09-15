@@ -459,6 +459,20 @@ VerificationMaterial := { subject:   "sha256:<hex>",
 - **The kernel MUST NOT interpret or verify `material`.** This is the §8 posture exactly: stored is not
   verified. A kernel carries verification material as opaque bytes; evaluating it - and deciding which
   issuers, trust lists or identities count - is a consumer concern, like trust policy.
+
+  This holds on **both** paths, and the read path is the one that surprises people: a kernel does not
+  verify material when it stores it, and does not verify it when it hands it back. **Presence is not
+  a check.** Whatever verification happened - a Rekor SET and inclusion proof checked at submission
+  time, say - happened in some tool at some earlier moment, under a trust configuration this kernel
+  neither recorded nor can reproduce. A reader that treats a stored artifact as evidence *because it
+  is stored* has verified nothing.
+
+  A consequence for implementers: **a kernel's own output MUST NOT carry a field that reads as a
+  verification verdict** - a `verified` flag on a listed material, however it is spelled. The kernel
+  has no verdict to report, and a constant one is worse than none: a consumer reads `false` as
+  *checked and failed* when the truth is *nobody looked*. Emit the four fields above. A consumer that
+  does evaluate the evidence SHOULD report in its own vocabulary, distinguishing at least *verified
+  here* (naming who checked), *carried* (nobody here evaluated it), and *failed*.
 - **Presence, absence, or invalidity MUST NOT affect the record's validity or resolvability** (§11).
   Verification material is evidence *about* a record, never a precondition of it. A registry that
   cannot read a material MUST still resolve the record.
