@@ -149,6 +149,41 @@ in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than 
 `{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
 that array today. Filed rather than changed unilaterally.
 
+### Fixed — two checks of my own that could report a pass without having looked
+
+Both were added earlier the same day, and both had the defect they were written to prevent.
+
+- **A gated attack reported PREVENTED when its negative scenarios had not run.** The four-eyes PoC
+  guards the *honest* control against `NORUN` — the case where the release gate produces no checklist
+  at all — but tested the self-review and attack scenarios only for `TICKED`. A `NORUN` there fell
+  straight through to the final verdict:
+
+  ```
+  honest=TICKED, self-review=NORUN, attack=NORUN
+  VERDICT: PREVENTED
+  ```
+
+  *"The attack did not tick"* read as evidence when the attack had not been evaluated. The honest
+  control proves the branch **can** light; it says nothing about whether the other two were run. A
+  negative scenario must now come back explicitly `UNTICKED`; anything else is `INCONCLUSIVE`, which
+  the strict gate fails.
+
+- **The sigstore helper checked that the payload decoded, not that it was canonical.** A DSSE payload
+  need not be canonical — the kernel canonicalizes when deriving the claim id — so a pretty-printed
+  payload is a valid, genuinely signed claim with the same id as its compact twin, and signing those
+  bytes binds the external identity to bytes the claim is not addressed by. The fixtures varied the
+  **envelope** serialization and never the **payload** serialization, so the test could not see it.
+
+  A non-canonical payload is now **refused** rather than canonicalized. Signing `canon(payload)` would
+  leave the Sigstore bundle standing over different bytes than the envelope's own DSSE signatures —
+  one claim, two signatures, two artifacts. Refusing keeps both over the same bytes; re-author through
+  the kernel, which always emits canonical.
+
+  The canonicality test asks the kernel instead of reimplementing JCS in a shell script: **a claim id
+  is `sha256(canon(payload))`, so a payload whose own sha256 equals the claim id is canonical.** The
+  test gained a fixture that varies the payload spelling, and the script now names its own missing
+  prerequisite rather than letting every case fail under a misleading summary.
+
 ### Fixed — two ways to lose work: a torn log tail, and a number that costs seconds
 
 - **An acknowledged write was lost to somebody else's interrupted one.** A crash mid-append leaves a

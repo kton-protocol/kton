@@ -46,12 +46,20 @@ jobs:
         run: bash scripts/check-scope-drift.sh
 
       - name: the sigstore helper signs the Statement, not the envelope file
+        # nekton is the authority on what canonical means: the helper checks a payload's canonicality
+        # by comparing its sha256 to the claim id the kernel reports, rather than reimplementing JCS
+        # in a shell script - which is how the two would come to disagree.
         # SPEC §8.1 requires an external scheme to sign the canonical Statement bytes and NOT to rest
         # on a particular serialization of the envelope. A cosign STUB records which bytes the helper
         # hands the signer, so this runs with no OIDC and no network - the property is about the
         # binding, not about the signing service. The live round-trip is opt-in (--live) and is a
         # human's job: it opens an OIDC login and writes a permanent public Rekor entry.
-        run: bash scripts/sigstore-sign-claim_test.sh
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/bin"
+          ( cd nekton/reference && go build -o "$RUNNER_TEMP/bin/nekton" ./cmd/nekton )
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          bash scripts/sigstore-sign-claim_test.sh
 
       # The guard above reads IMPORTS; this one COMPILES for the browser target. WASM-cleanliness
       # that is only grepped is cleanliness only until something breaks that grep cannot see, and a
