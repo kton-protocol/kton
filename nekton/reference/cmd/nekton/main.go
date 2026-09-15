@@ -342,20 +342,14 @@ func run(cmd string, args []string) error {
 			if suppliedKeyid != signerKeyid {
 				fmt.Printf("                 NOTE: the envelope declares keyid %s, which differs from the verifying key; the declared field is unauthenticated and must not be trusted.\n", signerKeyid)
 			}
-			// A valid signature says WHO signed these bytes. It does not say the claim is one the
-			// substrate will accept. `add` runs a structural gate (SPEC §7.2/§7.3) that verify never
-			// did, so a claim about NOTHING - a subject naming neither a digest nor a uri - printed a
-			// clean bill of health here and was refused at ingest. Anyone who verified a file and did
-			// not then add it believed it was good.
+			// A valid signature says WHO signed these bytes, not that the substrate will accept the
+			// claim. Exit 0 here is documented to mean BOTH - genuine and storable - so every way the
+			// payload can fail to be storable must reach an exit, including failing to parse at all.
+			// Anything that merely skips the structural check reports success by omitting a line, and
+			// an omitted line is not something a caller can read.
 			//
 			// Exit 3, not 1 or 0: the signature verdict keeps its meaning (1 = invalid/tampered,
-			// 2 = wrong key), and 0 still means "this claim is genuine AND storable".
-			//
-			// A PARSE failure is a structural failure, not a reason to skip the check. This block used
-			// to be `if perr == nil { ... }`, so a payload that could not be parsed at all - duplicate
-			// JSON member names, say - fell through to `return nil` and exit 0, printing a clean
-			// signature verdict and NO structure line. The only signal was the absence of a line, which
-			// no automation reads, and `add` refused the same file outright (dev review R02).
+			// 2 = wrong key), so a structural refusal needs a code of its own.
 			st, _, perr := claim.ParseEnvelope(env)
 			if perr != nil {
 				fmt.Printf("structure:       INVALID - %v\n", perr)

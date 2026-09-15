@@ -172,10 +172,10 @@ func deref(uri string, allowLocal bool) ([]byte, error) {
 	case strings.HasPrefix(uri, "http://"), strings.HasPrefix(uri, "https://"):
 		c := &http.Client{
 			Timeout: 120 * time.Second,
-			// THE address check happens in the dialer, not here: see guardedDial. Checking a
-			// hostname and then handing the URL to a client that resolves it AGAIN means the
-			// address checked is not the address contacted, and a resolver that answers
-			// differently the second time walks straight through (dev review R01).
+			// THE address check happens in the dialer, not here: see guardedDial. Checking a hostname
+			// and then handing the URL to a client that resolves it AGAIN would mean the address
+			// checked is not the address contacted - a resolver answering differently the second time
+			// walks straight through.
 			Transport: &http.Transport{
 				DialContext:           guardedDial(allowLocal),
 				TLSHandshakeTimeout:   30 * time.Second,

@@ -191,10 +191,10 @@ func ClaimID(payload []byte) string {
 // a predicate term, a signer, and a timestamp. Seeds are governed by the structural §7.4 fields
 // instead and are exempt here.
 func (st *Statement) Validate(p *Predicate) error {
-	// The CONTEXT-FREE part of §7.4 first, for seeds and non-seeds alike. It used to live only in
-	// the registry's chain check, so `verify` - which never reaches the registry - reported
-	// "structure: VALID" for a seed carrying genesis:false that `add` then refused (dev review R02).
-	// One definition, called from both, is the only arrangement in which the two cannot drift.
+	// The CONTEXT-FREE part of §7.4 first, for seeds and non-seeds alike. It is defined once, in
+	// ValidateChainStructure, and called from here AND from the registry's chain check: `verify`
+	// never reaches a registry, so a second copy there is how the two come to disagree about what a
+	// storable record is.
 	if err := ValidateChainStructure(st, p); err != nil {
 		return err
 	}

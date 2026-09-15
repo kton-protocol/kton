@@ -34,10 +34,9 @@ import (
 //
 // A failed write removes the partial file rather than leaving a truncated seed behind.
 //
-// The returned KeyWrite says what this call DID, which a caller needs in order to roll back safely.
-// Without it a caller cannot tell "I created this file" from "it was already here holding exactly
-// this key", and a keygen whose second half failed deleted a private key it had never written - with
-// an error message promising the opposite protection (dev review R04).
+// The returned KeyWrite says what this call DID, which a caller needs in order to roll back safely:
+// without it a caller cannot tell "I created this file" from "it was already here holding exactly
+// this key", and undoing the second case destroys key material this call never wrote.
 type KeyWrite struct {
 	Created bool   // this call created the file; nothing of the caller's was there before
 	Backup  string // non-empty: --force renamed the previous file here; restore it to undo

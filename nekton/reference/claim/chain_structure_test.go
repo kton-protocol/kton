@@ -7,10 +7,10 @@ import (
 	"kton.dev/nekton/claim"
 )
 
-// The context-free half of SPEC §7.4 used to live ONLY in the registry's chain check, so `nekton
-// verify` - which never reaches a registry - reported "structure: VALID" for records `add` refuses
-// outright (dev review R02). Two copies of a rule is how two commands come to disagree about what a
-// storable record is; ValidateChainStructure is the one copy, called from both.
+// ValidateChainStructure is the ONE definition of the context-free half of SPEC §7.4, called from
+// both the registry's chain check and `nekton verify`. It has to stay one: `verify` never reaches a
+// registry, so a second copy there is how the two commands come to disagree about what a storable
+// record is - and `verify` exit 0 promises "genuine AND storable".
 //
 // These are the rules that need no registry state. Whether a scope RESOLVES and whether a `prev`
 // links to something present are context-dependent and deliberately stay with the registry.

@@ -114,9 +114,8 @@ func keygen(args []string) error {
 		return err
 	}
 	if _, err := core.WriteKeyFile(name+".pub", []byte(hex.EncodeToString(pub)), 0o644, force); err != nil {
-		// Undo only what THIS call did. The old code removed name+".key" unconditionally - so a
-		// re-run over an existing keypair whose .pub had drifted deleted a private key this command
-		// never wrote, while printing that it had protected one (dev review R04).
+		// Undo only what THIS call did. Removing name+".key" unconditionally would destroy a private
+		// key that was already there - the exact loss the refusal above exists to prevent.
 		kw.Undo(name + ".key")
 		if kw.Created || kw.Backup != "" {
 			return fmt.Errorf("wrote %s.key but could not write %s.pub, so the private half was rolled back\n"+

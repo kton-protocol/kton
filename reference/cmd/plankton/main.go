@@ -670,11 +670,9 @@ func run(cmd string, args []string) error {
 		}
 		// Normalize the output-hash args to canonical lowercase (SPEC §5.1) so a bare/uppercase hash
 		// resolves; --via may be a ref or foton id, so normalize it only if it is a content hash.
-		// The two compared arguments MUST be content hashes. Normalization used to be attempted and
-		// its failure ignored, so two equal pieces of junk fell straight into the `ref == cand`
-		// branch below and `reproduces not-a-hash not-a-hash --json` answered
-		// {"level":"L0","matched":true} with exit 0 - a byte-identity claim over strings that name no
-		// bytes (dev review R14). Equality of two malformed strings is not a reproduction.
+		// The two compared arguments MUST be content hashes, and normalization failing MUST NOT be
+		// ignored: `ref == cand` below is a byte-identity test, so two equal malformed strings would
+		// otherwise report an L0 match over strings that name no bytes.
 		refRaw, candRaw := ref, cand
 		var okRef, okCand bool
 		if ref, okRef = core.NormalizeContentHash(ref); !okRef {

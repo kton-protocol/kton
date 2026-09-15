@@ -11,13 +11,12 @@ import (
 	"kton.dev/nekton/claim"
 )
 
-// `seed --parent <hash>` emitted the SUBJECT shape, {"digest":{"sha256":...}}, while claim.Ref reads
-// {hash?, uri?} (nekton SPEC §7.4: `parent?: Ref`). The scope hierarchy an operator asked for was
-// therefore SIGNED in a representation the library's own parser could not interpret: the round-trip
-// produced an empty Hash and an empty Parent.Key() (dev review R11).
+// A seed's `parent` is a Ref - {hash?, uri?} (nekton SPEC §7.4) - and NOT the subject shape,
+// {"digest":{"sha256":...}}, which claim.Ref does not read. The two look interchangeable, and
+// getting it wrong signs a parent nothing can resolve into a permanent claim id.
 //
-// The assertion is the round trip through the PUBLIC parser, not the shape of the JSON: a test that
-// only checked for the string "hash" would pass on output nothing can read.
+// The assertion is therefore the round trip through the PUBLIC parser, not the shape of the JSON: a
+// test that only checked for the string "hash" would pass on output nothing can read.
 func TestSeedParentRoundTripsThroughThePublicParser(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("NEKTON_DIR", filepath.Join(dir, "reg"))
