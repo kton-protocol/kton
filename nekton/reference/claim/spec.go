@@ -170,7 +170,7 @@ func (spec Spec) BuildPredicate() (map[string]any, error) {
 		return nil, fmt.Errorf("claim spec needs `predicate` (relation IRI) or `predicateBody`")
 	}
 	// TEMPLATE/ALIAS TRUST: what a claim MEANS must not depend on the READER's mutable alias file. A
-	// predicate stored as a full IRI ("https://…") or a prefixed CURIE ("pav:reviewedBy") names its own
+	// predicate stored as a full IRI ("https://…") or a prefixed CURIE ("pav:createdBy") names its own
 	// vocabulary; a BARE TERM ("reviewedBy") is maximally ambiguous - any reader's term map resolves it
 	// differently, and a MITM'd alias file silently changes its meaning. Refuse to sign a bare term
 	// (annotate has already run the alias file through `resolve` and ECHOES the result). A CURIE's prefix

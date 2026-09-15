@@ -774,7 +774,8 @@ publication round-trip) are maintained as the conformance scenario suite.
 ## Annex A *(informative)* - reuse of established standards
 
 Structure/envelope: in-toto Attestation + DSSE. Hashing/addressing: SHA-256 + multihash. Lineage/agent:
-W3C **PROV-O**. General review provenance: **PAV** (`pav:reviewedBy`). Location/retrieval (the
+W3C **PROV-O**; authoring/versioning provenance: **PAV** (`pav:createdBy`, `pav:authoredBy`).
+Location/retrieval (the
 `located-at` mechanism, Clause 12): **DCAT** (`dcat:downloadURL`). Equivalence/hierarchy: **OWL/SKOS**.
 Licensing identifiers: SPDX. Publication: nanopublication / Trusty URI (Clause 14). Domain vocabularies
 used by *examples* (not the protocol) - EDAM/SWO/STATO/OBI, Cell Ontology, HGNC, SEPIO/micropublication

@@ -12,7 +12,7 @@ examples are application vocabulary, not the protocol.*
 | Statement / envelope | in-toto Attestation + DSSE | the wire form (Clause 6.6 / 7.3 / 8) |
 | Content hash / addressing | multihash | `sha256:` |
 | Lineage, agents, activities | **PROV-O** | `prov:wasDerivedFrom`, `prov:used`, `prov:wasGeneratedBy`, `prov:wasAttributedTo`, `prov:wasAssociatedWith`, `prov:actedOnBehalfOf` |
-| Review / authoring provenance | **PAV** | `pav:reviewedBy` (general review - *not* a GxP claim) |
+| Authoring / versioning provenance | **PAV** | `pav:createdBy`, `pav:authoredBy`, `pav:retrievedFrom`. PAV has **no** review property; see §3 |
 | Key -> principal control (identity) | **W3C Security Vocabulary** | `sec:controller`, `sec:Multikey` - a signed key-to-principal binding is a lightweight Verifiable Credential; keys are named by their content IRI (`pk:<hash>`), principals by IRI (`did:web:`, `model:`) |
 | Location / retrieval | **DCAT** | `dcat:downloadURL` (the `located-at` mechanism; Clause 12) |
 | Equivalence / hierarchy | **OWL / SKOS** | `owl:sameAs`, `skos:broader` |
@@ -45,9 +45,25 @@ never requires them. They live in aliases/templates, not the spec.
 - **Governance example:** `vote`, `vote-initialised`, `delegate` (liquid democracy).
 - **Regulated:** a namespace of its own for claims that assert regulated weight - a review performed
   under a validated process, a qualified environment, an accepted risk, a deviation, a CAPA.
-  **Use such a term only when a real validated process stands behind the claim**; ordinary review is
-  `pav:reviewedBy`, and a specialization is worth minting only when it means something `pav:reviewedBy`
-  does not.
+  **Use such a term only when a real validated process stands behind the claim.**
+
+  **There is no established property for "reviewed by", and this annex used to name one that does not
+  exist.** `pav:reviewedBy` was cited here, in Annex A and in the examples for the whole of 0.1, and
+  it was published into signed nanopublications. PAV defines 33 terms - `authoredBy`, `createdBy`,
+  `curatedBy`, `importedBy`, `retrievedBy` among them - and `reviewedBy` is not one of them. It read
+  as plausible, which is exactly why nobody checked it.
+
+  Two lessons, both worth more than the term: a reused vocabulary is a claim ABOUT someone else's
+  document, so it has to be looked up rather than remembered; and `reviewedBy` would have been the
+  wrong SHAPE even had it existed - it is passive, "X was reviewed **by** Y", so its object is the
+  reviewer's identity, and putting a verdict there asserts that the record was reviewed by "looks
+  correct". Review therefore uses an application term of the example suite's own, whose object is the
+  verdict and whose reviewer is the signature.
+
+  `oa:assessing` is the right *motivation* in the Web Annotation vocabulary and is real - but it is an
+  instance of `oa:Motivation`, not a property, so it belongs in `oa:motivatedBy oa:assessing` on an
+  `oa:Annotation`, never in a predicate slot. Naming it as one would repeat the mistake in a better
+  disguise.
 
   This annex deliberately does **not** name that namespace or enumerate its terms. It once reserved a
   specific prefix and named the template that carried it - and then the example suite renamed both,
