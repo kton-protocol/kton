@@ -1028,8 +1028,17 @@ func marshalRecord(of objectFile) ([]byte, error) {
 }
 
 // appendSubnekton adds a record to its subnekton. An append (not a rewrite) so filing the Nth claim
-// costs one line, never N. A crash mid-append leaves a torn final line, which readSubnekton skips -
-// the record is then simply absent, exactly as if it had never been filed.
+// costs one line, never N.
+//
+// A crash mid-append leaves a TORN final line with no newline. That line is lost, which is correct -
+// it was never acknowledged. What is NOT acceptable is what used to happen to the record after it:
+// an O_APPEND write lands directly on the torn line, concatenating the two, so the reader discards
+// BOTH. `Add` had already returned success and indexed the claim, and it was gone on the next open -
+// an acknowledged write lost to somebody else's interrupted one.
+//
+// So the tail is isolated first: a lone newline turns the torn fragment into a line of its own,
+// which the reader skips with a warning, and the new record starts clean. Written in ONE call
+// together with the record, so this repair cannot itself be interrupted halfway.
 func appendSubnekton(path string, of objectFile) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -1037,6 +1046,13 @@ func appendSubnekton(path string, of objectFile) error {
 	line, err := marshalRecord(of)
 	if err != nil {
 		return err
+	}
+	torn, err := hasTornTail(path)
+	if err != nil {
+		return err
+	}
+	if torn {
+		line = append([]byte{'\n'}, line...)
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -1047,6 +1063,32 @@ func appendSubnekton(path string, of objectFile) error {
 		return err
 	}
 	return f.Close()
+}
+
+// hasTornTail reports whether path ends in a partial line - content not terminated by a newline.
+// An empty or absent file is not torn. A read error is NOT reported as "not torn": appending onto a
+// file we could not inspect is how the record after a torn one was lost in the first place.
+func hasTornTail(path string) (bool, error) {
+	fi, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if fi.Size() == 0 {
+		return false, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	var b [1]byte
+	if _, err := f.ReadAt(b[:], fi.Size()-1); err != nil {
+		return false, err
+	}
+	return b[0] != '\n', nil
 }
 
 // rewriteSubnekton replaces a subnekton file atomically - the path taken when an EXISTING entry
