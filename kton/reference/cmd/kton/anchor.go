@@ -164,6 +164,31 @@ func storeAnchor(env core.Envelope, entry *sigstore.Entry, raw []byte) error {
 	if oerr != nil {
 		return oerr
 	}
+	// A foton id is the COVERED projection (SPEC 6.3): `uri` is carried, not covered, so two valid
+	// signed fotons differing only in an output URI share an id while carrying DIFFERENT payload
+	// bytes. A Rekor entry binds the bytes it was handed.
+	//
+	// So attaching by id alone could archive a proof the store can never check again: store variant
+	// A, anchor variant B, and on reopen Entry.VerifyBinds rejects the only envelope there as a
+	// different payload. The proof survives; what it proves does not. A successful archival must
+	// preserve the input its own later binding check needs.
+	//
+	// The store keeps one envelope per id and this command cannot add a second, so the honest
+	// outcome when they differ is a refusal that says so - not a success that defers the failure to
+	// whoever verifies next. (The nekton branch above needs none of this: a claim id IS the payload
+	// hash, so a variant is a different claim.)
+	stored, held := pr.Envelope(id)
+	if !held {
+		return fmt.Errorf("foton %s is not in %s, so a proof stored against it would have no record "+
+			"to bind to - ingest the foton first (`plankton add`)", id, planktonDir())
+	}
+	if stored.Payload != env.Payload {
+		return fmt.Errorf("the anchored record and the stored foton %s share an id but not their "+
+			"bytes - `uri` is carried, not covered (SPEC 6.1/6.3), so these are two payloads with "+
+			"one id. The entry binds the anchored bytes, which this store does not hold, and the "+
+			"proof could never be verified against what is here. Anchor the envelope this store "+
+			"holds, or add the anchored variant first", id)
+	}
 	if err := pr.AttachMaterial(preg.VerificationMaterial{
 		Subject: id, Scheme: "rekor-entry", MediaType: "application/json",
 		Material: base64.StdEncoding.EncodeToString(raw),

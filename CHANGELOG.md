@@ -93,6 +93,28 @@ that rule as much as the CLI does.
 Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
 are now flag parsing over the methods, the shape `plankton author` already has.
 
+### Fixed — `kton anchor --store` archived proofs that could never be checked again
+
+A foton id is the **covered** projection (§6.3); `uri` is carried, not covered (§6.1). So two valid
+signed fotons differing only in an output URI share an id and carry **different payload bytes** — and
+a Rekor entry binds the bytes it was handed.
+
+`--store` attached the proof by id. Store variant A, anchor variant B, and it printed `stored`; on
+reopen the only envelope present is A, and `Entry.VerifyBinds` rejects it as a different payload. The
+archived entry holds a payload digest for bytes nobody kept. A successful archival has to preserve
+the input its own later binding check needs.
+
+The store keeps one envelope per id and `anchor` cannot add a second, so the honest outcome is a
+refusal that names the collision — not a success that defers the failure to whoever verifies next.
+Anchoring a foton the store does not hold at all is refused for the same reason. The nekton branch
+needs none of this: a claim id **is** the payload hash, so a variant is a different claim.
+
+`storeAnchor` had no test at all, which is why a green suite said nothing about it. The regression
+now checks its own premise first (one id, two payloads — if that ever stops holding the test proves
+nothing), then that the mismatch is refused **and writes nothing**, that the matching variant still
+stores and survives a reopen with the envelope its proof binds to, and that an absent record is
+refused.
+
 ### Fixed — `plankton verify` blessed records `add` refuses
 
 `verify` prints
