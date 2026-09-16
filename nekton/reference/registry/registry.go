@@ -127,6 +127,20 @@ func (r *Registry) readLegacyObject(id string) (core.Envelope, bool) {
 // makes ALL persists of a claim id safe - whether or not this process had yet SEEN the claim - so N
 // processes co-signing the same statement concurrently never clobber each other (every co-signature
 // survives). Returns the merged envelope actually stored.
+// derivesClaimID reports whether env's payload actually hashes to id. A claim id is
+// sha256(canon(Statement)) - the payload digest exactly - so this is the whole test, and an envelope
+// that fails it is not the claim it is filed under whatever the surrounding `claimId` field says.
+//
+// An unparseable envelope fails too, deliberately: its signatures stand over bytes we cannot
+// identify, so they are not evidence about this record.
+func derivesClaimID(env core.Envelope, id string) bool {
+	_, payload, err := claim.ParseEnvelope(env)
+	if err != nil {
+		return false
+	}
+	return claim.ClaimID(payload) == id
+}
+
 func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envelope, error) {
 	merged := env
 	path, perr := subnektonPath(r.objectsDir, scope)
@@ -140,6 +154,24 @@ func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envel
 		held, found := core.Envelope{}, false
 		for _, of := range recs {
 			if of.ClaimID != id {
+				continue
+			}
+			// The `claimId` FIELD is not evidence that the line is this claim. A planted line - the
+			// target's id, a different claim's envelope - used to be taken as a prior record of the
+			// target: unionSignatures keeps the first when the payloads differ, so `merged` became
+			// the planted envelope, `Add` returned it as the stored record, and the result was
+			//
+			//     isNew=true  err=<nil>   Len()=0   Claim(target) held=false
+			//
+			// a successful ingest of a claim the registry does not hold and cannot return. Because
+			// the planted line wins every time, re-ingesting the authentic claim could never repair
+			// the store. The record built from it then reached the sync feed as well.
+			//
+			// A claim id IS sha256(canon(Statement)), so the line either derives its own id or it is
+			// not this claim. Identity, not the field - the same rule persistRecord learned on the
+			// plankton side, where it also preserves the legitimate case: a co-signed twin carries
+			// the same payload and therefore the same id, and still merges.
+			if !derivesClaimID(of.Envelope, id) {
 				continue
 			}
 			if !found {
@@ -163,7 +195,10 @@ func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envel
 		}
 		// Not in the subnekton yet. A record an older build left at the flat path is the same claim:
 		// union with it and migrate it in, so no co-signature is lost crossing the layouts.
-		if disk, ok := r.readLegacyObject(id); ok {
+		// Same rule for a record an older build left at the flat path: migrate it only if it IS this
+		// claim. A file named by the target that holds something else is not a co-signature to
+		// preserve, and carrying it across the layouts would plant it in the new one.
+		if disk, ok := r.readLegacyObject(id); ok && derivesClaimID(disk, id) {
 			m, _ := unionSignatures(disk, env)
 			merged = m
 		}
@@ -882,7 +917,28 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 		r.rememberDeferred(rec)
 		return id, true, nil
 	}
-	r.index(rec)
+	// Only what the index ACCEPTS reaches the feed. `index` already returned this - settle has
+	// honoured it since #161 - and here the answer was DISCARDED, so a record the index refused was
+	// appended anyway and served to peers. What a peer then received was a false id -> claim
+	// binding: it refuses the record in turn, so an import that looks complete is not, which is
+	// exactly the defect #149 was filed for on the half that stayed open.
+	//
+	// HONESTLY: with persistClaim's identity check in place this branch is UNREACHABLE through Add.
+	// `merged` is now either `env` itself or a union of envelopes that all derive this id, and every
+	// other thing index refuses - no signature, unparseable predicate, failed Validate - Add has
+	// already rejected above. Removing this gate does not fail the regression beside it, and saying
+	// otherwise would be the kind of claim this repository keeps having to retract.
+	//
+	// It stays because it is where the invariant is ENFORCED rather than merely currently true: the
+	// feed must never carry a record the index will not answer for, and the next person to change
+	// what persistence returns should hit a refusal, not a silently republished false binding.
+	//
+	// (The twin branch above appends the INCOMING envelope, whose id was derived from its own
+	// payload a few lines up, so it is self-consistent by construction and needs no gate.)
+	if !r.index(rec) {
+		return "", false, fmt.Errorf("claim %s was refused by the index and has not been stored - "+
+			"see the warning above for which check it failed", id)
+	}
 	r.feed = append(r.feed, rec)
 	return id, true, nil
 }
@@ -1524,6 +1580,15 @@ func (r *Registry) AttachMaterial(vm VerificationMaterial) error {
 		return fmt.Errorf("verification material needs subject, scheme and material")
 	}
 	rec, ok := r.claimByID[vm.Subject]
+	if !ok {
+		// A DEFERRED claim is held too, just not indexed - its prev/seed has not arrived (SPEC §11:
+		// incomplete, not invalid). Refusing to attach evidence to it would make external evidence
+		// depend on chain completeness, which §8.1 says it must not: a record's validity never
+		// depends on its material, and the converse has to hold or a proof cannot be filed until an
+		// unrelated predecessor turns up. The binding is safe regardless - a claim id IS the payload
+		// hash, so the material names these exact bytes.
+		rec, _, ok = r.DeferredClaim(vm.Subject)
+	}
 	if !ok {
 		return fmt.Errorf("no claim %s in this registry - material binds to a record's content address, not to a file", vm.Subject)
 	}

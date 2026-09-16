@@ -111,25 +111,52 @@ func regOrDefault(explicit string) string {
 // kept out of every index because its prev/seed has not arrived. That is a third state, and it used
 // to collapse into "not held" - a deferred id and a hash nobody ever heard of produced the same
 // message and the same exit code. SPEC §12 makes the distinction normative.
-func readEnvelopeOrID(arg string) (env core.Envelope, waitingOnScope string, err error) {
+func readEnvelopeOrID(arg string) (env core.Envelope, waitingOnScope string, chain chainState, err error) {
 	if strings.HasPrefix(arg, "sha256:") {
 		r, oerr := registry.Open(dir())
 		if oerr != nil {
-			return core.Envelope{}, "", oerr
+			return core.Envelope{}, "", chainUnchecked, oerr
 		}
 		if rec, ok := r.Claim(arg); ok {
-			return rec.Envelope, "", nil
+			// RESOLVED is earned here and only here: being in the index means checkChain passed.
+			return rec.Envelope, "", chainResolved, nil
 		}
 		if rec, scope, ok := r.DeferredClaim(arg); ok {
 			if scope == "" {
 				scope = "(an unnamed scope)"
 			}
-			return rec.Envelope, scope, nil
+			return rec.Envelope, scope, chainDeferred, nil
 		}
-		return core.Envelope{}, "", fmt.Errorf("no claim %s in the registry (%s)", arg, dir())
+		return core.Envelope{}, "", chainUnchecked, fmt.Errorf("no claim %s in the registry (%s)", arg, dir())
 	}
+	// A FILE. This store was never asked about its scope or prev, so the honest answer is that the
+	// chain was not checked - not that it resolved.
 	e, rerr := readEnvelope(arg)
-	return e, "", rerr
+	return e, "", chainUnchecked, rerr
+}
+
+// chainState is what this store actually established about a claim's chain. UNCHECKED is a first
+// class answer and the default, because the alternative - letting "not deferred" mean "resolved" -
+// is how `verify <file>` came to assert that a store held a dependency it had never been asked
+// about.
+type chainState int
+
+const (
+	chainUnchecked chainState = iota
+	chainResolved
+	chainDeferred
+)
+
+// String is the machine-readable token for --json.
+func (c chainState) String() string {
+	switch c {
+	case chainResolved:
+		return "resolved"
+	case chainDeferred:
+		return "deferred"
+	default:
+		return "unchecked"
+	}
 }
 
 func readEnvelope(path string) (core.Envelope, error) {
@@ -364,7 +391,7 @@ func run(cmd string, args []string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("usage: nekton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>")
 		}
-		env, deferredScope, err := readEnvelopeOrID(args[0])
+		env, deferredScope, chain, err := readEnvelopeOrID(args[0])
 		if err != nil {
 			return err
 		}
@@ -428,13 +455,28 @@ func run(cmd string, args []string) error {
 			// store. Reporting it as success would tell a caller the chain checks out; reporting it
 			// as 3 would say the claim is malformed. Both are false, and both are what a reader
 			// would have had to infer from prose before.
-			if deferredScope != "" {
+			switch chain {
+			case chainDeferred:
 				fmt.Printf("chain:           DEFERRED - held and offered to peers, but its prev/seed for scope %s\n", deferredScope)
 				fmt.Println("                 has not arrived, so it is in no index here. Not a defect in the record:")
 				fmt.Println("                 add the missing predecessor and it resolves (SPEC §11: incomplete, not invalid).")
 				os.Exit(4)
+			case chainResolved:
+				fmt.Println("chain:           RESOLVED - this store holds what the claim depends on")
+			default:
+				// NOT CHECKED, and it must say so. This printed "RESOLVED - this store holds what the
+				// claim depends on" for a claim read from a FILE, against a registry holding nothing:
+				// the lookup that establishes `resolved` only runs on the registry-id path, and the
+				// file path fell through to the same line. Nothing had been looked up.
+				//
+				// SPEC §8.1's read-path boundary is exactly this: presence is not a check, and a
+				// kernel's own output MUST NOT carry a field that reads as a verification verdict. It
+				// also inverted the exit contract - a caller branching on 4 got 0 for the one case it
+				// most needs to catch.
+				fmt.Println("chain:           NOT CHECKED - this envelope came from a file, so nothing was")
+				fmt.Println("                 looked up. Pass the claim id instead to have this store")
+				fmt.Println("                 resolve its scope and prev.")
 			}
-			fmt.Println("chain:           RESOLVED - this store holds what the claim depends on")
 			return nil
 		case suppliedKeyid != signerKeyid:
 			fmt.Println("signature:       UNVERIFIED - WRONG KEY: this key did not sign the record")

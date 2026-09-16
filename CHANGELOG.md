@@ -93,6 +93,64 @@ that rule as much as the CLI does.
 Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
 are now flag parsing over the methods, the shape `plankton author` already has.
 
+### Fixed — five defects found by re-reviewing this release's own fixes
+
+An external review reported that several fixes work for their original reproductions and remain
+incomplete. Each claim was checked against a reproduction rather than argued about. All five held.
+
+**A planted subnekton line became the record (#172).** `persistClaim` collected every line whose
+`claimId` **field** matched the id being written and unioned it — without checking the envelope
+derives that id. A planted line (target's id, another claim's envelope) won, because
+`unionSignatures` keeps the first when payloads differ:
+
+```
+Add -> isNew=true  err=<nil>     Len()=0     Claim(target) held=false
+```
+
+A successful ingest of a claim the store does not hold and cannot return, unrepairable by
+re-ingestion. The nekton twin of the plankton fix above; a claim id **is** the payload digest, so
+the line either derives its own id or it is not this claim. A genuine co-signature — same payload,
+second key — still merges.
+
+**The feed carried what the index refused (#171).** `Add` discarded `index()`'s return and appended
+anyway, so a peer received a false id → claim binding and refused it in turn: an import that looks
+complete and is not. `settle` has honoured that answer since this release; `Add` had not. Stated
+plainly in the code: with the fix above in place that branch is now unreachable, and the regression
+beside it does not fail when the gate is removed. It stays because it is where the invariant is
+enforced rather than merely currently true.
+
+**`verify` and `show` asserted a chain verdict without looking (#173).** The chain report was derived
+from one string — empty meant *not deferred* — and a claim read from a **file** leaves it empty, so
+against a registry holding zero records:
+
+```
+chain:           RESOLVED - this store holds what the claim depends on
+"chain": "resolved"
+```
+
+Nothing had been looked up. That is §8.1's read-path boundary exactly, added in this same release:
+*presence is not a check*, and a kernel's own output MUST NOT carry a field that reads as a
+verification verdict. It also inverted the exit contract — a caller branching on `4` got `0` for the
+case it most needs to catch. `unchecked` is now a first-class state and the default.
+
+**One stray file disabled the whole template surface (#174).** A `*.json` in the template directory
+that is not a template failed the entire load, so `templates`, `--show` and even
+`annotate --template qa/review` stopped working — an editor backup made a working corpus unusable
+for signing. It is now skipped and **named** on stderr, which fixes what the guard was for (an alias
+file silently absorbed as a template) without taking the corpus down. A malformed *alias* file stays
+fatal: that one changes what a CURIE means.
+
+**A deferred claim could not be anchored (#175).** `storeAnchor` asked `Claim()`, which answers from
+the index, so a deferred claim fell through to the foton branch and failed as
+`json: cannot unmarshal string into Go struct field Subject.subject.uri` — telling a reader their
+record is malformed when its predecessor simply had not arrived. `AttachMaterial` had the same
+blind spot one level down. Both route it as a claim now; §8.1 says a record's validity never depends
+on its material, and the converse has to hold too.
+
+Measured, not assumed: all 8 templates in the example corpus produce byte-identical claim ids before
+and after the template extraction, and the plankton re-ingest fix was re-probed with two further
+variants and holds.
+
 ### Fixed — re-ingesting a valid foton could not repair a planted object
 
 `persistRecord` reused whatever envelope was already at the object path, on the strength of it being
