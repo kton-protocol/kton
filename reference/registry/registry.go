@@ -703,9 +703,28 @@ func (r *Registry) persistRecord(key, fotonID string, env core.Envelope) (core.E
 		if b, rerr := os.ReadFile(p); rerr == nil {
 			var of objectFile
 			if json.Unmarshal(b, &of) == nil && of.Envelope.Payload != "" {
-				if m, _ := unionSignatures(of.Envelope, merged); len(m.Signatures) > 0 {
-					merged = m
+				// The existing object is preserved only if it IS this record. It used to be merged on
+				// the strength of being there: an object whose stored fotonId named this foton while
+				// its signed envelope described a DIFFERENT one kept its own envelope (the payloads
+				// differ, so unionSignatures keeps the first), `Add` reported new=true err=nil, and
+				// `apply` then rejected the retained envelope again - Len()=0, degraded 1 -> 2. A
+				// successful repair that repaired nothing, and re-ingesting the authentic foton could
+				// never fix it.
+				//
+				// Identity, not bytes, is the test - and that is what keeps the legitimate case
+				// working. A co-signed TWIN has the same COVERED projection and therefore the same
+				// foton id while its payload bytes may differ (`uri` is carried, §6.1), so it still
+				// merges. What cannot merge is an envelope that is not this foton at all.
+				//
+				// A stored object that no longer parses is in the same position: its signatures
+				// stand over bytes we cannot identify, so they are not evidence about this record.
+				if _, storedID, perr := parseEnv(of.Envelope); perr == nil && storedID == fotonID {
+					if m, _ := unionSignatures(of.Envelope, merged); len(m.Signatures) > 0 {
+						merged = m
+					}
 				}
+				// else: the incoming envelope REPLACES it. Nothing is lost that belonged here - the
+				// object was already refused by the read path and counted as degraded.
 			}
 		}
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
