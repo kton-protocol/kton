@@ -30,6 +30,8 @@ func showClaim(args []string) error {
 	}
 	arg := pos[0]
 	var env core.Envelope
+	// Non-empty when this store holds the record but has deferred it - see the lookup below.
+	deferredScope := ""
 	if _, err := os.Stat(arg); err == nil {
 		env, err = readEnvelope(arg)
 		if err != nil {
@@ -42,7 +44,20 @@ func showClaim(args []string) error {
 		}
 		rec, ok := r.Claim(arg)
 		if !ok {
-			return fmt.Errorf("no claim %q (not a file, not in registry %s)", arg, dir())
+			// HELD BUT DEFERRED is a third state, and it used to collapse into "not held": a claim
+			// persisted and offered to peers, kept out of every index because its prev/seed has not
+			// arrived, answered here with the same message and the same exit code as a hash nobody
+			// has ever heard of. Byte-identical answers for two different facts, and SPEC §12 makes
+			// the distinction normative. The store has the record; showing it is the truthful answer.
+			var scope string
+			rec, scope, ok = r.DeferredClaim(arg)
+			if !ok {
+				return fmt.Errorf("no claim %q (not a file, not in registry %s)", arg, dir())
+			}
+			if scope == "" {
+				scope = "(an unnamed scope)"
+			}
+			deferredScope = scope
 		}
 		env = rec.Envelope
 	}
@@ -72,6 +87,13 @@ func showClaim(args []string) error {
 			"predicate":     body,
 			// DECLARED, not verified - `nekton verify` is what checks it.
 			"declaredKeyids": keyids,
+			// Three states, as a FIELD: "resolved" (this store holds what the claim depends on) or
+			// "deferred" (held and offered to peers, but its prev/seed has not arrived, so it is in
+			// no index here). Not-held is the error path and never reaches this JSON. A caller used
+			// to have to parse prose - or an error message - to tell these apart, which is the thing
+			// --json exists to make unnecessary.
+			"chain":          chainStatus(deferredScope),
+			"waitingOnScope": deferredScope,
 		}, "", "  ")
 		if err != nil {
 			return err
@@ -81,6 +103,13 @@ func showClaim(args []string) error {
 	}
 
 	fmt.Printf("claim:     %s\n", claim.ClaimID(payload))
+	if deferredScope != "" {
+		// Said FIRST, and said plainly. Printed further down it would read as a footnote to a record
+		// that otherwise looks entirely ordinary - which is exactly how this state stayed invisible.
+		fmt.Printf("chain:     DEFERRED - held here and offered to peers, but its prev/seed for scope\n")
+		fmt.Printf("           %s has not arrived, so this claim is in no index here.\n", deferredScope)
+		fmt.Printf("           Incomplete, not invalid (SPEC §11): add the predecessor and it resolves.\n")
+	}
 	if len(st.Subject) > 0 {
 		fmt.Printf("subject:   %s\n", st.Subject[0].Key())
 	}
@@ -125,4 +154,13 @@ func printJSONOut(v any) error {
 	}
 	fmt.Println(string(b))
 	return nil
+}
+
+// chainStatus names the third state for machine readers. A deferred claim is INCOMPLETE, not invalid
+// (SPEC §11): its signature is fine and it may resolve the moment its predecessor arrives.
+func chainStatus(waitingOnScope string) string {
+	if waitingOnScope != "" {
+		return "deferred"
+	}
+	return "resolved"
 }

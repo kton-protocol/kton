@@ -93,6 +93,41 @@ that rule as much as the CLI does.
 Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
 are now flag parsing over the methods, the shape `plankton author` already has.
 
+### Fixed — a deferred claim answered exactly like one the registry never saw
+
+A scoped claim whose `prev` or seed has not arrived is **persisted and offered to peers**, and kept
+out of every index — deliberately, and the code said so. What was never drawn is the consequence for
+a *local* lookup: `records` returned the claim, while `show <id>` and `verify <id>` answered with the
+same message and the same exit code as a hash nobody has ever heard of.
+
+SPEC §12 makes this normative — *"we do not have it" and "we have nothing about it" are different
+answers, and a reader acts differently on each* — and **held but waiting** is a third. The kernel
+already knew which it was; nothing new is tracked, only reported:
+
+```
+unknown id          show: exit 1, an error
+deferred id         show: exit 0, chain: DEFERRED + "waitingOnScope" in --json
+                    verify: exit 4
+resolved            show: exit 0, chain: resolved      verify: exit 0
+tampered / wrong key                                   verify: exit 1 / 2   (unchanged)
+malformed                                              verify: exit 3       (unchanged)
+```
+
+Exit **4** because the existing codes keep their meanings and this is none of them: nothing is wrong
+with the record, something is missing from this store. Reporting it as success would say the chain
+checks out; reporting it as 3 would say the claim is malformed. Both are false — which is why the
+examples workstream, finding no honest way to tell the cases apart, was verifying scope claims
+through their envelope bytes rather than by id.
+
+`export --nanopub` and `nanopublish` note the state on stderr rather than refusing: an unresolved
+predecessor makes a claim *incomplete*, not invalid (§11), and the claim itself is genuine — but a
+projection published from this store asserts it, and the publisher should know the chain has a gap.
+
+Both deferral paths record it — `Add`'s and `settle`'s — because a claim deferred at ingest and one
+deferred on replay are the same fact, and a reader must not get a different answer across a restart.
+The lookup is deliberately separate from `Claim`: a deferred claim must not answer `about`/`by` as
+though its chain resolved, and merging them would put it back into query results by the back door.
+
 ### Fixed — `kton anchor --store` archived proofs that could never be checked again
 
 A foton id is the **covered** projection (§6.3); `uri` is carried, not covered (§6.1). So two valid

@@ -204,9 +204,17 @@ func exportNanopub(args []string) error {
 	if in == "" {
 		return fmt.Errorf("usage: nekton export --nanopub <claim.dsse.json|sha256:id> [-o out.trig] [--aliases file]")
 	}
-	env, err := readEnvelopeOrID(in)
+	env, deferredScope, err := readEnvelopeOrID(in)
 	if err != nil {
 		return err
+	}
+	if deferredScope != "" {
+		// Not a refusal: an unresolved predecessor makes a claim INCOMPLETE here, not invalid
+		// (SPEC §11), and the claim itself is genuine and signed. But a projection published from
+		// this store asserts it, and the publisher should know the chain it belongs to does not
+		// resolve locally - a reader who fetches the scope will find a gap.
+		fmt.Fprintf(os.Stderr, "note: this claim is DEFERRED here - its prev/seed for scope %s has not "+
+			"arrived, so its chain does not resolve in this store.\n", deferredScope)
 	}
 	st, payload, err := claim.ParseEnvelope(env)
 	if err != nil {
