@@ -144,14 +144,51 @@ them: a modeling workbench, a CLI, a published paper's verifiable package, or an
 
 The kernel is real. The Go reference implementation ([`reference/`](reference/)) builds and
 passes tests: foton model + action key, canonical JSON, DSSE/Ed25519, an append-log registry
-with hash indexes, lineage / reuse queries, federation (serve / mirror / sync), and optional
-byte-pinning. The sibling **nekton** layer has its own Go reference ([`nekton/`](nekton/)),
+with hash indexes, lineage / reuse queries, local overlay-by-hash federation (`mirror` on a
+directory, and `records --json --since N` as the §12 `sync` answer on stdout), and optional
+byte-pinning. There is **no HTTP server and no HTTP client**: `serve` went in #83 and the
+federation client in #101, because a protocol repository is about bytes rather than about which
+other protocol carries them somewhere. §12 fixes the queries and the wire form and leaves the
+transport unspecified. The sibling **nekton** layer has its own Go reference ([`nekton/`](nekton/)),
 reusing plankton's shared `core`. The spec ([`spec/`](spec/)) is **0.1 (draft)**. Cockpit spikes
 - a VS Code Navigator, R/Python executors, and tool-qualification demos - live in a separate
 research companion (not yet public).
 
 See [`docs/concepts.md`](docs/concepts.md), [`docs/glossary.md`](docs/glossary.md),
 and [`VISION.md`](VISION.md).
+
+## Install
+
+Each release attaches one archive per platform, plus a `.sha256` beside it. Verify the archive
+before you run what is inside it - a provenance tool that asks you to trust an unchecked download
+has already lost the argument.
+
+```sh
+ver=v0.2.0                      # see github.com/kton-protocol/kton/releases
+plat=linux_amd64                # or linux_arm64, darwin_amd64, darwin_arm64, windows_amd64
+base="https://github.com/kton-protocol/kton/releases/download/$ver"
+curl -fLO "$base/kton_${ver}_${plat}.tar.gz"
+curl -fLO "$base/kton_${ver}_${plat}.tar.gz.sha256"
+sha256sum -c "kton_${ver}_${plat}.tar.gz.sha256"    # must print: OK
+tar xzf "kton_${ver}_${plat}.tar.gz"
+cd "kton_${ver}_${plat}"
+sudo install -m 755 plankton nekton kton /usr/local/bin/
+plankton --version && nekton --version && kton --version
+```
+
+The archive holds the three binaries and the licence - nothing to configure: no Go toolchain, no
+runtime, no service. `plankton` and `nekton` are the kernels; `kton` is the cockpit and the only one
+that ever reaches the network (`kton fetch`, Rekor anchoring).
+
+**Versions.** The binaries are at **0.2**; the specification they implement is **0.1 (draft)**. Those
+are two axes on purpose - 0.2 changed the nekton store layout, not the protocol - so a record
+authored by a 0.2 binary still stamps `specVersion: "0.1"`. A 0.1 binary **cannot read a 0.2 nekton
+store and does not say so**; upgrade every binary that touches a shared registry at the same time,
+and read the first section of [`CHANGELOG.md`](CHANGELOG.md) before you do.
+
+*`go install kton.dev/...` does not work yet: the module paths are `kton.dev/plankton`,
+`kton.dev/nekton`, `kton.dev/kton`, but kton.dev does not serve the `go-import` meta redirect those
+need. Use a release archive or the source build below.*
 
 ## Build
 
@@ -175,8 +212,12 @@ to `man -l -` to render). The architecture invariants are in [`CONTRIBUTING.md`]
 
 kton is meant to be an **open standard others implement independently**, not just this codebase. The
 normative specification ([`spec/`](spec/)) is being developed under the Linux Foundation / Joint
-Development Foundation **Community Specification** framework - its scope, license, governance, and
-contribution process live in [`community-specification/`](community-specification/). Two audiences:
+Development Foundation **Community Specification** framework. The four files that framework's License
+operates on are at the repository root, under the names the License itself uses -
+[`Scope.md`](Scope.md) (what the patent commitment covers), [`Notices.md`](Notices.md) (acceptance,
+withdrawal, patent exclusions), [`Governance.md`](Governance.md) (how a draft becomes Approved) and
+[`License.md`](License.md). The unmodified License text and CLA are vendored in
+[`community-specification/`](community-specification/). Two audiences:
 **want to use it?** → the tools in this repo; **want to see it run?** → the demo (`gitmick/kton-demo`).
 
 ## License

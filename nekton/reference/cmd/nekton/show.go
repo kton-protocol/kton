@@ -16,10 +16,19 @@ import (
 )
 
 func showClaim(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: nekton show <claim.dsse.json | sha256:claimId>")
+	asJSON := false
+	var pos []string
+	for _, a := range args {
+		if a == "--json" {
+			asJSON = true
+			continue
+		}
+		pos = append(pos, a)
 	}
-	arg := args[0]
+	if len(pos) != 1 {
+		return fmt.Errorf("usage: nekton show <claim.dsse.json | sha256:claimId> [--json]")
+	}
+	arg := pos[0]
 	var env core.Envelope
 	if _, err := os.Stat(arg); err == nil {
 		env, err = readEnvelope(arg)
@@ -43,6 +52,33 @@ func showClaim(args []string) error {
 	}
 	var body map[string]any
 	_ = json.Unmarshal(st.Predicate, &body)
+
+	if asJSON {
+		// The predicate body goes out WHOLE - same principle as plankton show (#54): a field that is
+		// never named cannot be forgotten. The human rendering below names `object`, `evidence`,
+		// `by`, `when`, `scope`, `prev`; anything else a claim carries is invisible there.
+		subjects := make([]string, 0, len(st.Subject))
+		for _, sub := range st.Subject {
+			subjects = append(subjects, sub.Key())
+		}
+		keyids := make([]string, 0, len(env.Signatures))
+		for _, sg := range env.Signatures {
+			keyids = append(keyids, sg.KeyID)
+		}
+		b, err := json.MarshalIndent(map[string]any{
+			"claimId":       claim.ClaimID(payload),
+			"predicateType": st.PredicateType,
+			"subject":       subjects,
+			"predicate":     body,
+			// DECLARED, not verified - `nekton verify` is what checks it.
+			"declaredKeyids": keyids,
+		}, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(b))
+		return nil
+	}
 
 	fmt.Printf("claim:     %s\n", claim.ClaimID(payload))
 	if len(st.Subject) > 0 {
@@ -77,5 +113,16 @@ func showClaim(args []string) error {
 	if len(env.Signatures) > 0 {
 		fmt.Printf("declared keyid: %s (unverified envelope field - run `nekton verify` with the signer's key)\n", env.Signatures[0].KeyID)
 	}
+	return nil
+}
+
+// printJSONOut is the one JSON writer for nekton's read surface, so `show`, `about`/`by`, `head`
+// and `material` cannot drift on formatting.
+func printJSONOut(v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
 	return nil
 }

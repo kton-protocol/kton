@@ -191,11 +191,33 @@ func ClaimID(payload []byte) string {
 // a predicate term, a signer, and a timestamp. Seeds are governed by the structural §7.4 fields
 // instead and are exempt here.
 func (st *Statement) Validate(p *Predicate) error {
+	// The CONTEXT-FREE part of §7.4 first, for seeds and non-seeds alike. It is defined once, in
+	// ValidateChainStructure, and called from here AND from the registry's chain check: `verify`
+	// never reaches a registry, so a second copy there is how the two come to disagree about what a
+	// storable record is.
+	if err := ValidateChainStructure(st, p); err != nil {
+		return err
+	}
 	if st.IsSeed() {
 		return nil
 	}
 	if len(st.Subject) == 0 {
 		return fmt.Errorf("claim has no subject (SPEC §7.2 requires one)")
+	}
+	// Counting the subjects is not enough: an ENTRY that names nothing is a claim about nothing.
+	// `subject: [{}]` and `subject: [{"name":"f.csv"}]` both had length 1 and passed, so a statement
+	// whose subject had silently lost its digest was signed, indexed, and verified clean - while
+	// `about <hash>` could never find it, because it is about no hash. A name is a label, not an
+	// identity: in a content-addressed substrate the identity is the digest or the URI.
+	//
+	// Checked HERE rather than only at authoring, because this is the gate every claim passes -
+	// including one arriving by mirror or by a git merge, which bypass the spec parser entirely.
+	for i, sub := range st.Subject {
+		if sub.Key() == "" {
+			return fmt.Errorf("claim subject[%d] names nothing: it has neither a `digest` nor a `uri` "+
+				"(SPEC §7.3). A subject without one of those is a statement about nothing - it would "+
+				"sign and verify, and no `about <hash>` query could ever reach it", i)
+		}
 	}
 	if p == nil || p.Predicate.Key() == "" {
 		return fmt.Errorf("claim has no predicate term (SPEC §7.2)")
@@ -212,6 +234,42 @@ func (st *Statement) Validate(p *Predicate) error {
 	// a boundary, not enforced by this format check.
 	if _, err := time.Parse(time.RFC3339, p.When); err != nil {
 		return fmt.Errorf("claim `when` is not an RFC 3339 timestamp (SPEC §7.2): %q", p.When)
+	}
+	return nil
+}
+
+// ValidateChainStructure enforces the part of SPEC §7.4 that needs NO registry state: where
+// `genesis` may appear, and that a seed carries no `prev`. Whether a scope resolves, and whether a
+// `prev` links to something present, are context-DEPENDENT and stay with the registry, which is the
+// only thing that knows what it holds.
+//
+// Split out so authoring, `verify` and ingest can share one definition. The registry had these
+// rules; `verify` did not, so the two disagreed about what a storable record is - which is the whole
+// defect: a command whose exit 0 is documented to mean "genuine AND storable" answered only the
+// first half.
+func ValidateChainStructure(st *Statement, p *Predicate) error {
+	// A top-level `genesis` is never valid: genesis lives inside a scope/v0 predicate (§7.4). Rejected
+	// here so it cannot slip past the predicate.genesis guards below.
+	if st.Genesis {
+		return fmt.Errorf("genesis must live inside a scope/v0 predicate, not at the statement top level (SPEC §7.4)")
+	}
+	if p == nil {
+		return nil
+	}
+	if st.IsSeed() {
+		// A seed opens its own scope (scope_id = this claim id): it MUST set genesis and MUST NOT
+		// carry prev.
+		if p.Prev != "" {
+			return fmt.Errorf("a seed MUST NOT carry prev (SPEC §7.4)")
+		}
+		if !p.Genesis {
+			return fmt.Errorf("a scope seed MUST set genesis:true (SPEC §7.4)")
+		}
+		return nil
+	}
+	// genesis:true on a non-seed is an attempt to mint a scope without a scope/v0 statement.
+	if p.Genesis {
+		return fmt.Errorf("genesis:true is only valid on a scope/v0 seed (SPEC §7.4)")
 	}
 	return nil
 }

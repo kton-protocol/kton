@@ -1,21 +1,201 @@
 #!/usr/bin/env bash
-# security/check.sh - the security regression gate. Runs each attack (a signed foton + nekton finding in
-# the kton-redteam provenance graph) against the plankton/nekton/kton binaries on PATH, and asserts every
-# fixed finding is still PREVENTED. Exit non-zero on any regression. Optional $1 = a kton-examples checkout
-# (enables the viewer attack). Theory + vulnerable/fixed commits: security/REPORT.md.
+# security/check.sh - the security regression gate. Runs the executable attack PoCs against the
+# plankton/nekton/kton binaries on PATH. Optional $1 = a kton-examples checkout.
+#
+# Two lists, because they mean different things:
+#   GATED - findings recorded as FIXED. Anything but PREVENTED is a regression and fails CI.
+#   OPEN  - findings recorded as still open. They run and report, and do NOT fail the build;
+#           the point is that they are visible and executable rather than described in prose.
+#           A PREVENTED here is good news: move that id into GATED in the same commit.
+#
+# Verdicts a PoC may print: PREVENTED (the fix holds), VULNERABLE (it does not), N-A (the attack
+# does not apply in this environment - no binary, no jq), INCONCLUSIVE (the PoC could not build the
+# precondition it needs, so it proves nothing and MUST NOT read as a pass).
+#
+# The gate deliberately reports its own coverage. Most recorded attacks have no executable
+# reproduction (they are prose in REPORT.md), and a gate that hides that ratio invites the
+# reading that a green line means more than it does.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; KX="${1:-}"
-GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated silent-source-drop export-attribution canon-bigint rdf-injection spectrum-existence"
-[ -n "$KX" ] && [ -f "$KX/viewer/build_union.py" ] && GATED="$GATED screenshot-viewer-labels"
+
+GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated silent-source-drop export-attribution canon-bigint rdf-injection spectrum-existence concurrency-races scope-path-traversal read-path-ungated union-across-payloads cursor-shift fourEyes-graphpoll"
+# envtally-CF2 is here, not in GATED, and deliberately: its path to the shipped release gate was
+# wrong, so it never ran; with that fixed the gate runs but ticks NONE of its seven conditions in
+# this scenario, which makes "env-qualified stayed unticked" meaningless. It now says INCONCLUSIVE
+# instead of NOT VULNERABLE. Promoting it needs a 3/3 control run in which env-qualified DOES light.
+OPEN="envtally-CF2"
+SKIPPED=""
+
+# Attacks whose reproduction lives in the companion example repository. Without that checkout they
+# cannot run - a fact about this invocation, NOT about the code under test - so they are reported as
+# SKIPPED with the reason. Every OTHER N-A means a prerequisite is missing, which is a broken run.
+NEEDS_KX="screenshot-viewer-labels fourEyes-graphpoll"
+
+HAVE_KX=0
+if [ -n "$KX" ] && [ -f "$KX/viewer/build_union.py" ]; then
+  HAVE_KX=1
+  GATED="$GATED screenshot-viewer-labels"
+else
+  SKIPPED="screenshot-viewer-labels"
+fi
+
+needs_kx() { case " $NEEDS_KX " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+run_one() {  # <id> -> echoes the verdict word
+  bash "$HERE/attacks/$1.sh" "$KX" 2>/dev/null \
+    | grep -oE 'VERDICT: (PREVENTED|VULNERABLE|N-A|INCONCLUSIVE)' | tail -1 | sed 's/^VERDICT: //'
+}
+
 fail=0
-printf '%-26s %s\n' "attack (fixed finding)" "verdict"
-printf '%-26s %s\n' "----------------------" "-------"
-for a in $GATED; do
-  v=$(bash "$HERE/attacks/$a.sh" "$KX" 2>/dev/null | grep -oE 'VERDICT: (PREVENTED|VULNERABLE|N-A)' | tail -1); v=${v#VERDICT: }
-  printf '%-26s %s\n' "$a" "${v:-NO-VERDICT}"
-  case "$v" in PREVENTED|N-A) ;; *) fail=1;; esac
+
+# PREREQUISITES, checked before a single verdict is printed.
+#
+# Every PoC here answers "VERDICT: N-A" when a tool it needs is absent. Accepting that in the GATED
+# list makes an empty PATH indistinguishable from a clean run: all sixteen say N-A, and the gate
+# would print "every finding recorded as fixed is still PREVENTED" over zero executed proofs. Note
+# that printing the reason is not enough on its own - the banner below names every missing binary,
+# and a verdict that ignores what the banner says makes a hollow run look thorough. A gate that
+# cannot tell "nothing attacked me" from "nothing ran" is not a gate.
+missing=""
+for t in plankton nekton kton jq; do
+  command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
 done
+if [ -n "$missing" ]; then
+  echo "::error::the security gate CANNOT RUN - missing prerequisite(s):$missing"
+  echo "::error::every PoC would report N-A, which proves nothing. Build the binaries first:"
+  echo "::error::  ( cd reference && go build -o <bindir>/plankton ./cmd/plankton )   # and nekton, kton"
+  echo "::error::then put <bindir> on PATH. Refusing to print a verdict over zero executed proofs."
+  exit 1
+fi
+
+# WHICH binaries. Every PoC here resolves plankton/nekton/kton off PATH, so a green gate is a
+# statement about whatever binaries happened to be there - and a RED one may be too. Four findings
+# once read as REGRESSION against stale binaries in ~/bin while the working tree was clean. A gate
+# whose verdicts cannot be attributed to a build is not evidence, so the build is now on the record.
+newest_src=$(find "$HERE/.." -name '*.go' -not -path '*/.git/*' -newer /dev/null -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
+stale=0
+echo "binaries under test:"
+for b in plankton nekton kton; do
+  bp=$(command -v "$b" 2>/dev/null)
+  if [ -z "$bp" ]; then
+    printf '  %-9s %s\n' "$b" "NOT ON PATH - every PoC needing it reports N-A"
+    continue
+  fi
+  bt=$(stat -c %Y "$bp" 2>/dev/null || echo 0)
+  age=""
+  if [ -n "$newest_src" ] && [ "${bt%.*}" -lt "${newest_src%.*}" ]; then
+    age="  <- OLDER THAN THE SOURCE IN THIS TREE"; stale=1
+  fi
+  printf '  %-9s %s%s\n' "$b" "$bp" "$age"
+done
+if [ "$stale" = 1 ]; then
+  echo "::warning::a binary under test predates this working tree - rebuild before believing any verdict below"
+fi
 echo
-if [ "$fail" = 0 ]; then echo "SECURITY GATE: PASS - every fixed finding is still PREVENTED"
-else echo "::error::SECURITY REGRESSION - a previously-fixed attack is exploitable again (VULNERABLE above)"; fi
+
+printf '%-26s %-12s %s\n' "attack" "verdict" "meaning"
+printf '%-26s %-12s %s\n' "------" "-------" "-------"
+
+proved=0; unrun=0
+for a in $GATED; do
+  v=$(run_one "$a"); v=${v:-NO-VERDICT}
+  case "$v" in
+    PREVENTED)    note="fix holds"; proved=$((proved+1)) ;;
+    # N-A means "this PoC did not run". Prerequisites are checked above, so the only honest reason
+    # left is the companion checkout - and that is coverage this run does NOT have, never a pass.
+    N-A)          if needs_kx "$a"; then
+                    note="NOT RUN - needs a kton-examples checkout"; unrun=$((unrun+1))
+                  else
+                    note="NOT RUN - no reason this gate knows; it proves nothing"; fail=1
+                  fi ;;
+    # A PoC that could not build its own precondition proves NOTHING. It must not read as a pass -
+    # that is how a check ends up unable to fail, which is a defect this suite has now found in
+    # itself five times.
+    INCONCLUSIVE) note="PoC COULD NOT RUN - proves nothing"; fail=1 ;;
+    *)            note="REGRESSION"; fail=1 ;;
+  esac
+  printf '%-26s %-12s %s\n' "$a" "$v" "$note"
+done
+
+for a in $OPEN; do
+  v=$(run_one "$a"); v=${v:-NO-VERDICT}
+  case "$v" in
+    PREVENTED)  note="now fixed - promote to GATED" ;;
+    VULNERABLE) note="known open, not gated" ;;
+    # In this list nothing reads as a pass to begin with - the finding is recorded as OPEN - so a
+    # PoC saying it cannot decide is accurate reporting, not a silent failure. It does not fail CI;
+    # what it does is stay visible until someone gives it the control it is missing.
+    INCONCLUSIVE) note="known open, PoC cannot decide yet - needs a positive control" ;;
+    N-A)        note="known open, does not apply here" ;;
+    *)          note="known open, PoC did not run"; fail=1 ;;
+  esac
+  printf '%-26s %-12s %s\n' "$a" "$v" "$note"
+done
+
+for a in $SKIPPED; do
+  printf '%-26s %-12s %s\n' "$a" "SKIPPED" "needs a kton-examples checkout (pass it as \$1)"
+done
+
+# An EXECUTABLE PoC in neither list is invisible: check.sh never runs it, so self-check.sh never sees
+# it either and the can-this-fail guard does not cover it. fourEyes-graphpoll sat there - 44 lines of
+# scenario, a grep that could not match, no VERDICT line at all, and nobody the wiser.
+unlisted=""
+for f in "$HERE"/attacks/*.sh; do
+  a=$(basename "$f" .sh); case "$a" in _*) continue ;; esac
+  grep -qE '(echo|printf)[^|#]*VERDICT: ' "$f" || continue   # a PoC that EMITS one; prose mentioning the word is not one
+  case " $GATED $OPEN $SKIPPED " in *" $a "*) continue ;; esac
+  unlisted="$unlisted $a"
+done
+if [ -n "$unlisted" ]; then
+  echo
+  echo "::error::these PoCs print a VERDICT but are in neither GATED nor OPEN, so nothing runs them"
+  echo "::error::and security/self-check.sh cannot see them either:$unlisted"
+  fail=1
+fi
+
+# Coverage: how much of the recorded engagement this gate actually executes.
+total=$(ls "$HERE"/attacks/*.sh 2>/dev/null | grep -vc '/_' || echo 0)
+exec_n=$(grep -lE '(echo|printf)[^|#]*VERDICT: ' "$HERE"/attacks/*.sh 2>/dev/null | grep -vc '/_' || echo 0)
+run_n=$(( $(printf '%s\n' $GATED | grep -c .) + $(printf '%s\n' $OPEN | grep -c .) ))
+
+echo
+echo "coverage: $run_n of $total recorded attacks run here; $exec_n have an executable VERDICT."
+echo "          the remainder carry no verdict and are records of a finding, reproduced in prose"
+echo "          in REPORT.md - they do NOT run anywhere else. A green gate means those $run_n"
+echo "          held, not that the suite is complete."
+echo
+# The gate is only worth its green line if its proofs can fail. self-check.sh runs every PoC against
+# binaries that do nothing; any that still says PREVENTED is not evidence.
+echo
+if ! bash "$HERE/self-check.sh" >/dev/null 2>&1; then
+  echo "::error::a PoC in this gate passes against a binary that does nothing - run security/self-check.sh"
+  fail=1
+else
+  echo "self-check: PASS - every PoC above can actually fail (security/self-check.sh)"
+fi
+
+# REPORT.md states counts about this directory (how many attacks, how many closed, how much of the
+# suite is executable). Those were wrong for a long time and nothing could tell - a number in prose
+# is maintained by whoever remembers to. Recomputed here against the directory itself.
+if ! bash "$HERE/check-report-counts.sh" >/dev/null 2>&1; then
+  echo "::error::REPORT.md states counts this directory does not support - run security/check-report-counts.sh"
+  fail=1
+else
+  echo "report counts: PASS - REPORT.md's posture matches the directory (security/check-report-counts.sh)"
+fi
+echo
+
+gated_n=$(printf '%s\n' $GATED | grep -c .)
+if [ "$fail" != 0 ]; then
+  echo "::error::SECURITY REGRESSION - a finding recorded as fixed is exploitable again, or a gated PoC did not run"
+elif [ "$unrun" != 0 ]; then
+  # Not a pass and not a regression: a run that is missing coverage it is supposed to have. Saying
+  # PASS here is how "every finding is still PREVENTED" gets printed over proofs nobody executed.
+  echo "SECURITY GATE: INCOMPLETE - $proved of $gated_n gated attacks PREVENTED, $unrun did not run"
+  echo "  pass a kton-examples checkout as \$1 to run the rest. This run does NOT support the claim"
+  echo "  that every finding recorded as fixed still holds."
+  [ "${KTON_GATE_STRICT:-0}" = 1 ] && { echo "::error::KTON_GATE_STRICT=1 requires full coverage"; fail=1; }
+else
+  echo "SECURITY GATE: PASS - all $proved gated attacks ran and every one is still PREVENTED"
+fi
 exit $fail

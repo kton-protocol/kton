@@ -5,11 +5,13 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"kton.dev/plankton/blobstore"
 	"kton.dev/plankton/core"
 	"kton.dev/plankton/registry"
 )
@@ -17,7 +19,14 @@ import (
 const usage = `plankton - content-addressed lineage substrate (reference)
 
 usage:
-  plankton keygen <name>                              generate a signing identity (<name>.key/.pub)
+  plankton keygen <name> [--seed <64-hex>] [--force]  generate a signing identity (<name>.key/.pub)
+      An existing key file is NEVER overwritten: replacing an identity destroys the only copy of
+      its private seed. --force moves the old file to <name>.key.old rather than deleting it.
+      An identical --seed is a no-op, so a reproducible snapshot can re-run.
+      --seed <64-hex>                                 derive it from a seed, not the entropy pool, so a corpus or
+                                                      snapshot rebuilds to the same record ids (fixtures only:
+                                                      the key is only as strong as its seed)
+  plankton pubkey <key.key|hex>                       print the public key hex (what verify/--trust-keys read)
   plankton keyid <key.pub|key.key|hex>                print the keyid shown in signatures (map key -> identity)
   plankton author --in F ... --out F ... --cmd "…" [--located PATH=URL] [--sign key.key] [-o out] [--add]
         author + sign a foton over EXISTING files (hashes them + RECORDS --cmd as a label; never runs it).
@@ -33,23 +42,33 @@ usage:
           with a nekton 'reproduces' claim — do NOT tweak --cmd to force a new id.
         --add ingests it directly (one step, no file); --registry D picks the store.
   plankton author <spec.json> <key.hex> <out.dsse>    author + sign a foton from a spec file
-  plankton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature (envelope FILE or a
+  plankton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature AND the
+                                                      structure ingest requires (envelope FILE or a
                                                       registry id; pubkey: a .pub file or the hex)
-  plankton add <envelope.dsse.json> [--registry D]    ingest a signed foton into the registry (D or PLANKTON_DIR)
-  plankton show <foton.dsse.json|sha256:id>           print a foton: command, inputs, outputs
-  plankton producer [--source D ...] <sha256:...>     who produced this file (who OUTPUT it; lineage join)
-  plankton reproductions [--trust-keys D] <sha256:h>  ↻N: distinct VERIFIED independent signers that produced these
+                                                      exit 0 genuine+storable, 1 tampered, 2 wrong
+                                                      key, 3 genuine but ingest would refuse it
+  plankton records [--json] [--since N]                every record WITH its signed envelope: the
+                                                      SPEC §12 sync(since) answer, over stdout
+  plankton attach <sha256:id> --scheme S --file F [--media M]  bind external evidence to a foton
+                                                      (SPEC §8.1). Stored, NEVER evaluated.
+  plankton material <sha256:id> [--json]              what evidence is attached to a foton
+  plankton add <envelope.dsse.json>... [--print-id] [--registry D]    ingest a signed foton into the registry (D or PLANKTON_DIR)
+  plankton show <foton.dsse.json|sha256:id> [--json]  print a foton: command, environment, inputs, outputs
+      --json on show/producer/uses/lineage/reproductions: the machine form. A record's id is a
+      NAMED field there, so a consumer never has to assume it is the first hash on a line.
+  plankton producer [--source D] [--json] <sha256:…>  who produced this file (who OUTPUT it; lineage join)
+  plankton reproductions [--trust-keys D] [--json] <sha256:h>  ↻N: distinct VERIFIED independent signers that produced these
                                                       bytes. WITHOUT --trust-keys the count is self-declared and
                                                       FORGEABLE (a relabeled keyid inflates it); over PLANKTON_DIR
                                                       only - the federated ↻N is the aggregator's.
-  plankton uses [--source D ...] <sha256:...>         what CONSUMED this file (downstream; the shared-input join)
-  plankton reuse <foton.statement.json>               action key + cache-hit check
-  plankton lineage [--source D ...] <sha256:...>      walk producers backwards (union of --source registries, no copy;
+  plankton uses [--source D] [--json] <sha256:…>      what CONSUMED this file (downstream; the shared-input join)
+  plankton reuse <foton.statement.json> [--json]               action key + cache-hit check
+  plankton lineage [--source D] [--json] <sha256:…>   walk producers backwards (union of --source registries, no copy;
                                                       a missing --source is an error, not a silently-dropped source)
         [--sources-file F] a newline-delimited list of sources (escapes ARG_MAX; empty list is an error, not a fallback);
         [--strict] refuse (exit non-zero) if the read is incomplete (any record skipped) OR any record is unsigned;
                    --strict is COMPLETENESS + signature-PRESENCE, not authenticity - use 'plankton verify' for that
-  plankton reproduces <ref-out-hash> <cand-out-hash> [--via <potential>]
+  plankton reproduces <ref-out-hash> <cand-out-hash> [--via <potential>] [--json]
                                                       do two OUTPUTS reproduce? args are OUTPUT content hashes
                                                       ('plankton hash out.csv'), NOT foton ids. --via normalises
                                                       before compare. exit 0 = L0/L1 match, 1 = none
@@ -63,14 +82,23 @@ usage:
                                                       (a member had no candidate). the L0/L1 judgment is a nekton claim on top
   plankton export [--title T] [out]                   serialize the horizon graph as JSON (headless query)
   plankton export --rdf [--lineage <id|hash>] [-o o]  project lineage as RDF/Turtle (PROV; joins nekton RDF)
+  plankton pin <file>                                 pin a file's bytes into the OPTIONAL blob store
+                                                      (PLANKTON_DIR/blobs) - the registry itself
+                                                      stores no bytes (SPEC 6.1, 10)
+  plankton blob <sha256:...>                          is this content pinned? re-hashes on read, so
+                                                      a bit-rotted blob reports CORRUPT, not PINNED.
+                                                      exit 0 pinned, 1 absent or corrupt
   plankton hash <file>                                content address a file
   plankton mirror <local-registry-dir>                overlay a peer registry by hash (local, no network)
   plankton man                                        print the embedded manual page (roff)
 
-federation over the NETWORK (serving a port, mirroring a URL peer), transparency-log
-anchoring, and byte pinning are NOT kernel operations - the kernel opens no ports and needs
-no network. They live in the cockpit: see 'kton serve', 'kton mirror', 'kton anchor',
-'kton pin', 'kton blob'. Local overlay-by-hash (above) stays here: it is pure federation.
+transparency-log anchoring, locator dereferencing and byte pinning are NOT kernel
+operations - the kernel opens no ports and needs no network. They live in the cockpit:
+see 'kton anchor', 'kton fetch', 'kton pin', 'kton blob'. Federation over a NETWORK is in
+neither: this repository ships no server and, since #101, no client - the transport is a
+cockpit's job. What it ships is the answer, on stdout: records --json --since N is the
+SPEC §12 sync document verbatim. Local overlay-by-hash (above) stays here: it is a data
+operation, not a transport.
 
 env:
   PLANKTON_DIR   registry directory (default ./plankton-data)
@@ -183,13 +211,43 @@ func readSourcesFile(path string) ([]string, error) {
 	return out, nil
 }
 
+// verifyStructure answers one question - would `add` take this record? - and it answers it by
+// ASKING the admission rules, not by keeping a shorter copy of them.
+//
+// It kept a copy, and the copy was wrong in two ways at once. It returned success immediately for
+// any non-foton predicate, and it never computed the action key. So a genuinely signed in-toto
+// Statement that is not a foton, and a foton with two inputs at one path carrying different hashes,
+// both printed
+//
+//	structure:       VALID - the record is one this store would accept
+//
+// while `Add` refused them with ErrNotFoton and a structural error. Anyone who verified a file and
+// did not immediately add it believed it was good. Two lists of admission rules are two opinions
+// about admission.
+//
+// The canonical-JSON check stays here and is NOT in the shared gate on purpose: it is about the
+// whole payload, where FotonID covers only the projection, so a duplicate key elsewhere passes the
+// id check and still means different things to two readers. It is a property of the bytes a
+// verifier was handed, which is this command's subject.
+func verifyStructure(env core.Envelope) error {
+	pb, err := env.PayloadBytes()
+	if err != nil {
+		return err
+	}
+	if _, err := core.CanonJSON(pb); err != nil {
+		return fmt.Errorf("payload is not valid canonical JSON: %w", err)
+	}
+	// Every context-free gate Add runs, from Add's own list.
+	return registry.CheckAdmissible(env)
+}
+
 func run(cmd string, args []string) error {
 	switch cmd { // help/version in COMMAND position (not just as a flag) should not be "unknown command"
 	case "--help", "-h", "help":
 		fmt.Print(usage)
 		return nil
 	case "--version", "-v", "version":
-		fmt.Println("plankton 0.1 (reference)")
+		fmt.Println("plankton 0.2 (reference)")
 		return nil
 	}
 	for _, a := range args {
@@ -203,10 +261,16 @@ func run(cmd string, args []string) error {
 		fmt.Print(manPage)
 		return nil
 	case "keygen":
+		return keygen(args)
+
+	case "pubkey":
+		// Recover the .pub hex from a private key. Needed because an identity can be written by hand
+		// (a bare 32-byte seed is a valid .key), and verify / --trust-keys / the viewer key dirs all
+		// read the public half.
 		if len(args) != 1 {
-			return fmt.Errorf("usage: plankton keygen <name>")
+			return fmt.Errorf("usage: plankton pubkey <key.key|hex>")
 		}
-		return keygen(args[0])
+		return pubkey(args[0])
 
 	case "keyid":
 		// Map a key file/hex to the short keyid shown as `by=key:<id>` / in signatures - so you can tell
@@ -221,6 +285,17 @@ func run(cmd string, args []string) error {
 		fmt.Println(id)
 		return nil
 
+	case "records":
+		// The §12 sync(since) query, over stdout rather than HTTP (#85).
+		return records(args)
+
+	case "attach":
+		// SPEC §8.1: bind external evidence to a record by its CONTENT ADDRESS, never by filename.
+		return attachMaterial(args)
+
+	case "material":
+		return listMaterial(args)
+
 	case "reproductions":
 		// Headless ↻N: how many INDEPENDENT signers produced this exact output? A signer counts only if
 		// its signature VERIFIES against a trusted key (--trust-keys). The self-declared keyid is NOT in
@@ -230,8 +305,11 @@ func run(cmd string, args []string) error {
 		// nekton attestation layer - `nekton about <producer-foton>`.)
 		var trusted []ed25519.PublicKey
 		var rest []string
+		asJSON := false
 		for i := 0; i < len(args); i++ {
-			if args[i] == "--trust-keys" {
+			if args[i] == "--json" {
+				asJSON = true
+			} else if args[i] == "--trust-keys" {
 				if i+1 >= len(args) {
 					return fmt.Errorf("--trust-keys expects a directory of *.pub keys")
 				}
@@ -246,7 +324,7 @@ func run(cmd string, args []string) error {
 			}
 		}
 		if len(rest) != 1 {
-			return fmt.Errorf("usage: plankton reproductions [--trust-keys <dir>] <sha256:output-hash>\n" +
+			return fmt.Errorf("usage: plankton reproductions [--trust-keys <dir>] [--json] <sha256:output-hash>\n" +
 				"  distinct INDEPENDENT producers of these bytes. With --trust-keys only signers whose signature\n" +
 				"  VERIFIES are counted (the trustworthy ↻N); without it the count is self-declared and forgeable.\n" +
 				"  Counted over PLANKTON_DIR only; the federated ↻N is the aggregator's.")
@@ -259,52 +337,49 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
-		prods := r.Producer(h)
-		if len(prods) == 0 {
-			fmt.Printf("reproductions: 0 - no foton in %s produced %s\n", dir(), h)
+		// The join lives on the registry, which holds the indexes it walks. This command is the
+		// flag parsing over it - the same shape `author` already has over foton.SignWith.
+		rep := r.Reproductions(h, trusted)
+		if rep.ProducerFotons == 0 {
+			// Still emit a parseable answer before the non-zero exit: a consumer must be able to read
+			// "zero producers" as a RESULT, not have to infer it from an exit code and empty stdout.
+			if asJSON {
+				_ = printJSON(map[string]any{"output": h, "distinctSigners": 0, "producerFotons": 0, "producers": []any{}})
+			} else {
+				fmt.Printf("reproductions: 0 - no foton in %s produced %s\n", dir(), h)
+			}
 			os.Exit(1)
 		}
-		type prodInfo struct {
-			id, signer string
-			verified   bool
-		}
-		var infos []prodInfo
-		signers := map[string]bool{}
-		excluded := 0
-		for _, id := range prods {
-			env, ok := r.Envelope(id)
-			if !ok || len(env.Signatures) == 0 {
-				continue
-			}
-			if len(trusted) > 0 {
-				// count EVERY trusted key that actually signed this envelope (a merged twin can carry
-				// several co-signatures over one payload), never the self-declared keyid.
-				matched := false
-				for _, pub := range trusted {
-					if okv, verr := env.Verify(pub); okv && verr == nil {
-						kid := core.KeyIDHex(pub)
-						infos = append(infos, prodInfo{id, kid, true})
-						signers[kid] = true
-						matched = true
-					}
-				}
-				if !matched {
-					excluded++ // signed by no trusted key -> does not count toward ↻N
-				}
-			} else {
-				kid := env.Signatures[0].KeyID // self-declared, UNVERIFIED
-				infos = append(infos, prodInfo{id, kid, false})
-				signers[kid] = true
-			}
-		}
+		infos := rep.Producers
+		excluded := rep.ExcludedUntrusted
 		kind := "self-declared"
 		if len(trusted) > 0 {
 			kind = "verified"
 		}
-		fmt.Printf("reproductions: %d distinct %s signer(s) produced %s  (↻%d; %d producer foton(s))\n",
-			len(signers), kind, h, len(signers), len(prods))
-		for _, in := range infos {
-			fmt.Printf("  %s  by key:%s (%s)\n", in.id, in.signer, kind)
+		if asJSON {
+			ps := make([]map[string]any, 0, len(infos))
+			for _, in := range infos {
+				// `verified` per record rather than one word for the whole answer: without --trust-keys
+				// the count is forgeable, and a machine reader must see that on the record it acts on,
+				// not only in a stderr warning it may never read.
+				ps = append(ps, map[string]any{"fotonId": in.FotonID, "keyid": in.KeyID, "verified": in.Verified})
+			}
+			out := map[string]any{
+				"output": h, "distinctSigners": rep.DistinctSigners, "producerFotons": rep.ProducerFotons,
+				"trust": kind, "producers": ps,
+			}
+			if excluded > 0 {
+				out["excludedUntrusted"] = excluded
+			}
+			if err := printJSON(out); err != nil {
+				return err
+			}
+		} else {
+			fmt.Printf("reproductions: %d distinct %s signer(s) produced %s  (↻%d; %d producer foton(s))\n",
+				rep.DistinctSigners, kind, h, rep.DistinctSigners, rep.ProducerFotons)
+			for _, in := range infos {
+				fmt.Printf("  %s  by key:%s (%s)\n", in.FotonID, in.KeyID, kind)
+			}
 		}
 		if len(trusted) == 0 {
 			fmt.Fprintln(os.Stderr, "warning: this ↻N is over SELF-DECLARED keyids and is FORGEABLE (a relabeled keyid inflates it and mis-attributes); pass --trust-keys <dir> to count only authenticated signers")
@@ -416,6 +491,17 @@ func run(cmd string, args []string) error {
 			if suppliedKeyid != signerKeyid {
 				fmt.Printf("                 NOTE: the envelope declares keyid %s, which differs from the verifying key; the declared field is unauthenticated and must not be trusted.\n", signerKeyid)
 			}
+			// A valid signature says WHO signed these bytes, not that the record is one `add` will
+			// take. Ingest runs structural gates that verify did not, so a record refused by the
+			// store printed a clean bill of health here - and anyone who verified a file without
+			// then adding it believed it was good. Exit 3 keeps the signature verdict's meaning
+			// (1 = invalid/tampered, 2 = wrong key) and 0 = genuine AND storable.
+			if serr := verifyStructure(env); serr != nil {
+				fmt.Printf("structure:       INVALID - %v\n", serr)
+				fmt.Println("                 the signature is genuine; the record is still one `add` refuses.")
+				os.Exit(3)
+			}
+			fmt.Println("structure:       VALID - the record is one this store would accept")
 			return nil
 		case suppliedKeyid != signerKeyid:
 			// The supplied key is simply not the signer's key. This is a KEY MISMATCH, not evidence
@@ -432,25 +518,76 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "add":
-		regDir, envPath := "", ""
+		// Accepts MORE THAN ONE path on purpose: registry.Open replays the whole log to rebuild its
+		// indexes, so a shell loop over N files costs N replays - quadratic, and measurably unusable
+		// on a real corpus (2.2 s per record at 1k already stored). Bulk arrival is the normal case
+		// for this substrate, not an edge case: federation hands you a set, an executor publishes a
+		// batch of runs, a consumer imports a corpus someone handed over. Open once, then ingest.
+		regDir := ""
+		addPrintID := false
+		var paths []string
 		for i := 0; i < len(args); i++ {
-			if args[i] == "--registry" && i+1 < len(args) {
+			if args[i] == "--print-id" {
+				addPrintID = true
+			} else if args[i] == "--registry" && i+1 < len(args) {
 				i++
 				regDir = args[i]
-			} else if envPath == "" {
-				envPath = args[i]
 			} else {
-				return fmt.Errorf("usage: plankton add <envelope.dsse.json> [--registry <dir>]")
+				paths = append(paths, args[i])
 			}
 		}
-		if envPath == "" {
-			return fmt.Errorf("usage: plankton add <envelope.dsse.json> [--registry <dir>]")
+		if len(paths) == 0 {
+			return fmt.Errorf("usage: plankton add <envelope.dsse.json>... [--registry <dir>] [--print-id]")
 		}
-		env, err := readEnvelope(envPath)
+		r, err := registry.Open(regOrDefault(regDir))
 		if err != nil {
 			return err
 		}
-		r, err := registry.Open(regOrDefault(regDir))
+		if addPrintID && len(paths) > 1 {
+			// --print-id promises ONE bare id on stdout (author, claim, annotate, seed). A bulk add
+			// mints many, and printing several would quietly break `ID=$(plankton add … --print-id)`
+			// for the caller who added one file too many. Refuse instead.
+			return fmt.Errorf("--print-id takes exactly one envelope (it prints one id); got %d", len(paths))
+		}
+		if len(paths) > 1 {
+			// A record rejected ON ITS MERITS does not wedge the import: it is named, counted, and
+			// the rest still lands - the same call federation's Mirror already makes. A LOCAL
+			// persistence failure is different (transient, and skipping it would silently drop a
+			// valid record), so that aborts. Either way the exit is non-zero when anything was
+			// refused: a partial import that reports success is how a corpus quietly loses records.
+			added, present := 0, 0
+			var refused []string
+			for _, p := range paths {
+				env, err := readEnvelope(p)
+				if err != nil {
+					refused = append(refused, fmt.Sprintf("%s: %v", p, err))
+					continue
+				}
+				_, isNew, err := r.Add(env)
+				if err != nil {
+					if errors.Is(err, registry.ErrPersist) {
+						return fmt.Errorf("%s: %w", p, err)
+					}
+					refused = append(refused, fmt.Sprintf("%s: %v", p, err))
+					continue
+				}
+				if isNew {
+					added++
+				} else {
+					present++
+				}
+			}
+			for _, m := range refused {
+				fmt.Fprintln(os.Stderr, "refused: "+m)
+			}
+			fmt.Printf("indexed %d fotons, %d already present, %d refused  (registry now holds %d)\n",
+				added, present, len(refused), r.Len())
+			if len(refused) > 0 {
+				return fmt.Errorf("%d of %d record(s) refused", len(refused), len(paths))
+			}
+			return nil
+		}
+		env, err := readEnvelope(paths[0])
 		if err != nil {
 			return err
 		}
@@ -458,10 +595,20 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
+		msg := fmt.Printf
+		if addPrintID {
+			// Same contract as `plankton author --print-id` and the three nekton verbs: the ONLY
+			// thing on stdout is the bare id, every human line goes to stderr. `add` minted the same
+			// identifier as its siblings and was the one that made a caller parse for it.
+			msg = func(format string, a ...any) (int, error) { return fmt.Fprintf(os.Stderr, format, a...) }
+		}
 		if !isNew {
-			fmt.Printf("already present: foton %s\n", id)
+			_, _ = msg("already present: foton %s\n", id)
 		} else {
-			fmt.Printf("indexed foton %s  (registry now holds %d fotons)\n", id, r.Len())
+			_, _ = msg("indexed foton %s  (registry now holds %d fotons)\n", id, r.Len())
+		}
+		if addPrintID {
+			fmt.Println(id)
 		}
 		// add RECORDS; it does not judge trust. A signature is only checked when you ask
 		// (`plankton verify`) - so an unverified or tampered record ingests here without complaint.
@@ -476,8 +623,11 @@ func run(cmd string, args []string) error {
 		// comparator's signed verdict, not a kernel check. --via names a POTENTIAL, not a kind: two
 		// different normalizers of the same kind are different comparisons (SPEC §9).
 		var ref, cand, via string
+		repJSON := false
 		for i := 0; i < len(args); i++ {
-			if args[i] == "--via" && i+1 < len(args) {
+			if args[i] == "--json" {
+				repJSON = true
+			} else if args[i] == "--via" && i+1 < len(args) {
 				i++
 				via = args[i]
 			} else if ref == "" {
@@ -487,39 +637,57 @@ func run(cmd string, args []string) error {
 			}
 		}
 		if ref == "" || cand == "" {
-			return fmt.Errorf("usage: plankton reproduces <ref-output-hash> <cand-output-hash> [--via <normalizer: protocol ref or foton id>]\n" +
+			return fmt.Errorf("usage: plankton reproduces <ref-output-hash> <cand-output-hash> [--via <normalizer: protocol ref or foton id>] [--json]\n" +
 				"  args are OUTPUT content hashes (e.g. `plankton hash out.csv`), NOT foton ids")
 		}
-		// Normalize the output-hash args to canonical lowercase (SPEC §5.1) so a bare/uppercase hash
-		// resolves; --via may be a ref or foton id, so normalize it only if it is a content hash.
-		if n, ok := core.NormalizeContentHash(ref); ok {
-			ref = n
-		}
-		if n, ok := core.NormalizeContentHash(cand); ok {
-			cand = n
-		}
-		if n, ok := core.NormalizeContentHash(via); ok {
-			via = n
-		}
+		// The comparison lives on the registry, which owns the normalized-output index it walks. A
+		// consumer that must not take a level from whoever is asking has to RUN the comparison, so it
+		// cannot exist only behind this CLI - the same reason authoring moved to foton.SignWith.
+		// Argument validation is the method's too: equality of two malformed strings is not a
+		// reproduction, and that rule belongs with the comparison rather than with the flag parsing.
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
 		}
-		level := ""
-		identical := false
-		if ref == cand {
-			level = "L0"
-			identical = true // L0 by definition means identical output bytes -> identical hash.
-		} else if via != "" {
-			if nr := r.NormalizedOutput(ref, via); nr != "" && nr == r.NormalizedOutput(cand, via) {
-				level = "L1"
-			}
+		rep, err := r.Reproduces(ref, cand, via)
+		if err != nil {
+			return err
 		}
+		level, via := rep.Level, rep.Via
 		if level == "" {
-			fmt.Println("reproduction: none (no L0/L1 match - an L2 comparator verdict is required)")
+			// Emit a parseable answer BEFORE the non-zero exit: "no match" is a RESULT, and a caller
+			// should read it as one rather than infer it from an exit code and an empty stdout.
+			if repJSON {
+				_ = printJSON(map[string]any{"level": nil, "matched": false, "via": nullableVia(via)})
+			} else {
+				fmt.Println("reproduction: none (no L0/L1 match - an L2 comparator verdict is required)")
+			}
 			os.Exit(1)
 		}
-		if identical {
+		if repJSON {
+			// The LEVEL is what a signed reproduces claim records, and it was readable only as a word
+			// inside a sentence. The exit code separates match from no-match; it cannot separate L0
+			// from L1, and that distinction decides admission where a policy requires byte-identity.
+			// A consumer previously inferred the level from whether --via was passed, which mislabels
+			// a genuine L0 as L1 whenever a default normalizer is configured - which is exactly why
+			// the string was being parsed instead of guessed (#89).
+			out := map[string]any{"level": level, "matched": true, "via": nullableVia(via)}
+			if level == "L1" && via != "" {
+				// §9 says the reference "surfaces this obligation on EVERY L1 result". The human line
+				// below does; this did not, and --json exists precisely so a consumer stops reading
+				// prose (#89). An L1 match holds only if the normalizer is itself L0-qualified, and a
+				// machine consumer that never sees that requirement will treat L1 as settled.
+				out["consumerObligation"] = map[string]any{
+					"clause": "9",
+					"requires": "the normalizer must itself be L0-qualified (a byte-exact re-run) before " +
+						"this L1 result is relied upon",
+					"normalizer":    via,
+					"establishWith": "plankton reproductions --trust-keys <dir> <normalizer-output>",
+				}
+			}
+			return printJSON(out)
+		}
+		if level == "L0" {
 			// The expected PASS: two independent runs producing the same bytes hash to the same value, so
 			// the args are equal - that is success, not a mistake. Independence is carried by the two
 			// SEPARATE producer fotons + the reproduces claim, not by this byte compare.
@@ -543,8 +711,11 @@ func run(cmd string, args []string) error {
 		var sources []string
 		q := ""
 		strict := false
+		asJSON := false
 		for i := 0; i < len(args); i++ {
 			switch {
+			case args[i] == "--json":
+				asJSON = true
 			case args[i] == "--source" && i+1 < len(args):
 				i++
 				sources = append(sources, args[i])
@@ -572,8 +743,24 @@ func run(cmd string, args []string) error {
 			}
 		}
 		if q == "" {
-			return fmt.Errorf("usage: plankton %s [--source D ...] [--sources-file F] [--strict] <sha256:...>", cmd)
+			return fmt.Errorf("usage: plankton %s [--source D ...] [--sources-file F] [--strict] [--json] <sha256:...>", cmd)
 		}
+		// SPEC §12: "An unrecognised or absent query parameter MUST be an error, never an empty
+		// result: an empty answer to a malformed question is a successful wrong answer."
+		//
+		// `plankton producer not-a-hash` used to print "(none) - not-a-hash is a lineage root or
+		// unknown in this registry" and exit 0. A script asking who produced a result, with a typo in
+		// the hash, was told nobody had - and carried on. The registry cannot hold a record under a
+		// key that is not a content address, so the answer is not "none", it is "that is not a
+		// question about content".
+		norm, ok := core.NormalizeContentHash(q)
+		if !ok {
+			return fmt.Errorf("%q is not a sha256 content hash, so this is not a question this "+
+				"registry can answer.\n  An empty answer to a malformed question would be a "+
+				"successful wrong answer (SPEC §12).\n  Expected sha256:<64 hex> - `plankton hash "+
+				"<file>` prints one.", q)
+		}
+		q = norm
 		var r *registry.Registry
 		var err error
 		if len(sources) > 0 {
@@ -602,12 +789,6 @@ func run(cmd string, args []string) error {
 				return fmt.Errorf("--strict: refusing to answer - %d record(s) lack a well-formed signature (use `plankton verify` to check authenticity)", n)
 			}
 		}
-		// Normalize the query hash to canonical lowercase (SPEC §5.1): a bare 64-hex or an uppercase
-		// digest resolves under the same key the index was built with (FileRef hashes are stored
-		// "sha256:<lowerhex>"). Without this, `plankton uses <barehex>` misses and misreads as a root.
-		if norm, ok := core.NormalizeContentHash(q); ok {
-			q = norm
-		}
 		var ids []string
 		switch cmd {
 		case "producer":
@@ -616,6 +797,49 @@ func run(cmd string, args []string) error {
 			ids = r.Uses(q)
 		case "lineage":
 			ids = r.Lineage(q)
+		}
+		// --json exists to REPLACE line scraping, not to pretty-print it. A consumer that regexes
+		// ids out of the prose above has to assume a record's own id is the first hash on its line;
+		// that holds today, is guaranteed nowhere, and no test protects it (#57). Here the id is a
+		// named field, so a reordered output line cannot silently mislabel a record.
+		if asJSON {
+			// Each record carries its ENVELOPE, not only a summary. SPEC §12 says the record queries
+			// answer `{ "records": [ <envelope> ... ] }`, and the reason is not tidiness: a consumer
+			// handed `{fotonId, kind, inputs, outputs}` cannot verify a signature, cannot re-derive the
+			// id, and has to come back for the record it was just told about. The summary fields stay
+			// alongside it - they are useful and removing them would break readers for nothing.
+			// SPEC §12 pins two different wire forms, and this is the second one: `sync` answers
+			// records wrapped with their position, and "the record queries answer
+			// { "records": [ <envelope> ... ] }" - bare envelopes. They were summary objects with an
+			// envelope nested inside, so a consumer decoding the declared shape got an array of
+			// things that were not envelopes and could neither verify nor re-ingest them. Only the
+			// sync form had a conformance fixture, which is why the other half went unnoticed.
+			//
+			// The summary is not lost, it moves: keyed by foton id beside the array, so a reader that
+			// wants `kind` or the slot counts still has them without another lookup, and the
+			// normative array is what the clause says it is.
+			recs := make([]any, 0, len(ids))
+			summary := map[string]any{}
+			for _, id := range ids {
+				f, _ := r.Foton(id)
+				summary[id] = map[string]any{
+					"kind": f.Protocol.Kind, "inputs": len(f.Inputs), "outputs": len(f.Outputs),
+				}
+				if env, ok := r.Envelope(id); ok {
+					recs = append(recs, env)
+				}
+			}
+			out := map[string]any{"relation": cmd, "query": q, "records": recs, "summary": summary}
+			if len(sources) > 0 {
+				out["sources"] = sources
+			}
+			// A degraded read is INCOMPLETE, and that must survive into the machine form - a consumer
+			// that cannot see it would treat a partial provenance answer as a whole one.
+			if n := r.Degraded(); n > 0 {
+				out["incomplete"] = true
+				out["skippedRecords"] = n
+			}
+			return printJSON(out)
 		}
 		if len(ids) == 0 {
 			where := "this registry"
@@ -632,9 +856,19 @@ func run(cmd string, args []string) error {
 		return nil
 
 	case "reuse":
-		if len(args) != 1 {
-			return fmt.Errorf("usage: plankton reuse <foton.statement.json>")
+		reuseJSON := false
+		var reusePos []string
+		for _, a := range args {
+			if a == "--json" {
+				reuseJSON = true
+				continue
+			}
+			reusePos = append(reusePos, a)
 		}
+		if len(reusePos) != 1 {
+			return fmt.Errorf("usage: plankton reuse <foton.statement.json> [--json]")
+		}
+		args = reusePos
 		b, err := os.ReadFile(args[0])
 		if err != nil {
 			return err
@@ -668,12 +902,39 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("action key: %s\n", ak)
+		if !reuseJSON {
+			fmt.Printf("action key: %s\n", ak)
+		}
 		r, err := registry.Open(dir())
 		if err != nil {
 			return err
 		}
 		hits := r.Reuse(ak)
+		if reuseJSON {
+			// The hit COUNT is a decision input - "was this computation asked before?" - and it was
+			// the last number in this repo a consumer had to read out of prose. kton-examples
+			// 16-reuse-cache sed'"'"'s it out of "cache: HIT -> %d prior…", and documents doing so.
+			out := make([]map[string]any, 0, len(hits))
+			for _, id := range hits {
+				signer := ""
+				if env, ok := r.Envelope(id); ok && len(env.Signatures) > 0 {
+					signer = env.Signatures[0].KeyID
+				}
+				var outs []string
+				if f, ok := r.Foton(id); ok {
+					for _, o := range f.Outputs {
+						outs = append(outs, o.Hash)
+					}
+				}
+				// declaredSigner, and verified:false - these are COMPETING matches on the cache key,
+				// and the keyid is the envelope'"'"'s unauthenticated hint. A machine reader must see
+				// that on the record, not only in a stderr note it may never read.
+				out = append(out, map[string]any{
+					"fotonId": id, "declaredSigner": signer, "outputs": outs, "verified": false,
+				})
+			}
+			return printJSON(map[string]any{"actionKey": ak, "hit": len(hits) > 0, "hits": out})
+		}
 		if len(hits) == 0 {
 			fmt.Println("cache: MISS (no prior computation with these inputs+protocol)")
 		} else {
@@ -698,6 +959,57 @@ func run(cmd string, args []string) error {
 			}
 			fmt.Fprintln(os.Stderr, "note: these are COMPETING cache-key matches, not a trusted result - anyone can author a foton with these inputs, and their OUTPUTS may differ. Pick a hit whose SIGNER you trust and `plankton verify` it.")
 		}
+		return nil
+
+	case "pin":
+		// Pinning is OPTIONAL and deliberately outside the registry: the kernel records fotons and
+		// stores no bytes (SPEC §6.1, §10). It is here rather than in the cockpit because it needs no
+		// address - a hash says WHAT, and these bytes are already on this machine. Fetching bytes
+		// that are NOT here is a different thing and stays a cockpit capability (`kton fetch`).
+		if len(args) != 1 {
+			return fmt.Errorf("usage: plankton pin <file>")
+		}
+		b, err := os.ReadFile(args[0])
+		if err != nil {
+			return err
+		}
+		bs, err := blobstore.OpenFor(dir())
+		if err != nil {
+			return err
+		}
+		h, err := bs.Put(b)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("pinned %s  (%d bytes)\n", h, len(b))
+		return nil
+
+	case "blob":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: plankton blob <sha256:...>")
+		}
+		h, ok := core.NormalizeContentHash(args[0])
+		if !ok {
+			return fmt.Errorf("%q is not a sha256 content hash", args[0])
+		}
+		bs, err := blobstore.OpenFor(dir())
+		if err != nil {
+			return err
+		}
+		if !bs.Has(h) {
+			fmt.Printf("absent %s\n", h)
+			os.Exit(1)
+		}
+		// Do not trust the content-addressed FILENAME: read the bytes back (Get re-hashes and errors
+		// on a mismatch), so a bit-rotted blob is reported CORRUPT, not PINNED. `Has` alone only
+		// checks that the file exists, and a present-and-good status line that never re-hashes is a
+		// lie of exactly the kind this substrate exists to prevent.
+		b, err := bs.Get(h)
+		if err != nil {
+			fmt.Printf("CORRUPT %s  (%v)\n", h, err)
+			os.Exit(1)
+		}
+		fmt.Printf("PINNED %s  (%d bytes, re-hashed OK)\n", h, len(b))
 		return nil
 
 	case "hash":
@@ -726,7 +1038,11 @@ func run(cmd string, args []string) error {
 		}
 		peer := args[0]
 		if strings.HasPrefix(peer, "http://") || strings.HasPrefix(peer, "https://") {
-			return fmt.Errorf("network peer %s - use: kton mirror plankton %s", peer, peer)
+			return fmt.Errorf("network peer %s - this repository carries no network transport.\n"+
+				"  Mirror a local registry directory here; reaching a peer across a network is a\n"+
+				"  cockpit capability. SPEC §12 leaves the transport unspecified: the queries and\n"+
+				"  the wire form are normative, the binding is not, and `plankton records --json --since N`\n"+
+				"  answers sync(since) over stdout.", peer)
 		}
 		if fi, err := os.Stat(peer); err != nil || !fi.IsDir() {
 			return fmt.Errorf("peer registry %q does not exist (nothing to mirror)", peer)
@@ -739,13 +1055,45 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return fmt.Errorf("open peer %s: %w", peer, err)
 		}
-		added := 0
+		// Classify, do not swallow. This loop used to drop EVERY Add error, so mirroring into a
+		// destination that could not be written reported "0 new; registry holds 0 fotons" and exited
+		// 0 - a backup or replication script would read that as success.
+		//
+		// A LOCAL persistence failure is fatal and says so: nothing after it can be trusted either,
+		// and the caller needs a non-zero exit at the moment it matters. A record the kernel REFUSES
+		// (unsigned, not a foton, structurally invalid) is the peer's problem, not ours: skip it,
+		// count it, and name it, because a silent skip is how an incomplete mirror looks complete.
+		added, refused := 0, 0
+		var refusedIDs []string
 		for _, rec := range src.Records(0) {
-			if _, isNew, err := local.Add(rec.Envelope); err == nil && isNew {
+			id, isNew, err := local.Add(rec.Envelope)
+			switch {
+			case err == nil && isNew:
 				added++
+			case err == nil:
+				// already held
+			case errors.Is(err, registry.ErrPersist):
+				return fmt.Errorf("mirror of %s FAILED after %d record(s): could not write locally - "+
+					"the local registry is incomplete and this is not a peer problem: %w", peer, added, err)
+			default:
+				refused++
+				if len(refusedIDs) < 5 {
+					if id == "" {
+						id = "<unparseable>"
+					}
+					refusedIDs = append(refusedIDs, id)
+				}
+				fmt.Fprintf(os.Stderr, "warning: peer record refused: %v\n", err)
 			}
 		}
-		fmt.Printf("mirrored %s: %d new; registry holds %d fotons\n", peer, added, local.Len())
+		msg := fmt.Sprintf("mirrored %s: %d new", peer, added)
+		if refused > 0 {
+			msg += fmt.Sprintf(", %d REFUSED as invalid (%s)", refused, strings.Join(refusedIDs, ", "))
+		}
+		fmt.Printf("%s; registry holds %d fotons\n", msg, local.Len())
+		if refused > 0 {
+			return fmt.Errorf("%d peer record(s) were refused - this copy is INCOMPLETE", refused)
+		}
 		return nil
 
 	default:

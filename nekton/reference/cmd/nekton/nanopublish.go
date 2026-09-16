@@ -310,9 +310,25 @@ func trustyURI(canon []byte) string {
 	return "RA" + base64.RawURLEncoding.EncodeToString(h[:])
 }
 
+// loadOrGenRSA reuses the key at path, or generates one and SAVES it there. When path is empty the
+// key is deliberately ephemeral.
+//
+// Two failures used to be silent, and both cost the caller the identity they asked for:
+//
+//   - ANY read error was treated as "no key here" and fell through to generating a new one. A
+//     permission problem, or a directory in the way, therefore produced a different identity on
+//     every run instead of an error.
+//   - The save's error was discarded with `_ =`. With `--rsa /nonexistent-dir/identity.pem` the
+//     command generated a key, published, exited 0, and printed "saved it to …" - and the file did
+//     not exist. The next run generated a different identity again.
+//
+// A signature over an unsaved key still verifies against its embedded public key, so nothing
+// published was wrong. What was wrong was the claim that the key had been kept.
 func loadOrGenRSA(path string) (*rsa.PrivateKey, bool, error) {
 	if path != "" {
-		if b, err := os.ReadFile(path); err == nil {
+		b, err := os.ReadFile(path)
+		switch {
+		case err == nil:
 			blk, _ := pem.Decode(b)
 			if blk == nil {
 				return nil, false, fmt.Errorf("no PEM block in %s", path)
@@ -325,6 +341,11 @@ func loadOrGenRSA(path string) (*rsa.PrivateKey, bool, error) {
 			}
 			rk, e := x509.ParsePKCS1PrivateKey(blk.Bytes)
 			return rk, false, e
+		case !os.IsNotExist(err):
+			// An unreadable key is NOT an absent key: refuse rather than quietly mint a new
+			// identity in place of the one that was requested.
+			return nil, false, fmt.Errorf("cannot read the RSA key at %s (refusing to generate a "+
+				"different identity in its place): %w", path, err)
 		}
 	}
 	k, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -332,8 +353,15 @@ func loadOrGenRSA(path string) (*rsa.PrivateKey, bool, error) {
 		return nil, false, err
 	}
 	if path != "" {
-		der, _ := x509.MarshalPKCS8PrivateKey(k)
-		_ = os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600)
+		der, err := x509.MarshalPKCS8PrivateKey(k)
+		if err != nil {
+			return nil, false, err
+		}
+		pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+		if _, err := core.WriteKeyFile(path, pemBytes, 0o600, false); err != nil {
+			return nil, false, fmt.Errorf("generated an RSA key but could not save it to %s, so the "+
+				"identity you asked to keep would have been lost: %w", path, err)
+		}
 	}
 	return k, true, nil
 }
@@ -381,7 +409,7 @@ func nanopublish(args []string) error {
 		return err
 	}
 	id := strings.TrimPrefix(claim.ClaimID(payload), "sha256:")
-	c := newTrigCtx(loadAliases(aliasesPath))
+	c := newTrigCtx(mustTemplateSet(aliasesPath))
 	if trustDir != "" {
 		ks, err := loadTrustKeys(trustDir)
 		if err != nil {

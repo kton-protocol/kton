@@ -12,7 +12,7 @@ examples are application vocabulary, not the protocol.*
 | Statement / envelope | in-toto Attestation + DSSE | the wire form (Clause 6.6 / 7.3 / 8) |
 | Content hash / addressing | multihash | `sha256:` |
 | Lineage, agents, activities | **PROV-O** | `prov:wasDerivedFrom`, `prov:used`, `prov:wasGeneratedBy`, `prov:wasAttributedTo`, `prov:wasAssociatedWith`, `prov:actedOnBehalfOf` |
-| Review / authoring provenance | **PAV** | `pav:reviewedBy` (general review - *not* a GxP claim) |
+| Authoring / versioning provenance | **PAV** | `pav:createdBy`, `pav:authoredBy`, `pav:retrievedFrom`. PAV has **no** review property; see §3 |
 | Key -> principal control (identity) | **W3C Security Vocabulary** | `sec:controller`, `sec:Multikey` - a signed key-to-principal binding is a lightweight Verifiable Credential; keys are named by their content IRI (`pk:<hash>`), principals by IRI (`did:web:`, `model:`) |
 | Location / retrieval | **DCAT** | `dcat:downloadURL` (the `located-at` mechanism; Clause 12) |
 | Equivalence / hierarchy | **OWL / SKOS** | `owl:sameAs`, `skos:broader` |
@@ -43,11 +43,35 @@ These demonstrate the protocol; the kernel treats every predicate as an opaque I
 never requires them. They live in aliases/templates, not the spec.
 
 - **Governance example:** `vote`, `vote-initialised`, `delegate` (liquid democracy).
-- **Regulated (RESERVED):** the `gxp:*` set - `gxp:reviewed`, `gxp:validation-performed`,
-  `gxp:env-qualified`, `gxp:risk-accepted`, `gxp:approved`, `gxp:deviation`, `gxp:capa`. **Use only when
-  a real GxP-validated process stands behind the claim.** Ordinary review uses `pav:reviewedBy`; the
-  `gxp:reviewed` specialization is `gxpReviewed` in the aliases, and the `gxp/review` template carries
-  it because it *is* a GxP review.
+- **Regulated:** a namespace of its own for claims that assert regulated weight - a review performed
+  under a validated process, a qualified environment, an accepted risk, a deviation, a CAPA.
+  **Use such a term only when a real validated process stands behind the claim.**
+
+  **There is no established property for "reviewed by", and this annex used to name one that does not
+  exist.** `pav:reviewedBy` was cited here, in Annex A and in the examples for the whole of 0.1, and
+  it was published into signed nanopublications. PAV defines 33 terms - `authoredBy`, `createdBy`,
+  `curatedBy`, `importedBy`, `retrievedBy` among them - and `reviewedBy` is not one of them. It read
+  as plausible, which is exactly why nobody checked it.
+
+  Two lessons, both worth more than the term: a reused vocabulary is a claim ABOUT someone else's
+  document, so it has to be looked up rather than remembered; and `reviewedBy` would have been the
+  wrong SHAPE even had it existed - it is passive, "X was reviewed **by** Y", so its object is the
+  reviewer's identity, and putting a verdict there asserts that the record was reviewed by "looks
+  correct". Review therefore uses an application term of the example suite's own, whose object is the
+  verdict and whose reviewer is the signature.
+
+  `oa:assessing` is the right *motivation* in the Web Annotation vocabulary and is real - but it is an
+  instance of `oa:Motivation`, not a property, so it belongs in `oa:motivatedBy oa:assessing` on an
+  `oa:Annotation`, never in a predicate slot. Naming it as one would repeat the mistake in a better
+  disguise.
+
+  This annex deliberately does **not** name that namespace or enumerate its terms. It once reserved a
+  specific prefix and named the template that carried it - and then the example suite renamed both,
+  which is exactly what the sentence above this list says will happen: application vocabulary lives in
+  aliases and templates, not here. A specification that reserves a moving target ends up documenting
+  a vocabulary no example uses. The live set is whatever
+  [`gitmick/kton-examples`](https://github.com/gitmick/kton-examples) ships in `templates/` and
+  `aliases`, and the kernel requires none of it (Clause 7.1).
 - **Domain example:** `pmx:model-role` (pharmacometrics); `ddmore-entry`, `workbench-run` (integrations).
 
 ## 4. Deprecated

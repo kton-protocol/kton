@@ -1,5 +1,16 @@
 # Community Specification
 
+> **Where kton's deployed files are.** This directory holds the Community Specification 1.0 template
+> pack. The four files the process asks a Working Group to *deploy* have been moved to the repository
+> root under the names the License itself uses, which is where a licensee - or a court - looks for
+> them: [`Scope.md`](../Scope.md) (License §9.13), [`Notices.md`](../Notices.md) (§2.1.3.3, §2.3,
+> §9.7), [`Governance.md`](../Governance.md) (§9.2) and [`License.md`](../License.md). That is why
+> `02`, `03`, `04` and `05` are absent from the numbering here.
+>
+> The License text itself ([`01-community-specification-license-v1.md`](01-community-specification-license-v1.md))
+> and the CLA are kept **unmodified**, which is the point of vendoring them: a reader can see the
+> terms were not altered.
+
 ## What is the Community Specification For?
 
 The Community Specification process is a repository-based approach for creating standards and specifications in version control systems, such as Git.

@@ -1,7 +1,41 @@
 # CLI design - `plankton` & `nekton` as bash tools
 
-> **Status:** design sketch (both repos are scaffolds). This is the intended command surface,
-> consistent with the kernels in `spec/SPEC.md`. Output shown is illustrative.
+> **Status: DESIGN SKETCH, and the implementation has overtaken it.** This is the command surface
+> that was *intended*, not the one that ships. Read it as a design record, and take the shipping
+> surface from `nekton man` / `plankton man` — those were checked against the dispatch switch in
+> `main.go` and carry no phantoms.
+>
+> **Do not use the counts in this block to decide what exists.** An earlier revision said the
+> document "never mentions `about`, `add`, `by`, `export`, `head`, `keygen`, `mirror`, `seed` or
+> `verify`" — line 195 is literally `nekton serve | remote | sync | mirror | verify`. The count was
+> reached by overlooking that line, and the sentence a paragraph later overlooked it again. A
+> correction to a wrong document that is itself wrong is worse than the original, so this block no
+> longer counts anything.
+>
+> What is safe to say: **both halves of this document describe verbs that do not exist**, and the
+> earlier revision audited only the nekton half. On the plankton side that includes `record`,
+> `observe`, `id set`, `ray`, `compare`, `serve`/`remote`/`sync`, and an `add PATH [--pin]` that
+> takes an envelope and has no `--pin`. On the nekton side, `claims`, `confirm`, `delegate`, `equiv`,
+> `qualify-env`, `review`, `risk-accept`, `serve`, `supersede`, `vote`. All exit 1 with a usage
+> banner, so a script fails loudly rather than silently. There is also no config-file support
+> anywhere, despite the `~/.config/{plankton,nekton}/config.toml` line below.
+>
+> `serve` is doubly stale: it was removed from `kton` entirely in #83, and the kernels never had it.
+>
+> Two specifics worth naming, because they mislead rather than merely omit:
+>
+> - The `templates` section documents `ls | show <name> | search <kw>` and `pull | push | add`.
+>   None are subcommands. The real surface is `nekton templates [--show <name>]`. Until #45 the
+>   binary read any positional as a template *name*, so `templates ls` answered `no template "ls"`
+>   and `templates show <name>` appeared to work — which meant spot-checking this document against
+>   the binary confirmed it.
+> - The `gxp/*` templates shown with source `bundled` are not bundled. No `gxp` string is compiled
+>   into any binary and there is no `nekton/templates/` in this repository. Regulated vocabulary
+>   ships as aliases and templates in the example repo, never as the protocol ontology.
+>
+> Output shown below is illustrative and in places does not match the binary — the worked
+> `templates --show` example prints `subject:` not `target:`, no `vocab:` line, and a different
+> context IRI.
 
 ## The hard invariant - read first
 

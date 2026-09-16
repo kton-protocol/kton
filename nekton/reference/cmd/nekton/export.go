@@ -18,13 +18,17 @@ import (
 )
 
 type exportClaim struct {
-	ClaimID        string          `json:"claimId"`
-	PredicateType  string          `json:"predicateType"`
-	KeyID          string          `json:"keyid"`                    // the SELF-DECLARED keyid (unverified)
-	VerifiedSigner string          `json:"verifiedSigner,omitempty"` // the keyid that actually signed (with --trust-keys)
-	SignerVerified bool            `json:"signerVerified"`           // did a trusted key verify this claim?
-	Subjects       []string        `json:"subjects"`
-	Predicate      json.RawMessage `json:"predicate"`
+	ClaimID       string   `json:"claimId"`
+	PredicateType string   `json:"predicateType"`
+	KeyIDs        []string `json:"keyids"` // the SELF-DECLARED keyids on the envelope (unverified)
+	// The keyid that actually signed, and the full set when several trusted keys did. One claim can
+	// carry several signatures - that is what a co-signature IS - so a single field could only ever
+	// answer for one of them.
+	VerifiedSigner  string          `json:"verifiedSigner,omitempty"`
+	VerifiedSigners []string        `json:"verifiedSigners,omitempty"`
+	SignerVerified  bool            `json:"signerVerified"` // did a trusted key verify this claim?
+	Subjects        []string        `json:"subjects"`
+	Predicate       json.RawMessage `json:"predicate"`
 }
 
 type exportClaims struct {
@@ -38,27 +42,43 @@ func buildClaims(dir, title string, trustKeys []ed25519.PublicKey) (*exportClaim
 		return nil, err
 	}
 	g := &exportClaims{Title: title, Claims: []exportClaim{}}
-	for _, rec := range r.Records(0) {
+	// The UNIQUE INDEXED claims, not the arrival feed. The feed is a record of replication events:
+	// two envelopes carrying the same payload signed by different keys are two entries with ONE
+	// claim id, and iterating it exported that claim twice - two rows, same id, and (with only one
+	// key trusted) contradictory signerVerified. A consumer keying a map by claim id kept whichever
+	// row happened to be second. The indexed view holds the merged record, whose envelope carries
+	// every signature that arrived, so one logical claim is one row and the trust answer is computed
+	// over all of them.
+	for _, id := range r.ClaimIDs() {
+		rec, ok := r.Claim(id)
+		if !ok {
+			continue
+		}
 		st, _, err := claim.ParseEnvelope(rec.Envelope)
 		if err != nil {
 			continue
 		}
-		keyid := ""
-		if len(rec.Envelope.Signatures) > 0 {
-			keyid = rec.Envelope.Signatures[0].KeyID
-		}
-		// Verified attribution: `keyid` is the self-declared field; verifiedSigner/signerVerified come
-		// from checking WHICH trusted key actually signed this claim, so a consumer never reads the
-		// unverified keyid as established identity (cold-session verified-attribution sibling: JSON export).
-		vk := core.VerifiedSignerKeyID(rec.Envelope, trustKeys)
 		ec := exportClaim{
-			ClaimID:        rec.ClaimID,
-			PredicateType:  st.PredicateType,
-			KeyID:          keyid,
-			VerifiedSigner: vk,
-			SignerVerified: vk != "",
-			Predicate:      st.Predicate,
-			Subjects:       []string{}, // never emit null (renderers iterate this)
+			ClaimID:       rec.ClaimID,
+			PredicateType: st.PredicateType,
+			KeyIDs:        []string{},
+			Predicate:     st.Predicate,
+			Subjects:      []string{}, // never emit null (renderers iterate this)
+		}
+		for _, sig := range rec.Envelope.Signatures {
+			ec.KeyIDs = append(ec.KeyIDs, sig.KeyID)
+		}
+		// Every trusted key that actually signed, not the first one found: a co-signed claim with two
+		// trusted signers is the case the whole four-eyes idea rests on, and reporting one of them
+		// loses exactly the fact that matters.
+		for _, pub := range trustKeys {
+			if ok, err := rec.Envelope.Verify(pub); ok && err == nil {
+				ec.VerifiedSigners = append(ec.VerifiedSigners, core.KeyIDHex(pub))
+			}
+		}
+		if len(ec.VerifiedSigners) > 0 {
+			ec.VerifiedSigner = ec.VerifiedSigners[0]
+			ec.SignerVerified = true
 		}
 		for _, s := range st.Subject {
 			if k := s.Key(); k != "" {

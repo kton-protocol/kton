@@ -25,13 +25,20 @@ bash scripts/check-import-direction.sh
 
 ## Building and testing
 
-The repo is a Go workspace (`go.work`) tying three modules. From the repo root:
+The repo is a Go workspace (`go.work`) tying three modules, and the workspace root is **not itself a
+module** - `go test ./...` from the root fails with *"directory prefix . does not contain modules
+listed in go.work"*. Run the loop per module:
 
 ```sh
-go build ./...    # in each module dir, or via the workspace
-go test ./...
-go vet ./...
+for m in reference nekton/reference kton/reference; do
+  ( cd "$m" && go build ./... && go test ./... && go vet ./... )
+done
+gofmt -l reference nekton/reference kton/reference   # must print nothing
 ```
+
+`reference/` is plankton, `nekton/reference/` is nekton, `kton/reference/` is the cockpit. CI runs
+exactly this loop, plus the architecture and scope guards, the `js/wasm` builds, the frozen
+conformance vectors and `security/check.sh`.
 
 ## Proposing changes
 
@@ -68,6 +75,6 @@ the DCO rather than a CLA - no copyright assignment, just the certification abov
 governed by the Community Specification framework in
 [`community-specification/`](community-specification/): its license
 ([`01-community-specification-license-v1.md`](community-specification/01-community-specification-license-v1.md)),
-scope ([`02-scope.md`](community-specification/02-scope.md)), governance, and contribution process
+scope ([`Scope.md`](Scope.md)), governance, and contribution process
 ([`06-contributing.md`](community-specification/06-contributing.md)). Spec changes follow that process;
 code changes follow this file.
