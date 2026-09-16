@@ -143,7 +143,9 @@ Ingest a signed claim (enforces the scope chain) into the registry (default ./ne
 Verify a DSSE signature AND the structure the store requires, and report the claim (prints the
 \fBclaim id\fR). Exit status: 0 the signature is genuine and the claim is one \fBadd\fR would
 accept; 1 corrupt or tampered; 2 wrong key; 3 the signature is genuine but the claim is structurally
-invalid - the store refuses it. The public key may be a
+invalid - the store refuses it; 4 the claim is held here but DEFERRED - its \fBprev\fR/seed has not
+arrived, so it is in no index (incomplete, not invalid, SPEC \(sc11: add the predecessor and it
+resolves). The public key may be a
 \fB.pub file path\fR OR the hex string itself.
 .TP
 .B nekton about \fIsubject\fR

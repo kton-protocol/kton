@@ -49,7 +49,9 @@ usage:
                                                       structure ingest requires (envelope FILE or a
                                                       registry id; pubkey: a .pub file or the hex)
                                                       exit 0 genuine+storable, 1 tampered, 2 wrong
-                                                      key, 3 genuine but ingest would refuse it
+                                                      key, 3 genuine but ingest would refuse it,
+                                                      4 held here but DEFERRED - its prev/seed has
+                                                      not arrived (incomplete, not invalid, §11)
   nekton records [--json] [--since N]                  every claim WITH its signed envelope: the
                                                       SPEC §12 sync(since) answer, over stdout
   nekton attach <sha256:id> --scheme S --file F [--media M]   bind external evidence to a record (SPEC §8.1):
