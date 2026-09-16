@@ -204,7 +204,7 @@ func exportNanopub(args []string) error {
 	if in == "" {
 		return fmt.Errorf("usage: nekton export --nanopub <claim.dsse.json|sha256:id> [-o out.trig] [--aliases file]")
 	}
-	env, deferredScope, err := readEnvelopeOrID(in)
+	env, deferredScope, _, err := readEnvelopeOrID(in)
 	if err != nil {
 		return err
 	}

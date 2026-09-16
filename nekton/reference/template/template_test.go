@@ -132,15 +132,29 @@ func TestSpecTakesBytesNotPaths(t *testing.T) {
 
 	// A file in the template directory that is not a template used to parse into an EMPTY template:
 	// json.Unmarshal drops members it does not know, so an alias file co-located with the templates
-	// became a template named "aliases" with no predicate and no fields, and nothing said so. The
-	// test does NOT assert on the predicate specifically: a seed template has none and must load.
-	t.Run("a non-template in the template directory is refused, not absorbed", func(t *testing.T) {
+	// became a template named "aliases" with no predicate and no fields, and nothing said so.
+	//
+	// It is SKIPPED and NAMED, not absorbed and not fatal. Making it fatal took the whole corpus
+	// down for one stray file - see TestAStrayFileDoesNotDisableTheCorpus. The test does not assert
+	// on the predicate specifically: a seed template has none and must load.
+	t.Run("a non-template in the template directory is skipped and named, not absorbed", func(t *testing.T) {
 		d := t.TempDir()
 		if err := os.WriteFile(filepath.Join(d, "notatemplate.json"), []byte(`{"prefixes":{"a":"b"}}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := template.Load(d, filepath.Join(d, "aliases.json")); err == nil {
-			t.Error("a file declaring no fields, predicate or predicateType was absorbed as a template")
+		set, err := template.Load(d, filepath.Join(d, "aliases.json"))
+		if err != nil {
+			t.Fatalf("one stray file must not fail the load: %v", err)
+		}
+		if names := set.Names(); len(names) != 0 {
+			t.Errorf("a non-template was absorbed: Names() = %v", names)
+		}
+		if _, ok := set.Get("notatemplate"); ok {
+			t.Error("the stray file is reachable as a template")
+		}
+		// Named, because silence is what let an alias file become a template in the first place.
+		if sk := set.Skipped(); len(sk) != 1 {
+			t.Errorf("Skipped() = %v, want the one stray file", sk)
 		}
 	})
 
@@ -240,5 +254,33 @@ func TestSeedTemplateLoadsAndIsRefusedAsAClaim(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal does not mention %q, so it does not say what to do instead: %v", want, err)
 		}
+	}
+}
+
+// TestAStrayFileDoesNotDisableTheCorpus: the regression. One file in the template directory that is
+// not a template used to fail the ENTIRE load, so `templates`, `--show` and `annotate --template
+// qa/review` all stopped working - including for templates with nothing to do with the stray file.
+// A working corpus became unusable for signing because someone left an editor backup in the folder.
+func TestAStrayFileDoesNotDisableTheCorpus(t *testing.T) {
+	dir, aliases := setup(t)
+	if err := os.WriteFile(filepath.Join(dir, "notes.json"),
+		[]byte(`{"note":"an editor backup or a stray config"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set, err := template.Load(dir, aliases)
+	if err != nil {
+		t.Fatalf("one stray file disabled the whole template surface: %v", err)
+	}
+	if _, ok := set.Get("qa/review"); !ok {
+		t.Fatalf("an unrelated template is gone; Names() = %v", set.Names())
+	}
+	// And it must still SIGN - listing without being able to build a spec would be half a fix.
+	if _, err := set.Spec("qa/review", "sha256:"+strings.Repeat("a", 64),
+		map[string]string{"outcome": "pass", "sop": "S1"},
+		map[string][]byte{"report": []byte("pdf")}); err != nil {
+		t.Errorf("a template unrelated to the stray file cannot build a spec: %v", err)
+	}
+	if sk := set.Skipped(); len(sk) != 1 {
+		t.Errorf("Skipped() = %v, want the one stray file named", sk)
 	}
 }

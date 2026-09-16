@@ -156,6 +156,7 @@ func annotate(args []string) error {
 	if err != nil {
 		return err
 	}
+	reportSkipped(tset)
 	t, ok := tset.Get(tmplName)
 	if !ok {
 		return fmt.Errorf("no template %q in %s", tmplName, tdir)
@@ -306,6 +307,16 @@ func annotate(args []string) error {
 // listTemplates prints every template in the templates dir with its predicate and any aliases.
 // With `--show <name>` (or a positional name/alias) it instead prints that template's fields -
 // the cycle-1 gap where a session could not discover field names without reading the JSON.
+// reportSkipped names template-directory files that are not templates. Silence here is what let an
+// alias file become a template called "aliases"; failing instead took the whole corpus down for one
+// stray file. Naming them on stderr is the answer that does neither.
+func reportSkipped(set template.Set) {
+	for _, f := range set.Skipped() {
+		fmt.Fprintf(os.Stderr, "note: skipping %q - it declares no fields, predicate or "+
+			"predicateType, so it is not a template.\n", f)
+	}
+}
+
 func listTemplates(args []string) error {
 	tdir := envOr("NEKTON_TEMPLATES", "./templates")
 	aliasesPath := envOr("NEKTON_ALIASES", "./aliases.json")
@@ -349,6 +360,7 @@ func listTemplates(args []string) error {
 	if err != nil {
 		return err
 	}
+	reportSkipped(tset)
 	if showName != "" {
 		return showTemplate(tset, showName)
 	}

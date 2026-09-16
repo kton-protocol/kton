@@ -32,6 +32,10 @@ func showClaim(args []string) error {
 	var env core.Envelope
 	// Non-empty when this store holds the record but has deferred it - see the lookup below.
 	deferredScope := ""
+	// What this store actually ESTABLISHED about the chain. Unchecked is the default and a first
+	// class answer: a claim read from a file was never looked up here, and reporting it as
+	// "resolved" asserted that this store holds a dependency it had never been asked about.
+	chain := chainUnchecked
 	if _, err := os.Stat(arg); err == nil {
 		env, err = readEnvelope(arg)
 		if err != nil {
@@ -43,6 +47,10 @@ func showClaim(args []string) error {
 			return err
 		}
 		rec, ok := r.Claim(arg)
+		if ok {
+			// Earned: being in the index means checkChain passed.
+			chain = chainResolved
+		}
 		if !ok {
 			// HELD BUT DEFERRED is a third state, and it used to collapse into "not held": a claim
 			// persisted and offered to peers, kept out of every index because its prev/seed has not
@@ -58,6 +66,7 @@ func showClaim(args []string) error {
 				scope = "(an unnamed scope)"
 			}
 			deferredScope = scope
+			chain = chainDeferred
 		}
 		env = rec.Envelope
 	}
@@ -92,7 +101,7 @@ func showClaim(args []string) error {
 			// no index here). Not-held is the error path and never reaches this JSON. A caller used
 			// to have to parse prose - or an error message - to tell these apart, which is the thing
 			// --json exists to make unnecessary.
-			"chain":          chainStatus(deferredScope),
+			"chain":          chain.String(),
 			"waitingOnScope": deferredScope,
 		}, "", "  ")
 		if err != nil {
@@ -103,6 +112,10 @@ func showClaim(args []string) error {
 	}
 
 	fmt.Printf("claim:     %s\n", claim.ClaimID(payload))
+	if chain == chainUnchecked {
+		fmt.Printf("chain:     NOT CHECKED - read from a file, so this store was never asked about\n")
+		fmt.Printf("           its scope or prev. Pass the claim id to have them resolved.\n")
+	}
 	if deferredScope != "" {
 		// Said FIRST, and said plainly. Printed further down it would read as a footnote to a record
 		// that otherwise looks entirely ordinary - which is exactly how this state stayed invisible.
@@ -154,13 +167,4 @@ func printJSONOut(v any) error {
 	}
 	fmt.Println(string(b))
 	return nil
-}
-
-// chainStatus names the third state for machine readers. A deferred claim is INCOMPLETE, not invalid
-// (SPEC §11): its signature is fine and it may resolve the moment its predecessor arrives.
-func chainStatus(waitingOnScope string) string {
-	if waitingOnScope != "" {
-		return "deferred"
-	}
-	return "resolved"
 }

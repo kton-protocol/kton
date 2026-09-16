@@ -71,6 +71,9 @@ type Set struct {
 	templates map[string]Template
 	aliases   aliasFile
 	origin    string // where these came from, for error messages only
+	// skipped names files in the template source that are not templates. They are reported rather
+	// than absorbed (which was silent) or fatal (which took the corpus down for one stray file).
+	skipped []string
 }
 
 // New builds a Set from bytes the caller already has - a fetch, a bundle, an embedded asset, an
@@ -102,14 +105,22 @@ func New(templates map[string][]byte, aliases []byte) (Set, error) {
 		// members it does not know, so an alias file co-located with the templates parsed into an
 		// empty Template and joined the set under its filename, silently.
 		//
-		// The discriminator is NOT "has a predicate". A scope-genesis template legitimately has
-		// none - it produces a SEED, not a claim (SPEC §7.4) - and requiring one made `templates`
-		// fail on the shipped example set, which is exactly the gate-refuses-the-normal-path
-		// failure. What every template does declare is somewhere to put values or something to
-		// assert; a file with neither is not one.
+		// SKIPPED, not fatal. Refusing the whole set for one stray file took the entire template
+		// surface down - `templates`, `--show`, and `annotate --template qa/review`, a template with
+		// nothing to do with the offending file - so one editor backup made a working corpus
+		// unusable for signing. That is the gate-refuses-the-normal-path failure, and this guard had
+		// it in the same commit that fixed another instance of it.
+		//
+		// Skipping fixes what the guard was actually for: the file is not absorbed, and it is not
+		// silent. A malformed ALIAS file stays fatal - that one changes what a CURIE means, and
+		// resolving one to itself would sign a bare term as though it were an IRI.
+		//
+		// The discriminator is NOT "has a predicate": a scope-genesis template legitimately has none,
+		// because it produces a SEED (SPEC §7.4). What every template does declare is somewhere to
+		// put values or something to assert; a file with neither is not one.
 		if len(t.Fields) == 0 && t.Predicate == "" && t.PredicateType == "" {
-			return Set{}, fmt.Errorf("%q declares no fields, predicate or predicateType, so it is not "+
-				"a template - if it is the alias file, keep it outside %s", key, s.origin)
+			s.skipped = append(s.skipped, key)
+			continue
 		}
 		s.templates[name] = t
 	}
@@ -384,3 +395,9 @@ func sortedKeys(m map[string]Field) []string {
 	sort.Strings(out)
 	return out
 }
+
+// Skipped names the files in the template source that were not templates. A caller SHOULD print
+// these: absorbing them silently is how an alias file became a template named "aliases", and
+// refusing the whole directory for one of them is how a stray editor backup made every template
+// unusable. Naming them is the middle answer.
+func (s Set) Skipped() []string { return s.skipped }

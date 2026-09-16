@@ -139,11 +139,36 @@ func storeAnchor(env core.Envelope, entry *sigstore.Entry, raw []byte) error {
 		if oerr != nil {
 			return oerr
 		}
-		if _, held := r.Claim(id); held {
+		_, held := r.Claim(id)
+		// A DEFERRED claim is held too - persisted and offered to peers, kept out of every index
+		// because its prev/seed has not arrived (SPEC §11: incomplete, not invalid). `Claim` answers
+		// from the index, so such a claim fell through to the foton branch below and failed there
+		// while being read as a foton:
+		//
+		//     json: cannot unmarshal string into Go struct field Subject.subject.uri of type []string
+		//
+		// telling a reader their record is malformed when it is a perfectly good claim whose
+		// predecessor has not turned up. Route it as what it is.
+		//
+		// Attaching is correct for it: a claim id IS the payload hash, so the proof's binding to
+		// these exact bytes is preserved by the id itself - the collision the plankton branch below
+		// has to guard against cannot arise here.
+		deferredScope := ""
+		if !held {
+			if _, scope, ok := r.DeferredClaim(id); ok {
+				held, deferredScope = true, scope
+			}
+		}
+		if held {
 			if err := r.AttachMaterial(vm(id)); err != nil {
 				return err
 			}
 			fmt.Printf("stored: rekor-entry on claim %s\n", id)
+			if deferredScope != "" {
+				fmt.Printf("  note: this claim is DEFERRED here - its prev/seed for scope %s has not\n", deferredScope)
+				fmt.Printf("        arrived, so it is in no index yet. The proof is bound to the claim's\n")
+				fmt.Printf("        own bytes and stays valid when the chain completes.\n")
+			}
 			return nil
 		}
 	}

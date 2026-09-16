@@ -5,9 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	nclaim "kton.dev/nekton/claim"
+	nreg "kton.dev/nekton/registry"
 	"kton.dev/plankton/core"
 	preg "kton.dev/plankton/registry"
 )
@@ -168,4 +171,72 @@ func TestStoreAnchorKeepsWhatTheProofNeeds(t *testing.T) {
 			t.Fatal("stored a proof against a record that is not there")
 		}
 	})
+}
+
+// TestStoreAnchorRoutesADeferredClaim: `storeAnchor` asks the nekton registry whether it holds the
+// claim, and `Claim` answers from the INDEX. A deferred claim - persisted, offered to peers, kept
+// out of every index because its prev/seed has not arrived - is not there, so a claim the store
+// genuinely holds fell through to the plankton branch and failed while being read as a foton:
+//
+//	json: cannot unmarshal string into Go struct field Subject.subject.uri of type []string
+//
+// A reader was told their record is malformed. It is a perfectly good claim whose predecessor has
+// not turned up.
+func TestStoreAnchorRoutesADeferredClaim(t *testing.T) {
+	dir := t.TempDir()
+	ndir := filepath.Join(dir, "nekton")
+	t.Setenv("NEKTON_DIR", ndir)
+	t.Setenv("PLANKTON_DIR", filepath.Join(dir, "plankton"))
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, seedID, err := nclaim.SignWith(nclaim.Spec{
+		Subject:       []nclaim.SubjectSpec{{URI: "urn:nekton:scope:sc"}},
+		PredicateType: nclaim.ScopePredicateType,
+		PredicateBody: map[string]any{"scope": "sc", "genesis": true, "by": "CN=t", "when": "2026-07-16T00:00:00Z"},
+	}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped, scopedID, err := nclaim.SignWith(nclaim.Spec{
+		Subject: []nclaim.SubjectSpec{{URI: "urn:x"}}, Predicate: "https://kton.dev/v/note",
+		Object: map[string]any{"a": "1"}, By: "CN=t", When: "2026-07-16T00:00:00Z",
+		Scope: seedID, Prev: seedID,
+	}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := nreg.Open(ndir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Add(scoped); err != nil {
+		t.Fatal(err)
+	}
+	// The premise: held, and not in the index.
+	if _, indexed := r.Claim(scopedID); indexed {
+		t.Fatal("the claim resolved, so it is not deferred and this test proves nothing")
+	}
+	if _, _, ok := r.DeferredClaim(scopedID); !ok {
+		t.Fatal("the claim is not deferred either - the premise is gone")
+	}
+
+	if err := storeAnchor(scoped, nil, []byte(`{"logIndex":1}`)); err != nil {
+		t.Fatalf("anchoring a deferred claim failed: %v", err)
+	}
+	r2, err := nreg.Open(ndir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := r2.Material(scopedID)
+	if len(m) != 1 || m[0].Scheme != "rekor-entry" {
+		t.Fatalf("material after reopen: %#v", m)
+	}
+	// A claim id IS the payload hash, so the bytes the proof binds to are preserved by the id.
+	rec, _, ok := r2.DeferredClaim(scopedID)
+	if !ok || rec.Envelope.Payload != scoped.Payload {
+		t.Error("the envelope the proof binds to did not survive")
+	}
 }

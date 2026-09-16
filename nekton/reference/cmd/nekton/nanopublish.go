@@ -396,7 +396,7 @@ func nanopublish(args []string) error {
 	if in == "" {
 		return fmt.Errorf("usage: nekton nanopublish <claim.dsse.json|sha256:id> [--rsa key.pem] [--creator IRI] [-o out.trig]")
 	}
-	env, deferredScope, err := readEnvelopeOrID(in)
+	env, deferredScope, _, err := readEnvelopeOrID(in)
 	if err != nil {
 		return err
 	}
