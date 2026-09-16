@@ -621,6 +621,24 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 			// presenting the shortened chain's tip as the sealed head.
 			for _, rec := range pending {
 				if st, _, err := claim.ParseEnvelope(rec.Envelope); err == nil {
+					// ONCE PER CLAIM ID, not once per pending line. The subnekton is append-only, so
+					// a co-signed claim has one line per signature set that arrived - and counting
+					// each of them gave Deferred()=2 and Unresolved=2 for ONE record on every
+					// reopen, with the feed delivering it twice. The counters then stuck above zero
+					// after it resolved, so `head` reported a truncation that is not there and
+					// export's `deferred` count was wrong.
+					//
+					// The same fix was applied to `Add` and not here, which is why it reproduced on
+					// every replay: the idempotence test re-added an identical envelope and never
+					// reopened, so it could not see this half.
+					if prior, already := r.deferred[rec.ClaimID]; already {
+						if merged, changed := unionSignatures(prior.Envelope, rec.Envelope); changed {
+							prior.Envelope = merged
+							r.deferred[rec.ClaimID] = prior
+							r.feed = append(r.feed, r.positioned(rec))
+						}
+						continue
+					}
 					var dep string
 					if p, e := st.ParsePredicate(); e == nil && p != nil {
 						if p.Scope != "" {
@@ -932,8 +950,24 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 		// one record, appended a second feed entry so `Records(cursor)` delivered it twice, and left
 		// both counters stuck above zero once it resolved: `head` then reports a truncation that is
 		// not there, and export's `deferred` count is wrong. Only a reopen cleared it.
-		if _, already := r.deferred[id]; already {
-			return id, false, nil
+		if prior, already := r.deferred[id]; already {
+			// A re-add is a no-op ONLY when the merge changed nothing. This returned unconditionally
+			// and so DISCARDED `merged`: a co-signature on a deferred claim reached disk, where
+			// persistClaim had already unioned it, but not the live record or the feed - so a
+			// syncing peer never received the second signature, and the record was later indexed
+			// with one. Only a reopen recovered it.
+			//
+			// That is signature loss, which is the one class this release's known-limitation note is
+			// about; the indexed twin path a few lines up refreshes the record and appends the new
+			// envelope for exactly this reason, and the deferred path must do the same. What must
+			// NOT repeat is the counting: it is still one deferred record, so no counter moves.
+			if core.EnvelopeKey(merged) == core.EnvelopeKey(prior.Envelope) {
+				return id, false, nil
+			}
+			rec = r.positioned(rec)
+			r.deferred[id] = rec
+			r.feed = append(r.feed, rec) // its own line, like any other co-signature
+			return id, true, nil
 		}
 		if p != nil && p.Scope != "" {
 			r.unresolved[p.Scope]++ // may be a withheld-middle successor -> `head` flags a truncation

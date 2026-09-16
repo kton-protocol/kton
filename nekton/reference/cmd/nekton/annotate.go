@@ -54,7 +54,7 @@ func isFullSha256(s string) bool {
 // IRI unchanged. (cold-session finding: `by predicate working-on` silently returned (none) because only
 // the full URI matched, while `annotate --template` resolved the alias - an inconsistency that breaks
 // coordination, since an empty result reads as "no one is working this step".)
-func resolvePredicateArg(x string) string {
+func resolvePredicateArg(x string) (string, error) {
 	aliasesPath := envOr("NEKTON_ALIASES", "./aliases.json")
 	tset, err := template.Load(envOr("NEKTON_TEMPLATES", "./templates"), aliasesPath)
 	if err != nil {
@@ -65,13 +65,22 @@ func resolvePredicateArg(x string) string {
 		// prevent. Aliases resolve on their own.
 		tset, err = template.LoadAliases(aliasesPath)
 		if err != nil {
-			return x // not even a usable alias file: the argument is whatever the caller typed
+			// A MALFORMED alias file is fatal here too, and for the same reason it is in
+			// mustTemplateSet: with no aliases nothing resolves, so `by predicate qa:reviewed`
+			// answered `{"records":[]}` and exit 0 for a record the store holds. That is a silent
+			// wrong answer to a well-formed question - the thing this function's comment above says
+			// it exists to prevent - and it was left reachable when the missing-DIRECTORY case was
+			// fixed one function over. An absent alias file is still fine: LoadAliases returns an
+			// empty set for it, and a bare CURIE then fails the full-IRI check downstream.
+			return "", fmt.Errorf("alias file %s: %w\n"+
+				"  Without it %q cannot be resolved to the IRI claims are stored under, and the query\n"+
+				"  would answer \"none\" for records this store holds", aliasesPath, err, x)
 		}
 	}
 	if t, ok := tset.Get(x); ok && t.Predicate != "" {
-		return tset.Resolve(t.Predicate)
+		return tset.Resolve(t.Predicate), nil
 	}
-	return tset.Resolve(x)
+	return tset.Resolve(x), nil
 }
 
 // mustTemplateSet is the resolver the RDF projections need. They only ever RESOLVE a CURIE, so a
