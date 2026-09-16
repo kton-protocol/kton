@@ -93,6 +93,33 @@ that rule as much as the CLI does.
 Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
 are now flag parsing over the methods, the shape `plankton author` already has.
 
+### Fixed — re-ingesting a valid foton could not repair a planted object
+
+`persistRecord` reused whatever envelope was already at the object path, on the strength of it being
+there. An object whose stored `fotonId` named the target while its signed envelope described a
+**different** foton therefore kept its own envelope — `unionSignatures` keeps the first when the
+payloads differ — and:
+
+```
+new=true, err=nil, Len()=0, degraded count 1 → 2
+```
+
+`Add` reported a successful repair, `apply` rejected the retained envelope again, and re-ingesting
+the authentic foton could never fix it. A store with one planted file held a record that the one
+operation meant to heal it could not heal.
+
+The test is **identity, not bytes**, which is what keeps the legitimate case working: a genuine
+co-signature is the same payload signed by a second key — same id, same bytes — and still merges.
+What cannot merge is an envelope that is not this foton at all; the incoming valid one replaces it,
+and nothing is lost that belonged there, since the read path had already refused it and counted it
+degraded. A stored object that no longer parses is treated the same way: its signatures stand over
+bytes we cannot identify, so they are not evidence about this record.
+
+Not addressed here, and unchanged: a foton arriving in two different **serializations** of the same
+statement still keeps only the first signer's signature. That is the known 0.2 limitation recorded at
+the head of this file, it is a storage-format decision rather than a validation one, and it was
+measured against `dev` rather than assumed while writing this fix.
+
 ### Fixed — a deferred claim answered exactly like one the registry never saw
 
 A scoped claim whose `prev` or seed has not arrived is **persisted and offered to peers**, and kept
