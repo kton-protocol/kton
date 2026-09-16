@@ -186,9 +186,34 @@ authored by a 0.2 binary still stamps `specVersion: "0.1"`. A 0.1 binary **canno
 store and does not say so**; upgrade every binary that touches a shared registry at the same time,
 and read the first section of [`CHANGELOG.md`](CHANGELOG.md) before you do.
 
-*`go install kton.dev/...` does not work yet: the module paths are `kton.dev/plankton`,
-`kton.dev/nekton`, `kton.dev/kton`, but kton.dev does not serve the `go-import` meta redirect those
-need. Use a release archive or the source build below.*
+*`go install` works for **plankton** and not yet for the other two — kton.dev now serves the
+`go-import` meta for all three, but that was never the whole story:*
+
+```sh
+go install kton.dev/plankton/cmd/plankton@latest   # works, on Go 1.25 or newer
+go install kton.dev/nekton/cmd/nekton@latest       # fails: see below
+```
+
+*The modules live in subdirectories (`reference/`, `nekton/reference/`, `kton/reference/`) while
+their paths are `kton.dev/plankton` and so on. A three-field `go-import` cannot express that — the
+prefix names the repository root, and the directory is whatever follows it in the module path, which
+here is nothing. The optional fourth field says where the module actually is, and it is new: `go help
+importpath` — "Starting in Go 1.25, an optional subdirectory will be recognized." On an older
+toolchain the field is ignored and resolution fails, which is a stricter requirement than the
+`go 1.22` this repo builds under.*
+
+*`nekton` and `kton` fail for a different reason, unrelated to kton.dev: their `go.mod` carries
+`replace kton.dev/plankton => ../../reference`, which is how the workspace resolves the one-way
+kernel dependency, and `go install` refuses any module with a replace directive. Making them
+installable means replacing those with real version requirements — which needs `plankton` tagged
+first, since `nekton` cannot require a version that does not exist.*
+
+*Note also that a versioned install wants a **subdirectory-prefixed tag**: the same help text says
+"If set, all vcs tags must be prefixed with subdir", so `@v0.2.0` looks for `reference/v0.2.0`, not
+`v0.2.0`. Without such a tag Go falls back to a pseudo-version of the default branch, which is what
+the working command above does today.*
+
+*Until then: a release archive, or the source build below.*
 
 ## Build
 
