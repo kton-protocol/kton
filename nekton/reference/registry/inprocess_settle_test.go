@@ -92,6 +92,12 @@ func TestAddResolvesWhatWasWaiting(t *testing.T) {
 	for _, rec := range r.Records(0) {
 		seen[rec.ClaimID]++
 	}
+	// An empty feed makes `seen` empty and the loop below vacuous. Three records went in, so three
+	// distinct ids are expected; without this the "no duplicates" assertion passes on nothing.
+	if len(seen) != 3 {
+		t.Fatalf("the feed carries %d distinct claims, want 3 - the duplicate check below would "+
+			"otherwise be checking an empty map", len(seen))
+	}
 	for id, n := range seen {
 		if n != 1 {
 			t.Errorf("the feed carries claim %s %d times; settling must not re-append", id, n)

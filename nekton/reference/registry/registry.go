@@ -579,7 +579,8 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 			// and it survived OpenUnion too. The gate went on `Add` and on the ordinary replay path
 			// and stopped there. A peer takes the id -> claim binding on trust, so a row that fails
 			// its own derivation must not be offered by any route.
-			if !admissible(rec) {
+			ast, ok := admissible(rec)
+			if !ok {
 				// Counted as REFUSED, not dropped: refused is what settle returns, and a permanently
 				// invalid row is exactly what that number is for. (An increment of the named return
 				// here would be silently overwritten by the final `return len(pending) + refused`,
@@ -608,10 +609,10 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 				r.feed = append(r.feed, rec)
 				continue
 			}
-			st, _, err := claim.ParseEnvelope(rec.Envelope)
-			if err != nil {
-				continue // unparseable → drop
-			}
+			// admissible() already parsed this envelope and refused an unparseable one, so there is
+			// no second parse here. Replay used to parse each record up to three times: once in the
+			// admission check, once here, and once more inside index().
+			st := ast
 			p, _ := st.ParsePredicate()
 			if err := r.checkChain(rec.ClaimID, st, p); err != nil {
 				if errors.Is(err, errUnresolved) {
@@ -764,30 +765,30 @@ func (r *Registry) DeferredClaim(id string) (rec Record, waitingOnScope string, 
 //
 // Chain resolution is deliberately NOT here: an unresolved prev is incomplete, not invalid (SPEC
 // §11), and such a row is still owed to a peer.
-func admissible(rec Record) bool {
+func admissible(rec Record) (*claim.Statement, bool) {
 	st, payload, err := claim.ParseEnvelope(rec.Envelope)
 	if err != nil {
-		return false
+		return nil, false
 	}
 	if rec.ClaimID != "" && claim.ClaimID(payload) != rec.ClaimID {
 		fmt.Fprintf(os.Stderr, "warning: skipping planted claim: stored id %s but its envelope derives %s\n",
 			rec.ClaimID, claim.ClaimID(payload))
-		return false
+		return nil, false
 	}
 	if !rec.Envelope.HasSignature() {
 		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: it carries no signature (SPEC §8)\n", rec.ClaimID)
-		return false
+		return nil, false
 	}
 	p, perr := st.ParsePredicate()
 	if perr != nil {
 		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, perr)
-		return false
+		return nil, false
 	}
 	if verr := st.Validate(p); verr != nil {
 		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, verr)
-		return false
+		return nil, false
 	}
-	return true
+	return st, true
 }
 
 func (r *Registry) index(rec Record) (accepted bool) {
@@ -796,29 +797,15 @@ func (r *Registry) index(rec Record) (accepted bool) {
 	// would otherwise SHADOW the real claim in bySubject/bySigner/byPredicate - so `nekton about`/`by`
 	// answer "(none)" for a suppressed fail review. This is the check `Add` runs at ingest, missing on
 	// the read path.
-	st, payload, err := claim.ParseEnvelope(rec.Envelope)
-	if err == nil && rec.ClaimID != "" {
-		if derived := claim.ClaimID(payload); derived != rec.ClaimID {
-			fmt.Fprintf(os.Stderr, "warning: skipping planted claim: stored id %s but its envelope derives %s\n", rec.ClaimID, derived)
-			return false
-		}
-		// The rest of what Add enforces, applied HERE too. The read path re-derived the id
-		// and stopped, so a claim Add refuses was fully indexed if it arrived by any other route -
-		// and this package documents git merge as a supported federation transport, which bypasses
-		// Add entirely. Concretely: the exact record the GATED `when-unvalidated` attack proves is
-		// rejected - `"when":"whenever-you-like"` - was indexed and printed as an ordinary claim
-		// once appended to a store file by hand. The PoC only ever exercised the CLI ingest path.
-		if !rec.Envelope.HasSignature() {
-			fmt.Fprintf(os.Stderr, "warning: skipping claim %s: it carries no signature (SPEC §8; Add refuses these at ingest)\n", rec.ClaimID)
-			return false
-		}
-		if p, perr := st.ParsePredicate(); perr != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, perr)
-			return false
-		} else if verr := st.Validate(p); verr != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, verr)
-			return false
-		}
+	// ONE list of intrinsic checks, not two. These lived here AND, after the replay branches needed
+	// them, in a second copy - which is the "two opinions about admission" this package argues
+	// against everywhere else. The copies had already drifted: this one tolerated an unparseable
+	// envelope and stored it, the other refused it. No caller can reach here with one (all three
+	// parse first), so the drift was unreachable - but the next rule added would have gone into one
+	// of them.
+	st, ok := admissible(rec)
+	if !ok {
+		return false
 	}
 	if r.seen[rec.ClaimID] {
 		return true // already held; not a refusal
@@ -830,9 +817,9 @@ func (r *Registry) index(rec Record) (accepted bool) {
 	}
 	idx := len(r.records) - 1
 	r.claimByID[rec.ClaimID] = rec
-	if err != nil {
-		return true // held, but nothing further to index from it
-	}
+	// No unparseable branch here any more: admissible() above refused those, so `st` is valid. The
+	// branch that used to sit here returned true - "held, but nothing further to index from it" -
+	// which said a record was held that could not be.
 	p, _ := st.ParsePredicate()
 	for _, s := range st.Subject {
 		if k := s.Key(); k != "" {

@@ -124,6 +124,12 @@ func TestPlantedLineDoesNotBecomeTheRecord(t *testing.T) {
 		}
 		// Every feed entry must derive the id it is filed under. A peer that syncs this feed takes
 		// the binding on trust, so an entry that fails here is a false binding on the wire.
+		//
+		// The count first: with an empty feed the loop below asserts nothing and the test still
+		// passes, which is the defect this whole file is about, one level up.
+		if n := len(r.Records(0)); n == 0 {
+			t.Fatal("the feed is empty - the loop below would prove nothing")
+		}
 		for _, rec := range r.Records(0) {
 			_, payload, perr := claim.ParseEnvelope(rec.Envelope)
 			if perr != nil {
@@ -232,6 +238,14 @@ func TestEveryReplayBranchChecksAdmission(t *testing.T) {
 
 	check := func(t *testing.T, name string, rr *registry.Registry) {
 		t.Helper()
+		// A FLOOR before the loop. "no feed entry has a false binding" is trivially true of an empty
+		// feed, so without this the test passes while proving nothing - the shape it exists to catch,
+		// in the test itself. Exactly one row is expected: the authentic claim, the planted one
+		// refused.
+		if n := len(rr.Records(0)); n != 1 {
+			t.Fatalf("%s: feed has %d entries, want exactly 1 (the authentic claim) - anything else "+
+				"means the loop below is checking the wrong thing", name, n)
+		}
 		for _, rec := range rr.Records(0) {
 			_, payload, perr := claim.ParseEnvelope(rec.Envelope)
 			if perr != nil {
