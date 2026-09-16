@@ -560,34 +560,50 @@ func (r *Registry) positioned(rec Record) Record {
 	return rec
 }
 
-func (r *Registry) settle(pending []Record) (dropped int) {
+// settleItem is a pending row together with what parsing it produced. settle retries rows across
+// PASSES, and both admission and the parse are invariant across them - a row that derives its id and
+// validates on pass 1 still does on pass 3, and one that does not never will. Re-deriving them each
+// pass was pure waste, and measurable: a 400-row chain stored in reverse took 7.5s to replay against
+// 4.1s before the admission check was added, on every Open. Parsed once, carried through.
+type settleItem struct {
+	rec Record
+	st  *claim.Statement
+	p   *claim.Predicate
+}
+
+func (r *Registry) settle(records []Record) (dropped int) {
 	refused := 0
+	// ADMISSION FIRST, once, for every row and every branch. `index()` is where a row's intrinsic
+	// checks live - the derived id must match the stored one, the envelope must carry a signature,
+	// the predicate must parse and validate - and two of the branches below used to reach the feed
+	// without them. A second row filed under a claim id this store already holds was taken for a
+	// twin on the strength of the id FIELD, so a planted row carrying someone else's envelope was
+	// positioned and served:
+	//
+	//     Len()=1  feed=2  Dropped()=0
+	//     feed row: stored=d3abf60a… derives=703c9fda…  MATCH=false
+	//
+	// and it survived OpenUnion too. A peer takes the id -> claim binding on trust, so a row that
+	// fails its own derivation must not be offered by any route.
+	pending := make([]settleItem, 0, len(records))
+	for _, rec := range records {
+		st, ok := admissible(rec)
+		if !ok {
+			// REFUSED, not dropped: refused is what settle returns, and a permanently invalid row is
+			// what that number is for. (Incrementing the named return here would be overwritten by
+			// the final `return len(pending) + refused`, which is how a first attempt reported 0 and
+			// the existing Dropped() test caught it.)
+			refused++
+			continue
+		}
+		pp, _ := st.ParsePredicate()
+		pending = append(pending, settleItem{rec: rec, st: st, p: pp})
+	}
 	for {
 		progress := false
-		var next []Record
-		for _, rec := range pending {
-			// ADMISSION FIRST, for every branch. `index()` is where a row's intrinsic checks live -
-			// the derived id must match the stored one, the envelope must carry a signature, the
-			// predicate must parse and validate - and the two branches BELOW this point used to
-			// reach the feed without it. A second row filed under a claim id this store already
-			// holds was treated as a twin on the strength of the id FIELD, so a planted row carrying
-			// someone else's envelope was positioned and served:
-			//
-			//     Len()=1  feed=2  Dropped()=0
-			//     feed row: stored=d3abf60a… derives=703c9fda…  MATCH=false
-			//
-			// and it survived OpenUnion too. The gate went on `Add` and on the ordinary replay path
-			// and stopped there. A peer takes the id -> claim binding on trust, so a row that fails
-			// its own derivation must not be offered by any route.
-			ast, ok := admissible(rec)
-			if !ok {
-				// Counted as REFUSED, not dropped: refused is what settle returns, and a permanently
-				// invalid row is exactly what that number is for. (An increment of the named return
-				// here would be silently overwritten by the final `return len(pending) + refused`,
-				// which is how the first version of this reported 0 and the existing test caught it.)
-				refused++
-				continue
-			}
+		var next []settleItem
+		for _, it := range pending {
+			rec, st, p := it.rec, it.st, it.p
 			if r.seen[rec.ClaimID] {
 				// A same-payload TWIN from another source. A claim id covers the PAYLOAD only, so two
 				// independent signers of identical bytes are ONE claim with TWO signatures - which is
@@ -609,14 +625,9 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 				r.feed = append(r.feed, rec)
 				continue
 			}
-			// admissible() already parsed this envelope and refused an unparseable one, so there is
-			// no second parse here. Replay used to parse each record up to three times: once in the
-			// admission check, once here, and once more inside index().
-			st := ast
-			p, _ := st.ParsePredicate()
 			if err := r.checkChain(rec.ClaimID, st, p); err != nil {
 				if errors.Is(err, errUnresolved) {
-					next = append(next, rec) // INCOMPLETE, not invalid (§11) - defer to a later pass
+					next = append(next, it) // INCOMPLETE, not invalid (§11) - defer to a later pass
 				}
 				// A structural violation is permanent: retrying it forever and then reporting it as
 				// an unresolved dependency describes the wrong problem, and serving it to a peer
@@ -641,8 +652,9 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 			// Whatever never resolved is a persisted-but-unreachable successor. Record the scope it names
 			// so `head` can flag a possible TRUNCATION (a withheld middle claim), rather than silently
 			// presenting the shortened chain's tip as the sealed head.
-			for _, rec := range pending {
-				if st, _, err := claim.ParseEnvelope(rec.Envelope); err == nil {
+			for _, it := range pending {
+				rec := it.rec
+				{
 					// ONCE PER CLAIM ID, not once per pending line. The subnekton is append-only, so
 					// a co-signed claim has one line per signature set that arrived - and counting
 					// each of them gave Deferred()=2 and Unresolved=2 for ONE record on every
@@ -661,15 +673,17 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 						}
 						continue
 					}
+					// The predicate was parsed once, when this row was admitted; there is no
+					// second parse here either.
 					var dep string
-					if p, e := st.ParsePredicate(); e == nil && p != nil {
-						if p.Scope != "" {
+					if it.p != nil {
+						if it.p.Scope != "" {
 							if r.unresolved == nil {
 								r.unresolved = map[string]int{}
 							}
-							r.unresolved[p.Scope]++
+							r.unresolved[it.p.Scope]++
 						}
-						dep = waitsOn(p)
+						dep = waitsOn(it.p)
 					}
 					// Held, unresolvable, and still owed to a peer (see Records) - so it needs a
 					// position like anything else in the feed, or it is owed and never delivered.
