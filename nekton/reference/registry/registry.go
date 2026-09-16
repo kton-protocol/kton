@@ -324,6 +324,19 @@ type Registry struct {
 	// the real head. Surfaced by `head` so a truncation is never silent.
 	unresolved map[string]int
 
+	// deferred: claim id -> the record, for claims that are PERSISTED and offered to peers but kept
+	// out of every index because their prev/seed has not arrived. Held-but-deferred is a THIRD state,
+	// and it used to collapse into "not held": `show` and `verify` answered a deferred id with the
+	// same message and the same exit code as a hash nobody has ever heard of. SPEC §12 makes the
+	// distinction normative - "we do not have it" and "we have nothing about it" are different
+	// answers, and a reader acts differently on each - and held-but-waiting is a third.
+	//
+	// Nothing new is tracked here that the kernel did not already know: these records are in `feed`
+	// and counted in `deferredCount`. They are keyed by id so a LOOKUP can find them, which is the
+	// one thing that was missing. They stay out of claimByID and every query index: a deferred claim
+	// must not answer `about`/`by` as though its chain held.
+	deferred map[string]Record
+
 	peers map[string]int
 }
 
@@ -408,6 +421,7 @@ func newRegistry(dir string) *Registry {
 		seeds:       map[string]bool{},
 		inScope:     map[string]map[string]bool{},
 		unresolved:  map[string]int{},
+		deferred:    map[string]Record{},
 		material:    map[string][]VerificationMaterial{},
 		peers:       map[string]int{},
 	}
@@ -586,8 +600,10 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 					}
 					// Held, unresolvable, and still owed to a peer (see Records) - so it needs a
 					// position like anything else in the feed, or it is owed and never delivered.
-					r.feed = append(r.feed, r.positioned(rec))
+					rec = r.positioned(rec)
+					r.feed = append(r.feed, rec)
 					r.deferredCount++
+					r.rememberDeferred(rec)
 				}
 			}
 			// Deferred and refused are both dropped from the INDEX, and they are not the same
@@ -601,6 +617,41 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 // Unresolved reports how many persisted claims name this scope but do not resolve (a missing prev/seed)
 // - a non-zero count means the scope may be TRUNCATED and its reported head is only provisional.
 func (r *Registry) Unresolved(scope string) int { return r.unresolved[scope] }
+
+// rememberDeferred records a persisted-but-unindexed claim so a lookup can find it. Called from both
+// deferral sites - Add's and settle's - because a claim deferred at ingest and one deferred on replay
+// are the same fact about this store, and a reader that could see only one of them would get a
+// different answer before and after a restart.
+func (r *Registry) rememberDeferred(rec Record) {
+	if r.deferred == nil {
+		r.deferred = map[string]Record{}
+	}
+	r.deferred[rec.ClaimID] = rec
+}
+
+// DeferredClaim reports a claim this registry HOLDS and offers to peers but has kept out of every
+// index because its prev/seed has not arrived, together with the scope it is waiting on. (Deferred()
+// below is the COUNT of such records - the two are named apart on purpose: a count answers "is this
+// store complete", a lookup answers "what is the status of this id".)
+//
+// It is deliberately separate from Claim: a deferred claim must not answer `about`/`by` as though its
+// chain resolved, and merging the two lookups would put it back into query results by the back door.
+// What a caller gets is the ability to tell three states apart - not held, held and resolved, held
+// and waiting - which SPEC §12 requires and which prose-parsing an error message is not.
+func (r *Registry) DeferredClaim(id string) (rec Record, waitingOnScope string, ok bool) {
+	rec, ok = r.deferred[id]
+	if !ok {
+		return Record{}, "", false
+	}
+	if st, _, err := claim.ParseEnvelope(rec.Envelope); err == nil && st != nil {
+		if p, perr := st.ParsePredicate(); perr == nil && p != nil {
+			// The scope it names is what it waits for; `prev` is the specific link, and a reader
+			// that wants it has the envelope.
+			waitingOnScope = p.Scope
+		}
+	}
+	return rec, waitingOnScope, true
+}
 
 // index records + indexes a claim already assigned a seq (used during replay and after Add).
 //
@@ -828,6 +879,7 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 		// Out of every index, but IN the feed: a peer must be offered what we hold (see Records).
 		r.feed = append(r.feed, rec)
 		r.deferredCount++
+		r.rememberDeferred(rec)
 		return id, true, nil
 	}
 	r.index(rec)

@@ -104,18 +104,30 @@ func regOrDefault(explicit string) string {
 
 // readEnvelopeOrID loads a DSSE envelope from a file path, OR - if the arg is a "sha256:" claim
 // id - resolves it from the local registry, so file-taking commands also accept a stored claim id.
-func readEnvelopeOrID(arg string) (core.Envelope, error) {
+//
+// waitingOnScope is non-empty when the record is HELD BUT DEFERRED: persisted, offered to peers, and
+// kept out of every index because its prev/seed has not arrived. That is a third state, and it used
+// to collapse into "not held" - a deferred id and a hash nobody ever heard of produced the same
+// message and the same exit code. SPEC §12 makes the distinction normative.
+func readEnvelopeOrID(arg string) (env core.Envelope, waitingOnScope string, err error) {
 	if strings.HasPrefix(arg, "sha256:") {
-		r, err := registry.Open(dir())
-		if err != nil {
-			return core.Envelope{}, err
+		r, oerr := registry.Open(dir())
+		if oerr != nil {
+			return core.Envelope{}, "", oerr
 		}
 		if rec, ok := r.Claim(arg); ok {
-			return rec.Envelope, nil
+			return rec.Envelope, "", nil
 		}
-		return core.Envelope{}, fmt.Errorf("no claim %s in the registry (%s)", arg, dir())
+		if rec, scope, ok := r.DeferredClaim(arg); ok {
+			if scope == "" {
+				scope = "(an unnamed scope)"
+			}
+			return rec.Envelope, scope, nil
+		}
+		return core.Envelope{}, "", fmt.Errorf("no claim %s in the registry (%s)", arg, dir())
 	}
-	return readEnvelope(arg)
+	e, rerr := readEnvelope(arg)
+	return e, "", rerr
 }
 
 func readEnvelope(path string) (core.Envelope, error) {
@@ -350,7 +362,7 @@ func run(cmd string, args []string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("usage: nekton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>")
 		}
-		env, err := readEnvelopeOrID(args[0])
+		env, deferredScope, err := readEnvelopeOrID(args[0])
 		if err != nil {
 			return err
 		}
@@ -408,6 +420,19 @@ func run(cmd string, args []string) error {
 				os.Exit(3)
 			}
 			fmt.Println("structure:       VALID - the fields SPEC §7.2/§7.3 require are present")
+			// Held, signed, well-formed - and its chain does not resolve HERE. Exit 4, because the
+			// existing codes keep their meanings (1 = tampered, 2 = wrong key, 3 = unstorable) and
+			// this is none of them: nothing is wrong with the record, something is missing from this
+			// store. Reporting it as success would tell a caller the chain checks out; reporting it
+			// as 3 would say the claim is malformed. Both are false, and both are what a reader
+			// would have had to infer from prose before.
+			if deferredScope != "" {
+				fmt.Printf("chain:           DEFERRED - held and offered to peers, but its prev/seed for scope %s\n", deferredScope)
+				fmt.Println("                 has not arrived, so it is in no index here. Not a defect in the record:")
+				fmt.Println("                 add the missing predecessor and it resolves (SPEC §11: incomplete, not invalid).")
+				os.Exit(4)
+			}
+			fmt.Println("chain:           RESOLVED - this store holds what the claim depends on")
 			return nil
 		case suppliedKeyid != signerKeyid:
 			fmt.Println("signature:       UNVERIFIED - WRONG KEY: this key did not sign the record")
