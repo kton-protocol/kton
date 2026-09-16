@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -238,5 +239,90 @@ func TestStoreAnchorRoutesADeferredClaim(t *testing.T) {
 	rec, _, ok := r2.DeferredClaim(scopedID)
 	if !ok || rec.Envelope.Payload != scoped.Payload {
 		t.Error("the envelope the proof binds to did not survive")
+	}
+}
+
+// TestClaimAnchorChecksBytesToo: the claim branch skipped the byte check the foton branch makes, on
+// the reasoning - written into the code - that "a claim id IS the payload hash, so the binding is
+// preserved by the id itself". That is wrong, and wrong in the direction that matters: a claim id is
+// sha256(canon(Statement)), the CANONICAL hash. Two genuinely signed envelopes carrying the same
+// Statement in different serializations share an id and differ in bytes, and a Rekor entry binds the
+// bytes it was handed.
+//
+//	compact   236 bytes   id sha256:59c04199…
+//	indented  327 bytes   id sha256:59c04199…    both admissible
+//
+// So anchoring one against a store holding the other archived a proof that VerifyBinds later rejects
+// as being about a different record - the exact failure the foton branch guards against, reached
+// through the door that comment held open. It is the known 0.2 signature-loss limitation wearing a
+// different hat.
+func TestClaimAnchorChecksBytesToo(t *testing.T) {
+	dir := t.TempDir()
+	ndir := filepath.Join(dir, "nekton")
+	t.Setenv("NEKTON_DIR", ndir)
+	t.Setenv("PLANKTON_DIR", filepath.Join(dir, "plankton"))
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compactEnv, id, err := nclaim.SignWith(nclaim.Spec{
+		Subject: []nclaim.SubjectSpec{{URI: "urn:x"}}, Predicate: "https://kton.dev/v/note",
+		Object: map[string]any{"a": "1"}, By: "CN=t", When: "2026-07-16T00:00:00Z"}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, err := base64.StdEncoding.DecodeString(compactEnv.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, compact, "", "  "); err != nil {
+		t.Fatal(err)
+	}
+	pb := pretty.Bytes()
+	indented := core.Envelope{PayloadType: compactEnv.PayloadType,
+		Payload: base64.StdEncoding.EncodeToString(pb)}
+	indented.Signatures = append(indented.Signatures, struct {
+		KeyID string `json:"keyid"`
+		Sig   string `json:"sig"`
+	}{
+		KeyID: core.KeyIDHex(priv.Public().(ed25519.PublicKey)),
+		Sig:   base64.StdEncoding.EncodeToString(ed25519.Sign(priv, core.PAE(indented.PayloadType, pb))),
+	})
+
+	// The premise, asserted rather than assumed.
+	if nclaim.ClaimID(pb) != id {
+		t.Fatalf("the two serializations do not share an id - the premise is gone")
+	}
+	if indented.Payload == compactEnv.Payload {
+		t.Fatal("the two serializations have identical bytes - nothing to mix up")
+	}
+
+	r, err := nreg.Open(ndir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Add(compactEnv); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := []byte(`{"logIndex":1}`)
+	if err := storeAnchor(indented, nil, raw); err == nil {
+		t.Error("archived a proof bound to bytes this store does not hold")
+	} else if !strings.Contains(err.Error(), "same id but not the same bytes") {
+		t.Errorf("the refusal does not explain the collision: %v", err)
+	}
+	// And nothing was written on the way out.
+	r2, err := nreg.Open(ndir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(r2.Material(id)); n != 0 {
+		t.Errorf("material was attached anyway: %d entries", n)
+	}
+	// The variant the store DOES hold still anchors.
+	if err := storeAnchor(compactEnv, nil, raw); err != nil {
+		t.Errorf("anchoring the stored variant was refused - the gate refuses the normal path: %v", err)
 	}
 }

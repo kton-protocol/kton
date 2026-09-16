@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"kton.dev/nekton/claim"
 	"kton.dev/nekton/template"
 )
 
@@ -105,4 +106,58 @@ func TestAStrayFileThatDoesNotUnmarshalIsAlsoSkipped(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAnEmptyFileIsAFile: `Spec` treated a present zero-length slice as an absent file. That
+// conflated two different facts and got both wrong - an OPTIONAL empty file was silently dropped
+// from what gets signed, and a REQUIRED one was refused as "missing required file field" although it
+// had been supplied, sending the caller after an argument they gave.
+//
+// A zero-length artifact is an ordinary result: an empty log, a report with no findings, a clean
+// diff. It has a content address like anything else - sha256 of no bytes is e3b0c442… - and dropping
+// it loses evidence the caller passed.
+func TestAnEmptyFileIsAFile(t *testing.T) {
+	const emptySHA = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	tpl := []byte(`{"name":"qa/r","predicate":"https://kton.dev/v/x","fields":{` +
+		`"opt":{"type":"file","role":"evidence"},"req":{"type":"file","role":"evidence","required":true}}}`)
+	set, err := template.New(map[string][]byte{"a": tpl}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subj := "sha256:" + strings.Repeat("a", 64)
+
+	hasEmpty := func(sp claim.Spec) bool {
+		for _, e := range sp.Evidence {
+			if m, ok := e.(map[string]any); ok && m["hash"] == emptySHA {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("an empty optional file is evidence, not silence", func(t *testing.T) {
+		sp, err := set.Spec("qa/r", subj, nil, map[string][]byte{"opt": {}, "req": []byte("x")})
+		if err != nil {
+			t.Fatalf("refused: %v", err)
+		}
+		if !hasEmpty(sp) {
+			t.Errorf("the empty file was dropped; evidence = %v", sp.Evidence)
+		}
+	})
+
+	t.Run("an empty required file satisfies the requirement", func(t *testing.T) {
+		sp, err := set.Spec("qa/r", subj, nil, map[string][]byte{"req": {}})
+		if err != nil {
+			t.Fatalf("a supplied empty file was reported missing: %v", err)
+		}
+		if !hasEmpty(sp) {
+			t.Errorf("the empty file was dropped; evidence = %v", sp.Evidence)
+		}
+	})
+
+	t.Run("a genuinely absent required file is still missing", func(t *testing.T) {
+		if _, err := set.Spec("qa/r", subj, nil, nil); err == nil {
+			t.Error("an absent required file was accepted - not supplied and empty are different")
+		}
+	})
 }

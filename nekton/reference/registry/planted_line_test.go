@@ -184,3 +184,88 @@ func TestPlantedLineDoesNotBecomeTheRecord(t *testing.T) {
 		}
 	})
 }
+
+// TestEveryReplayBranchChecksAdmission: the feed gate went on `Add` and on settle's ORDINARY branch
+// and stopped there. A second row filed under a claim id the store already holds was taken for a
+// twin on the strength of the id FIELD, so a planted row carrying someone else's envelope was
+// positioned and served:
+//
+//	Len()=1  feed=2  Dropped()=0
+//	feed row: stored=d3abf60a… derives=703c9fda…  MATCH=false
+//
+// and it survived OpenUnion too. This asserts the property a peer actually depends on - every row
+// the feed offers derives the id it is filed under - through BOTH read paths, so a gate added to one
+// branch and not another fails here rather than at a peer.
+func TestEveryReplayBranchChecksAdmission(t *testing.T) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, idA := mkClaim(t, priv, "urn:A", "1")
+	b, idB := mkClaim(t, priv, "urn:B", "2")
+	if idA == idB {
+		t.Fatal("the two claims share an id - nothing is being planted")
+	}
+
+	dir := t.TempDir()
+	r, err := registry.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Add(a); err != nil {
+		t.Fatal(err)
+	}
+	// A SECOND row under A's id, carrying B's envelope - the shape the twin branch accepted.
+	path := filepath.Join(dir, "objects", "unscoped.nekton.jsonl")
+	line, err := json.Marshal(map[string]any{"claimId": idA, "envelope": b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	check := func(t *testing.T, name string, rr *registry.Registry) {
+		t.Helper()
+		for _, rec := range rr.Records(0) {
+			_, payload, perr := claim.ParseEnvelope(rec.Envelope)
+			if perr != nil {
+				t.Errorf("%s: feed entry %s does not parse: %v", name, rec.ClaimID, perr)
+				continue
+			}
+			if derived := claim.ClaimID(payload); derived != rec.ClaimID {
+				t.Errorf("%s offers a FALSE BINDING: stored id %s, envelope derives %s", name,
+					rec.ClaimID, derived)
+			}
+		}
+		if _, ok := rr.Claim(idB); ok {
+			t.Errorf("%s: the planted envelope became retrievable under its own id", name)
+		}
+	}
+
+	r2, err := registry.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(t, "Open", r2)
+	if r2.Dropped() == 0 {
+		t.Error("Open reports nothing dropped although a row was refused - the number says " +
+			"everything arrived")
+	}
+
+	u, err := registry.OpenUnion(dir, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(t, "OpenUnion", u)
+
+	// And the authentic claim is still there: the gate must not cost the good row.
+	if _, ok := r2.Claim(idA); !ok {
+		t.Error("the authentic claim is gone - the gate refused the normal path")
+	}
+}

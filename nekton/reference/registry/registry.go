@@ -566,6 +566,27 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 		progress := false
 		var next []Record
 		for _, rec := range pending {
+			// ADMISSION FIRST, for every branch. `index()` is where a row's intrinsic checks live -
+			// the derived id must match the stored one, the envelope must carry a signature, the
+			// predicate must parse and validate - and the two branches BELOW this point used to
+			// reach the feed without it. A second row filed under a claim id this store already
+			// holds was treated as a twin on the strength of the id FIELD, so a planted row carrying
+			// someone else's envelope was positioned and served:
+			//
+			//     Len()=1  feed=2  Dropped()=0
+			//     feed row: stored=d3abf60a… derives=703c9fda…  MATCH=false
+			//
+			// and it survived OpenUnion too. The gate went on `Add` and on the ordinary replay path
+			// and stopped there. A peer takes the id -> claim binding on trust, so a row that fails
+			// its own derivation must not be offered by any route.
+			if !admissible(rec) {
+				// Counted as REFUSED, not dropped: refused is what settle returns, and a permanently
+				// invalid row is exactly what that number is for. (An increment of the named return
+				// here would be silently overwritten by the final `return len(pending) + refused`,
+				// which is how the first version of this reported 0 and the existing test caught it.)
+				refused++
+				continue
+			}
 			if r.seen[rec.ClaimID] {
 				// A same-payload TWIN from another source. A claim id covers the PAYLOAD only, so two
 				// independent signers of identical bytes are ONE claim with TWO signatures - which is
@@ -735,6 +756,40 @@ func (r *Registry) DeferredClaim(id string) (rec Record, waitingOnScope string, 
 // A refusal is a record this store will not answer for. Already-held and envelope-unparseable are
 // NOT refusals: in both the record is held, and the second is deliberately tolerated so one bad line
 // cannot take a store's readable records with it.
+// admissible reports whether a stored row passes the INTRINSIC checks - the ones that depend on the
+// row alone and not on what else the store holds. It is what `index` applies, lifted out so every
+// replay branch can apply it BEFORE deciding what kind of row this is: a twin, a deferral or an
+// ordinary record. Deciding that first, and checking afterwards, is how a planted row reached the
+// feed as a "twin".
+//
+// Chain resolution is deliberately NOT here: an unresolved prev is incomplete, not invalid (SPEC
+// §11), and such a row is still owed to a peer.
+func admissible(rec Record) bool {
+	st, payload, err := claim.ParseEnvelope(rec.Envelope)
+	if err != nil {
+		return false
+	}
+	if rec.ClaimID != "" && claim.ClaimID(payload) != rec.ClaimID {
+		fmt.Fprintf(os.Stderr, "warning: skipping planted claim: stored id %s but its envelope derives %s\n",
+			rec.ClaimID, claim.ClaimID(payload))
+		return false
+	}
+	if !rec.Envelope.HasSignature() {
+		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: it carries no signature (SPEC §8)\n", rec.ClaimID)
+		return false
+	}
+	p, perr := st.ParsePredicate()
+	if perr != nil {
+		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, perr)
+		return false
+	}
+	if verr := st.Validate(p); verr != nil {
+		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, verr)
+		return false
+	}
+	return true
+}
+
 func (r *Registry) index(rec Record) (accepted bool) {
 	// SECURITY: RE-DERIVE the claim id from the envelope; never trust the on-disk claimId (or filename).
 	// A planted file whose stored claimId equals a target's, but whose envelope is a different claim,

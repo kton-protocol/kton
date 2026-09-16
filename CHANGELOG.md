@@ -133,6 +133,43 @@ while checking nothing.
 
 Two doc comments that had been detached from their functions by insertions are reattached.
 
+### Fixed — five from a follow-up review of the fix-review range
+
+**A planted row reached the feed as a "twin" (#190).** The admission gate went on `Add` and on
+replay's ordinary branch and stopped there. A second row filed under a claim id the store already
+holds was taken for a co-signature on the strength of the id *field*:
+
+```
+Len()=1  feed=2  Dropped()=0
+feed row: stored=d3abf60a…  derives=703c9fda…  MATCH=false
+```
+
+and it survived `OpenUnion` too. Every replay branch now checks admission **before** deciding what
+kind of row it is.
+
+**An unsigned same-id object still defeated repair (#191).** The check added for that case verified
+the stored envelope's derived foton id and stopped. An envelope can derive the right id and still be
+one this store would never admit — a signature *array* whose entry carries an empty `sig`. The union
+counted the entry, the stored envelope won, and re-ingesting the authentic foton left `Len()=0`
+before, after, and after a reopen. `CheckAdmissible` — the gate `Add` runs, extracted two changes
+earlier so `verify` could stop keeping a shorter copy — is applied here now.
+
+**`anchor --store` trusted a claim id to pin bytes (#192).** The claim branch skipped the byte check
+the foton branch makes, on reasoning written into the code: *"a claim id IS the payload hash"*. It is
+not — it is `sha256(canon(Statement))`. Two genuinely signed envelopes carrying one Statement in
+different serializations share an id and differ in bytes (236 vs 327, both admissible), and a Rekor
+entry binds the bytes it was handed. The known 0.2 signature-loss limitation in another hat, used as
+an argument for safety where it means the opposite.
+
+**A partial checklist counted as a defence (#193).** The four-eyes PoC excluded *no* checklist and
+not *half* a checklist: a scenario that printed an unrelated condition and stopped before evaluating
+four-eyes fell through to UNTICKED, which the verdict reads as prevention. It now requires the
+four-eyes line itself.
+
+**An empty file was treated as no file (#194).** A zero-length artifact is an ordinary result and has
+a content address like any other. An optional one was silently dropped from what gets signed; a
+required one was refused as *missing* although it had been supplied.
+
 ### Fixed — a co-signature lost on a deferred claim, and two counts that disagreed with the store
 
 The idempotence guard added a change earlier for a double-count returned unconditionally on a
