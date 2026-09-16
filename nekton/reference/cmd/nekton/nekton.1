@@ -75,7 +75,7 @@ subnekton, so handing a scope over hands its evidence over too. Stored, NEVER ev
 .B nekton material \fIsha256:id\fR [--json]
 What verification material is attached to a record. Listed, not verified.
 .TP
-.B nekton nanopublish \fIclaim.dsse.json\fR [--rsa \fIkey.pem\fR] [--creator \fIIRI\fR] [-o \fIout\fR]
+.B nekton nanopublish \fIclaim.dsse.json\fR [--rsa \fIkey.pem\fR] [--creator \fIIRI\fR] [-o \fIout\fR] [\fB--trust-keys \fID\fR]
 Render a claim to its nanopublication face and RSA-sign it, minting a Trusty URI - the external
 publication projection (SPEC Clause 14). The projection's hash legitimately differs from the claim
 id; the binding back is an explicit provenance reference, never assumed hash equality.

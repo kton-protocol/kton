@@ -149,7 +149,16 @@ func nanopubQuads(c *trigCtx, st *claim.Statement, body map[string]any, env core
 		add(ASSERT, P["nk"]+"signerVerified", litT("true", P["xsd"]+"boolean"), PROV)
 	} else {
 		add(ASSERT, P["nk"]+"claimedSigner", iriT(agent), PROV)
-		add(ASSERT, P["nk"]+"signerVerified", litT("false", P["xsd"]+"boolean"), PROV)
+		// NO nk:signerVerified false when nobody was ASKED. `false` conflates "a trusted key was
+		// supplied and did not verify" with "no trusted key was supplied", and this goes into
+		// published, permanent RDF. Absence is the honest form: the attribution is already downgraded
+		// to nk:claimedSigner, which is the part a gate reads. Asserting a verdict nobody established
+		// is what SPEC §8.1's read-path boundary forbids.
+		//
+		// The predicate keeps its meaning where it IS asserted, so no published graph is reinterpreted.
+		if len(c.trustKeys) > 0 {
+			add(ASSERT, P["nk"]+"signerVerified", litT("false", P["xsd"]+"boolean"), PROV)
+		}
 	}
 	if when != "" {
 		add(ASSERT, P["prov"]+"generatedAtTime", litT(when, P["xsd"]+"dateTime"), PROV)
@@ -394,7 +403,11 @@ func nanopublish(args []string) error {
 		}
 	}
 	if in == "" {
-		return fmt.Errorf("usage: nekton nanopublish <claim.dsse.json|sha256:id> [--rsa key.pem] [--creator IRI] [-o out.trig]")
+		return fmt.Errorf("usage: nekton nanopublish <claim.dsse.json|sha256:id> [--rsa key.pem] " +
+			"[--creator IRI] [--trust-keys <dir>] [-o out.trig]\n" +
+			"  --trust-keys decides what the PUBLISHED RDF asserts about the signer: with a key that\n" +
+			"  verifies, prov:wasAttributedTo; without it, only nk:claimedSigner. A nanopublication is\n" +
+			"  permanent, so this is not a display option.")
 	}
 	env, deferredScope, _, err := readEnvelopeOrID(in)
 	if err != nil {

@@ -93,6 +93,58 @@ that rule as much as the CLI does.
 Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
 are now flag parsing over the methods, the shape `plankton author` already has.
 
+### Fixed — thirteen more, from reviewing the 25 commits no external reviewer had seen
+
+Five of them are regressions from the template extraction earlier in this release, measured against
+a build of its parent commit rather than inferred.
+
+**Aliases were being discarded with the template directory, changing a published term IRI.**
+`template.Load` fails when `./templates` does not exist, and the fallback had no aliases at all. But
+`export --nanopub` and `nanopublish` have nothing to do with templates and take `--aliases`
+explicitly, so that is the *normal* case for a publisher:
+
+```
+pre-extraction, ./templates present or absent:  nk:outcome  =  https://kton.dev/v/outcome
+after,          ./templates absent:             <https://kton.dev/v/lab/outcome>
+```
+
+A different term, into signed RDF, decided by whether an unrelated directory happened to exist. The
+same root cause made `nekton by predicate qa:reviewed` answer `(none)` for a record the store held —
+the exact silent-empty-answer that function's own comment says it exists to prevent. Aliases now
+load on their own (`template.LoadAliases`).
+
+**A duplicate template name resolved by map order.** Two files declaring one name: six consecutive
+`nekton templates` runs printed one predicate five times and the other once, so
+`annotate --template qa/review` could sign a **different predicate** run to run. Refused now, naming
+the directory and both predicates.
+
+**Two smaller ones from the same extraction:** `--set report=` on an *optional* file field failed
+where it used to sign (a script passing an unset variable), and the default output filename used the
+alias rather than the resolved name.
+
+**`annotate`, `attach` and `material` took last-wins positionals.** `annotate <a> <b>` signed a claim
+about `<b>` and said nothing. The argument for refusing this on `seed` was that a scope name is
+identity; a claim's subject is what the claim is *about*, is covered by its id, and is signed.
+
+**The torn-tail repair had not reached either material appender.** Same failure mode as the record
+log's: a crash mid-append leaves an unterminated line, the next write concatenates onto it, and the
+reader discards **both** — an acknowledged attach lost to somebody else's interrupted one.
+
+**`Add` never re-settled, so a deferred record stayed deferred for the life of the process** even
+after its dependency arrived. The CLI hid it (the next command reopens); a linked consumer saw a
+claim that never resolved. It also made `add`'s own summary contradict itself and depend on argument
+order — *"indexed 2 claims, 0 refused (registry now holds 1)"*.
+
+**Four outputs reported a verdict nobody established**, all the shape §8.1 forbids. `export` answered
+`"claims": []` for a store that holds and serves a record; `signerVerified: false` was emitted for
+every claim when no `--trust-keys` was given; `nanopublish` asserted `nk:signerVerified false` into
+permanent RDF on the same basis, with the flag that changes it undocumented; and `plankton reuse`
+carried a constant `"verified": false`. Verification is reported as `verified` / `failed` /
+`unchecked` now, the unchecked case asserts nothing in published RDF, and `export` names what it
+holds but cannot assert.
+
+Two shell-quoting artefacts (`'"'"'`) that had been committed into source comments were removed.
+
 ### Fixed — five defects found by re-reviewing this release's own fixes
 
 An external review reported that several fixes work for their original reproductions and remain

@@ -940,7 +940,59 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 			"see the warning above for which check it failed", id)
 	}
 	r.feed = append(r.feed, rec)
+	// This record may be the dependency something already held has been waiting for. `Add` used to
+	// leave those alone, so within ONE process adding a seed did not resolve the scoped claim that
+	// named it:
+	//
+	//     add the scoped claim   -> indexed=false deferred=true
+	//     add its seed           -> indexed=false deferred=true   <- still
+	//     reopen                 -> indexed=true  deferred=false
+	//
+	// The CLI hid it, because the next command reopens. A LINKED consumer - which is what the
+	// registry methods and the template package were extracted for - saw a claim that never
+	// resolved, with no way to tell that reopening would fix it. It also made `add`'s own summary
+	// wrong and order-dependent: "indexed 2 claims, 0 refused (registry now holds 1)".
+	r.settleDeferred()
 	return id, true, nil
+}
+
+// settleDeferred retries every held-but-deferred record against the current index, repeating while
+// anything resolves - one arrival can unblock a chain, and unblocking a link can unblock the next.
+//
+// It only ever MOVES a record from deferred to indexed. Nothing is persisted (the records are
+// already on disk), nothing is appended to the feed (they were offered when they arrived, and a
+// second entry would deliver them twice), and a record that still does not resolve stays exactly as
+// it was. So calling it cannot lose work, and calling it when nothing is pending costs one map
+// length check.
+func (r *Registry) settleDeferred() {
+	for len(r.deferred) > 0 {
+		progress := false
+		for id, rec := range r.deferred {
+			st, _, err := claim.ParseEnvelope(rec.Envelope)
+			if err != nil {
+				continue // unparseable: it was never going to resolve
+			}
+			p, perr := st.ParsePredicate()
+			if perr != nil {
+				continue
+			}
+			if cerr := r.checkChain(id, st, p); cerr != nil {
+				continue // still waiting, or permanently invalid - either way, leave it
+			}
+			if !r.index(rec) {
+				continue
+			}
+			delete(r.deferred, id)
+			r.deferredCount--
+			if p.Scope != "" && r.unresolved[p.Scope] > 0 {
+				r.unresolved[p.Scope]--
+			}
+			progress = true
+		}
+		if !progress {
+			return
+		}
+	}
 }
 
 // scopeOf reports which subnekton a claim belongs to: a seed opens - and belongs to - its own scope
@@ -1608,12 +1660,29 @@ func (r *Registry) AttachMaterial(vm VerificationMaterial) error {
 		if err != nil {
 			return err
 		}
+		// Isolate a TORN TAIL, exactly as appendSubnekton does. A crash mid-append leaves an
+		// unterminated line; a bare O_APPEND write then lands directly on it, concatenating the two,
+		// and the reader discards BOTH - so an acknowledged attach is lost to somebody else's
+		// interrupted one. #143 fixed this for records and did not reach the material writers, which
+		// have the identical failure mode. Material is the evidence a proof is filed under, so
+		// losing it silently is how an anchored record ends up with nothing to show.
+		//
+		// The newline is written in the SAME call as the content, so there is no window in which a
+		// line exists without its terminator.
+		torn, terr := hasTornTail(path)
+		if terr != nil {
+			return terr
+		}
+		line := append(b, '\n')
+		if torn {
+			line = append([]byte{'\n'}, line...)
+		}
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		_, err = f.Write(append(b, '\n'))
+		_, err = f.Write(line)
 		return err
 	})
 	if err != nil {

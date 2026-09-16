@@ -99,7 +99,10 @@ func TestExportEmitsOneRowPerClaim(t *testing.T) {
 			ClaimID         string   `json:"claimId"`
 			KeyIDs          []string `json:"keyids"`
 			VerifiedSigners []string `json:"verifiedSigners"`
-			SignerVerified  bool     `json:"signerVerified"`
+			// A string, not a bool: without --trust-keys nothing is checked, and `false` then reads
+			// as CHECKED AND FAILED rather than NOBODY LOOKED. Here a key IS trusted, so the
+			// expected value is "verified".
+			SignerVerified string `json:"signerVerified"`
 		} `json:"claims"`
 	}
 	if err := json.Unmarshal(b, &got); err != nil {
@@ -117,7 +120,7 @@ func TestExportEmitsOneRowPerClaim(t *testing.T) {
 	if len(c.KeyIDs) != 2 {
 		t.Errorf("keyids = %v, want both declared signers", c.KeyIDs)
 	}
-	if !c.SignerVerified || len(c.VerifiedSigners) != 1 || c.VerifiedSigners[0] != core.KeyIDHex(pubA) {
+	if c.SignerVerified != "verified" || len(c.VerifiedSigners) != 1 || c.VerifiedSigners[0] != core.KeyIDHex(pubA) {
 		t.Errorf("verifiedSigners = %v (signerVerified=%v), want exactly the trusted key %s",
 			c.VerifiedSigners, c.SignerVerified, core.KeyIDHex(pubA))
 	}

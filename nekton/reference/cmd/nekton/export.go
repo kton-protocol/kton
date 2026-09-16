@@ -24,16 +24,23 @@ type exportClaim struct {
 	// The keyid that actually signed, and the full set when several trusted keys did. One claim can
 	// carry several signatures - that is what a co-signature IS - so a single field could only ever
 	// answer for one of them.
-	VerifiedSigner  string          `json:"verifiedSigner,omitempty"`
-	VerifiedSigners []string        `json:"verifiedSigners,omitempty"`
-	SignerVerified  bool            `json:"signerVerified"` // did a trusted key verify this claim?
-	Subjects        []string        `json:"subjects"`
-	Predicate       json.RawMessage `json:"predicate"`
+	VerifiedSigner  string   `json:"verifiedSigner,omitempty"`
+	VerifiedSigners []string `json:"verifiedSigners,omitempty"`
+	// "verified" | "failed" | "unchecked". NOT a bool: without --trust-keys nothing is checked, and
+	// `false` then reads as CHECKED AND FAILED rather than NOBODY LOOKED - the same misreading the
+	// material commands removed this release, and what SPEC §8.1 means by a kernel's own output not
+	// carrying a field that reads as a verdict.
+	SignerVerified string          `json:"signerVerified"`
+	Subjects       []string        `json:"subjects"`
+	Predicate      json.RawMessage `json:"predicate"`
 }
 
 type exportClaims struct {
-	Title  string        `json:"title"`
-	Claims []exportClaim `json:"claims"`
+	Title string `json:"title"`
+	// Deferred counts records this store HOLDS and offers to peers but cannot assert here, because
+	// their chain does not resolve locally. Omitted when zero, so an ordinary export is unchanged.
+	Deferred int           `json:"deferred,omitempty"`
+	Claims   []exportClaim `json:"claims"`
 }
 
 func buildClaims(dir, title string, trustKeys []ed25519.PublicKey) (*exportClaims, error) {
@@ -42,6 +49,12 @@ func buildClaims(dir, title string, trustKeys []ed25519.PublicKey) (*exportClaim
 		return nil, err
 	}
 	g := &exportClaims{Title: title, Claims: []exportClaim{}}
+	// A store can HOLD records this export cannot assert: a deferred claim is persisted and offered
+	// to peers but is in no index, because its prev/seed has not arrived. Leaving it out of the
+	// assertions is right - its chain does not resolve here. Saying nothing at all is not: the
+	// output then reads as "this store has nothing", which is the wrong answer the upgrade note at
+	// the head of CHANGELOG warns about in the other direction.
+	g.Deferred = r.Deferred()
 	// The UNIQUE INDEXED claims, not the arrival feed. The feed is a record of replication events:
 	// two envelopes carrying the same payload signed by different keys are two entries with ONE
 	// claim id, and iterating it exported that claim twice - two rows, same id, and (with only one
@@ -76,9 +89,16 @@ func buildClaims(dir, title string, trustKeys []ed25519.PublicKey) (*exportClaim
 				ec.VerifiedSigners = append(ec.VerifiedSigners, core.KeyIDHex(pub))
 			}
 		}
-		if len(ec.VerifiedSigners) > 0 {
+		switch {
+		case len(trustKeys) == 0:
+			// Nobody was asked. Reporting `false` here said CHECKED AND FAILED about every claim in
+			// the graph, for the ordinary case of exporting without --trust-keys.
+			ec.SignerVerified = "unchecked"
+		case len(ec.VerifiedSigners) > 0:
 			ec.VerifiedSigner = ec.VerifiedSigners[0]
-			ec.SignerVerified = true
+			ec.SignerVerified = "verified"
+		default:
+			ec.SignerVerified = "failed"
 		}
 		for _, s := range st.Subject {
 			if k := s.Key(); k != "" {

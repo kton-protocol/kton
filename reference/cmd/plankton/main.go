@@ -913,7 +913,7 @@ func run(cmd string, args []string) error {
 		if reuseJSON {
 			// The hit COUNT is a decision input - "was this computation asked before?" - and it was
 			// the last number in this repo a consumer had to read out of prose. kton-examples
-			// 16-reuse-cache sed'"'"'s it out of "cache: HIT -> %d prior…", and documents doing so.
+			// 16-reuse-cache sed extracts it out of "cache: HIT -> %d prior…", and documents doing so.
 			out := make([]map[string]any, 0, len(hits))
 			for _, id := range hits {
 				signer := ""
@@ -926,11 +926,18 @@ func run(cmd string, args []string) error {
 						outs = append(outs, o.Hash)
 					}
 				}
-				// declaredSigner, and verified:false - these are COMPETING matches on the cache key,
-				// and the keyid is the envelope'"'"'s unauthenticated hint. A machine reader must see
-				// that on the record, not only in a stderr note it may never read.
+				// declaredSigner, and verification:"unchecked" - these are COMPETING matches on the
+				// cache key, and the keyid is the envelope's unauthenticated hint. A machine reader
+				// must see that on the record, not only in a stderr note it may never read.
+				//
+				// NOT `"verified": false`. That was a CONSTANT, so it carried no information, and it
+				// is the token a consumer reads as CHECKED AND FAILED rather than NOBODY LOOKED -
+				// the same misreading removed from the material commands this release, with the
+				// reasoning recorded beside them. `reuse` answers "was this computation asked
+				// before?", so its rows are a decision input and the distinction is load-bearing.
 				out = append(out, map[string]any{
-					"fotonId": id, "declaredSigner": signer, "outputs": outs, "verified": false,
+					"fotonId": id, "declaredSigner": signer, "outputs": outs,
+					"verification": "unchecked",
 				})
 			}
 			return printJSON(map[string]any{"actionKey": ak, "hit": len(hits) > 0, "hits": out})
