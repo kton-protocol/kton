@@ -430,7 +430,11 @@ func nanopublish(args []string) error {
 		return err
 	}
 	id := strings.TrimPrefix(claim.ClaimID(payload), "sha256:")
-	c := newTrigCtx(mustTemplateSet(aliasesPath))
+	ts, terr := mustTemplateSet(aliasesPath)
+	if terr != nil {
+		return terr
+	}
+	c := newTrigCtx(ts)
 	if trustDir != "" {
 		ks, err := loadTrustKeys(trustDir)
 		if err != nil {

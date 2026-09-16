@@ -127,20 +127,6 @@ func (r *Registry) readLegacyObject(id string) (core.Envelope, bool) {
 // makes ALL persists of a claim id safe - whether or not this process had yet SEEN the claim - so N
 // processes co-signing the same statement concurrently never clobber each other (every co-signature
 // survives). Returns the merged envelope actually stored.
-// derivesClaimID reports whether env's payload actually hashes to id. A claim id is
-// sha256(canon(Statement)) - the payload digest exactly - so this is the whole test, and an envelope
-// that fails it is not the claim it is filed under whatever the surrounding `claimId` field says.
-//
-// An unparseable envelope fails too, deliberately: its signatures stand over bytes we cannot
-// identify, so they are not evidence about this record.
-func derivesClaimID(env core.Envelope, id string) bool {
-	_, payload, err := claim.ParseEnvelope(env)
-	if err != nil {
-		return false
-	}
-	return claim.ClaimID(payload) == id
-}
-
 func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envelope, error) {
 	merged := env
 	path, perr := subnektonPath(r.objectsDir, scope)
@@ -371,6 +357,14 @@ type Registry struct {
 	// one thing that was missing. They stay out of claimByID and every query index: a deferred claim
 	// must not answer `about`/`by` as though its chain held.
 	deferred map[string]Record
+
+	// waiting: dependency id -> the deferred claims waiting for it. settleDeferred used to re-parse
+	// and re-check EVERY deferred record on every pass, and Add calls it on every ingest - so m
+	// pending records cost m envelope parses per Add, and the cascade that finally unblocks them
+	// cost m². Measured: the single seed Add that unblocks a chain went 5ms -> 153ms at n=100 and
+	// 566ms at n=200, doubling n quadrupling the time. `add` exists for bulk out-of-order federation
+	// batches, where n is thousands.
+	waiting map[string][]string
 
 	peers map[string]int
 }
@@ -627,18 +621,22 @@ func (r *Registry) settle(pending []Record) (dropped int) {
 			// presenting the shortened chain's tip as the sealed head.
 			for _, rec := range pending {
 				if st, _, err := claim.ParseEnvelope(rec.Envelope); err == nil {
-					if p, e := st.ParsePredicate(); e == nil && p.Scope != "" {
-						if r.unresolved == nil {
-							r.unresolved = map[string]int{}
+					var dep string
+					if p, e := st.ParsePredicate(); e == nil && p != nil {
+						if p.Scope != "" {
+							if r.unresolved == nil {
+								r.unresolved = map[string]int{}
+							}
+							r.unresolved[p.Scope]++
 						}
-						r.unresolved[p.Scope]++
+						dep = waitsOn(p)
 					}
 					// Held, unresolvable, and still owed to a peer (see Records) - so it needs a
 					// position like anything else in the feed, or it is owed and never delivered.
 					rec = r.positioned(rec)
 					r.feed = append(r.feed, rec)
 					r.deferredCount++
-					r.rememberDeferred(rec)
+					r.rememberDeferred(rec, dep)
 				}
 			}
 			// Deferred and refused are both dropped from the INDEX, and they are not the same
@@ -657,11 +655,31 @@ func (r *Registry) Unresolved(scope string) int { return r.unresolved[scope] }
 // deferral sites - Add's and settle's - because a claim deferred at ingest and one deferred on replay
 // are the same fact about this store, and a reader that could see only one of them would get a
 // different answer before and after a restart.
-func (r *Registry) rememberDeferred(rec Record) {
+func (r *Registry) rememberDeferred(rec Record, dep string) {
 	if r.deferred == nil {
 		r.deferred = map[string]Record{}
 	}
 	r.deferred[rec.ClaimID] = rec
+	if dep != "" {
+		if r.waiting == nil {
+			r.waiting = map[string][]string{}
+		}
+		r.waiting[dep] = append(r.waiting[dep], rec.ClaimID)
+	}
+}
+
+// waitsOn names the single record a deferred claim is waiting for: its `prev` if it has one, else
+// the seed its scope names. Used only to retry the right records when that id arrives - a wrong or
+// empty answer costs a retry that does not happen until the next arrival, never a wrong result,
+// because settleDeferred re-checks the chain itself before promoting anything.
+func waitsOn(p *claim.Predicate) string {
+	if p == nil {
+		return ""
+	}
+	if p.Prev != "" {
+		return p.Prev
+	}
+	return p.Scope
 }
 
 // DeferredClaim reports a claim this registry HOLDS and offers to peers but has kept out of every
@@ -908,13 +926,22 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	}
 	rec := Record{Seq: seqs[key], ClaimID: id, Envelope: merged}
 	if chainErr != nil { // errUnresolved: persisted, awaiting its dependency
+		// IDEMPOTENT per claim id. A deferred claim is not in `r.seen` - it never reached the index -
+		// so the twin path above does not catch a re-add, and this branch used to count it again
+		// EVERY time. Adding the same deferred claim twice gave Deferred()=2 and Unresolved=2 for
+		// one record, appended a second feed entry so `Records(cursor)` delivered it twice, and left
+		// both counters stuck above zero once it resolved: `head` then reports a truncation that is
+		// not there, and export's `deferred` count is wrong. Only a reopen cleared it.
+		if _, already := r.deferred[id]; already {
+			return id, false, nil
+		}
 		if p != nil && p.Scope != "" {
 			r.unresolved[p.Scope]++ // may be a withheld-middle successor -> `head` flags a truncation
 		}
 		// Out of every index, but IN the feed: a peer must be offered what we hold (see Records).
 		r.feed = append(r.feed, rec)
 		r.deferredCount++
-		r.rememberDeferred(rec)
+		r.rememberDeferred(rec, waitsOn(p))
 		return id, true, nil
 	}
 	// Only what the index ACCEPTS reaches the feed. `index` already returned this - settle has
@@ -952,7 +979,7 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	// registry methods and the template package were extracted for - saw a claim that never
 	// resolved, with no way to tell that reopening would fix it. It also made `add`'s own summary
 	// wrong and order-dependent: "indexed 2 claims, 0 refused (registry now holds 1)".
-	r.settleDeferred()
+	r.settleDeferred(id)
 	return id, true, nil
 }
 
@@ -964,10 +991,24 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 // second entry would deliver them twice), and a record that still does not resolve stays exactly as
 // it was. So calling it cannot lose work, and calling it when nothing is pending costs one map
 // length check.
-func (r *Registry) settleDeferred() {
-	for len(r.deferred) > 0 {
-		progress := false
-		for id, rec := range r.deferred {
+func (r *Registry) settleDeferred(arrived string) {
+	// Retry only what was waiting for THIS id, then what was waiting for each record that just
+	// resolved. Scanning the whole deferred set instead re-parsed every pending envelope on every
+	// ingest, so m pending records cost m parses per Add and the unblocking cascade cost m².
+	queue := []string{arrived}
+	for len(queue) > 0 {
+		dep := queue[0]
+		queue = queue[1:]
+		ids := r.waiting[dep]
+		if len(ids) == 0 {
+			continue
+		}
+		delete(r.waiting, dep)
+		for _, id := range ids {
+			rec, held := r.deferred[id]
+			if !held {
+				continue // already settled by another path
+			}
 			st, _, err := claim.ParseEnvelope(rec.Envelope)
 			if err != nil {
 				continue // unparseable: it was never going to resolve
@@ -976,8 +1017,13 @@ func (r *Registry) settleDeferred() {
 			if perr != nil {
 				continue
 			}
+			// The chain is re-checked here, so an imprecise `waitsOn` can only cost a retry that
+			// happens later - never a record promoted before its dependency is actually present.
 			if cerr := r.checkChain(id, st, p); cerr != nil {
-				continue // still waiting, or permanently invalid - either way, leave it
+				// Still waiting. Put it back under the dependency it names now, or it would never be
+				// retried again: the index entry was consumed above.
+				r.rememberDeferred(rec, waitsOn(p))
+				continue
 			}
 			if !r.index(rec) {
 				continue
@@ -987,10 +1033,8 @@ func (r *Registry) settleDeferred() {
 			if p.Scope != "" && r.unresolved[p.Scope] > 0 {
 				r.unresolved[p.Scope]--
 			}
-			progress = true
-		}
-		if !progress {
-			return
+			// Whatever was waiting for THIS record can now be tried.
+			queue = append(queue, id)
 		}
 	}
 }
@@ -1501,6 +1545,20 @@ func (r *Registry) MaxSeq() int {
 		}
 	}
 	return max
+}
+
+// derivesClaimID reports whether env's payload actually hashes to id. A claim id is
+// sha256(canon(Statement)) - the payload digest exactly - so this is the whole test, and an envelope
+// that fails it is not the claim it is filed under whatever the surrounding `claimId` field says.
+//
+// An unparseable envelope fails too, deliberately: its signatures stand over bytes we cannot
+// identify, so they are not evidence about this record.
+func derivesClaimID(env core.Envelope, id string) bool {
+	_, payload, err := claim.ParseEnvelope(env)
+	if err != nil {
+		return false
+	}
+	return claim.ClaimID(payload) == id
 }
 
 // Len reports the number of indexed claims.

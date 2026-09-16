@@ -523,13 +523,15 @@ func run(cmd string, args []string) error {
 			// refused: a partial import that reports success is how a corpus quietly loses records.
 			added, present := 0, 0
 			var refused []string
+			var ingested []string
+			deferred := 0
 			for _, p := range paths {
 				env, err := readEnvelope(p)
 				if err != nil {
 					refused = append(refused, fmt.Sprintf("%s: %v", p, err))
 					continue
 				}
-				_, isNew, err := r.Add(env)
+				id, isNew, err := r.Add(env)
 				if err != nil {
 					// nekton's registry draws no transient/merit line the way plankton's ErrPersist
 					// does, so every failure is reported by name and the exit is non-zero - the
@@ -538,16 +540,38 @@ func run(cmd string, args []string) error {
 					continue
 				}
 				if isNew {
-					added++
+					ingested = append(ingested, id)
 				} else {
 					present++
+				}
+			}
+			// Classify AFTER the whole batch, never per record. A record deferred when it arrived
+			// resolves the moment its dependency turns up later in the SAME batch - counting at
+			// arrival reported it as deferred when by the end it was indexed, which is the mirror
+			// of the defect this is fixing.
+			//
+			// INDEXED and DEFERRED are different outcomes and were reported as one: a record whose
+			// seed or prev is absent is persisted and offered to peers but answers no query here, so
+			// "indexed 2 claims, 0 refused (registry now holds 0)" was true of nothing - nothing was
+			// indexed, nothing was refused, and a caller reading that plus exit 0 as a complete
+			// import was wrong.
+			for _, id := range ingested {
+				if _, _, waiting := r.DeferredClaim(id); waiting {
+					deferred++
+				} else {
+					added++
 				}
 			}
 			for _, m := range refused {
 				fmt.Fprintln(os.Stderr, "refused: "+m)
 			}
-			fmt.Printf("indexed %d claims, %d already present, %d refused  (registry now holds %d)\n",
-				added, present, len(refused), r.Len())
+			fmt.Printf("indexed %d claims, %d already present, %d deferred, %d refused  (registry now holds %d)\n",
+				added, present, deferred, len(refused), r.Len())
+			if deferred > 0 {
+				fmt.Printf("  %d record(s) are held and offered to peers but answer no query here:\n", deferred)
+				fmt.Printf("  their scope's seed or their prev has not arrived (SPEC §11: incomplete,\n")
+				fmt.Printf("  not invalid). Add the missing predecessor and they resolve.\n")
+			}
 			if len(refused) > 0 {
 				return fmt.Errorf("%d of %d record(s) refused", len(refused), len(paths))
 			}
@@ -561,10 +585,19 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
-		if !isNew {
+		switch {
+		case !isNew:
 			fmt.Printf("already present: claim %s\n", id)
-		} else {
-			fmt.Printf("indexed claim %s  (registry now holds %d claims)\n", id, r.Len())
+		default:
+			// Same distinction as the batch path: "indexed claim … (registry now holds 0 claims)"
+			// contradicted itself in one line.
+			if _, scope, waiting := r.DeferredClaim(id); waiting {
+				fmt.Printf("deferred claim %s  (registry now holds %d claims)\n", id, r.Len())
+				fmt.Printf("  held and offered to peers, but its prev/seed for scope %s has not\n", scope)
+				fmt.Printf("  arrived, so it answers no query here (SPEC §11: incomplete, not invalid).\n")
+			} else {
+				fmt.Printf("indexed claim %s  (registry now holds %d claims)\n", id, r.Len())
+			}
 		}
 		return nil
 

@@ -39,11 +39,15 @@ func attachMaterial(args []string) error {
 			i++
 			file = arg(args, i)
 		default:
-			if strings.HasPrefix(args[i], "--") {
-				return fmt.Errorf("unknown flag %q", args[i])
+			// Any dash prefix. `-x` used to be reported as a second SUBJECT ("attach takes one
+			// subject, got <a> and -x"), which sends a reader looking for a subject they did not
+			// pass instead of at the flag they misspelled.
+			if strings.HasPrefix(args[i], "-") {
+				return fmt.Errorf("unknown flag %q - `plankton attach` takes --scheme, --file and --media", args[i])
 			}
 			if subject != "" {
-				return fmt.Errorf("attach takes one subject, got %q and %q", subject, args[i])
+				return fmt.Errorf("attach takes one subject, got %q and %q - material binds to one "+
+					"record's content address", subject, args[i])
 			}
 			subject = args[i]
 		}
@@ -89,9 +93,15 @@ func listMaterial(args []string) error {
 		switch {
 		case a == "--json":
 			asJSON = true
-		case strings.HasPrefix(a, "--"):
-			return fmt.Errorf("unknown flag %q", a)
+		case strings.HasPrefix(a, "-"):
+			return fmt.Errorf("unknown flag %q - `plankton material` takes --json", a)
 		default:
+			// One record id. Last-wins answered about the second, which for a "does this record
+			// carry evidence" question is another record's answer presented as this one's. The
+			// nekton twin refuses it (#178); this side was missed in that same fix.
+			if subject != "" {
+				return fmt.Errorf("`plankton material` takes ONE record id, got %q and %q", subject, a)
+			}
 			subject = a
 		}
 	}
