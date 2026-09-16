@@ -99,9 +99,23 @@ scenario() {
       "$FIT" "$HEAD" "$(keyid16 cro-org)" "$(keyid16 sponsor-org)" > verdict.txt 2>err.txt
 
     grep -E '^\s*\[[ x]\].*PRINCIPALS' verdict.txt | sed 's/^/    /'
-    if ! grep -qE '\[[ x]\]' verdict.txt; then
+    # The FOUR-EYES LINE ITSELF must be present - not merely "some checklist item".
+    #
+    # Testing for any item was not enough: a run that printed an earlier, unrelated condition and
+    # then stopped before evaluating four-eyes fell through to UNTICKED, and UNTICKED is read below
+    # as "the attack was prevented". A partial evaluation counted as a defence. Same shape as the
+    # defect this script already carries a fix for, one level in: "no checklist at all" was excluded
+    # and "half a checklist" was not.
+    #
+    # The EXIT STATUS is deliberately NOT used. release.py is a release gate: it exits 1 when the
+    # release is not approved, which is the ordinary outcome of every negative scenario here. Testing
+    # `rc -ne 0` turned all four into NORUN and the whole PoC INCONCLUSIVE - measured, not guessed -
+    # which is the gate-refuses-the-normal-path failure rather than a stricter check. What the line's
+    # presence tells us is the thing we need: that the condition was evaluated at all.
+    if ! grep -qE '\[[ x]\].*PRINCIPALS' verdict.txt; then
       # Say WHY, or the next person debugging a red gate has to reproduce it to find out.
       sed 's/^/    release.py: /' err.txt | head -3
+      echo "    no four-eyes line in the output - the condition was never evaluated"
       echo "NORUN"
     elif grep -q '\[x\].*PRINCIPALS' verdict.txt; then echo "TICKED"
     else echo "UNTICKED"; fi )

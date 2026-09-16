@@ -351,8 +351,17 @@ func (s Set) Spec(name, subject string, values map[string]string, files map[stri
 					"not a string in values. A path given here would be hashed as though it were the "+
 					"file, and the claim would verify while attesting the filename", fname, fname)
 			}
+			// PRESENCE, not length. A zero-length file is a file: it has a content address
+			// (sha256 of no bytes is e3b0c442…), and an empty artifact is a perfectly ordinary
+			// result - an empty log, a report with no findings, a diff that came out clean.
+			//
+			// Treating len(b) == 0 as "not supplied" conflated two different facts and got both
+			// wrong: an OPTIONAL empty file was silently dropped from the claim, so evidence the
+			// caller passed never appeared in what was signed; a REQUIRED one was refused as
+			// "missing required file field" although it had been supplied, which sends the caller
+			// looking for an argument they gave.
 			b, ok := files[fname]
-			if !ok || len(b) == 0 {
+			if !ok {
 				if f.Required {
 					return claim.Spec{}, fmt.Errorf("missing required file field: %s", fname)
 				}

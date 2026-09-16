@@ -229,3 +229,62 @@ func resign(t *testing.T, env core.Envelope) (core.Envelope, string) {
 	}
 	return out, id
 }
+
+// TestAnUnsignedSameIDObjectDoesNotDefeatRepair: the #145 check verified an existing object's
+// derived foton id and stopped there. An envelope can derive the right id and still be one this
+// store would never admit - the reported case is a signature ARRAY whose single entry carries an
+// empty `sig`. `HasSignature` correctly calls that unsigned, but the union's `len(m.Signatures) > 0`
+// counted the entry, so the stored envelope won (payloads differ, union keeps the first) and:
+//
+//	Add(A): new=true err=<nil>     Len()=0 before, after, and after a reopen
+//
+// which is exactly the repair #145 exists to make possible, defeated. Identity was necessary and not
+// sufficient; `CheckAdmissible` - the gate `Add` runs, extracted so `verify` could stop keeping a
+// shorter copy of it - is the sufficient one.
+func TestAnUnsignedSameIDObjectDoesNotDefeatRepair(t *testing.T) {
+	dir := t.TempDir()
+	target, targetID := signFoton(t, strings.Repeat("a", 64), nil)
+	// Same COVERED projection, so the same id; different bytes, so the union keeps the first.
+	variant, variantID := signFoton(t, strings.Repeat("a", 64), []string{"https://mirror.example/out.csv"})
+	if targetID != variantID {
+		t.Fatalf("the variant does not share an id (%s vs %s) - the premise is gone", targetID, variantID)
+	}
+	if target.Payload == variant.Payload {
+		t.Fatal("identical payloads - the union would not prefer the stored one")
+	}
+	variant.Signatures[0].Sig = "" // present as an ARRAY ENTRY, empty as a signature
+
+	objPath := filepath.Join(dir, "objects", "sha256", strings.TrimPrefix(targetID, "sha256:")+".json")
+	if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.MarshalIndent(map[string]any{"fotonId": targetID, "envelope": variant}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(objPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := registry.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Add(target); err != nil {
+		t.Fatalf("re-ingesting the authentic foton: %v", err)
+	}
+	if r.Len() != 1 {
+		t.Fatalf("Add reported success and the registry holds %d fotons", r.Len())
+	}
+	r2, err := registry.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, held := r2.Envelope(targetID)
+	if !held || env.Payload != target.Payload {
+		t.Error("after reopen the authentic envelope is not what is stored")
+	}
+	if n := r2.Degraded(); n != 0 {
+		t.Errorf("reopen still reports %d degraded records", n)
+	}
+}

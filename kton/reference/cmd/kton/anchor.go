@@ -150,16 +150,37 @@ func storeAnchor(env core.Envelope, entry *sigstore.Entry, raw []byte) error {
 		// telling a reader their record is malformed when it is a perfectly good claim whose
 		// predecessor has not turned up. Route it as what it is.
 		//
-		// Attaching is correct for it: a claim id IS the payload hash, so the proof's binding to
-		// these exact bytes is preserved by the id itself - the collision the plankton branch below
-		// has to guard against cannot arise here.
 		deferredScope := ""
-		if !held {
-			if _, scope, ok := r.DeferredClaim(id); ok {
-				held, deferredScope = true, scope
-			}
+		var stored nreg.Record
+		if rec, ok := r.Claim(id); ok {
+			stored = rec
+		} else if rec, scope, ok := r.DeferredClaim(id); ok {
+			stored, held, deferredScope = rec, true, scope
 		}
 		if held {
+			// THE SAME BYTE CHECK THE FOTON BRANCH MAKES. This branch skipped it on the reasoning
+			// that "a claim id IS the payload hash, so the binding is preserved by the id itself".
+			// That was wrong, and it is wrong in the direction that matters: a claim id is
+			// sha256(canon(Statement)), the CANONICAL hash - not the hash of the literal payload. So
+			// two genuinely signed envelopes carrying the same Statement in different serializations
+			// share an id and differ in bytes:
+			//
+			//     compact   236 bytes   id sha256:59c04199…
+			//     indented  327 bytes   id sha256:59c04199…   both admissible
+			//
+			// A Rekor DSSE entry binds the bytes it was handed. Anchoring the indented one against a
+			// store holding the compact one archived a proof that `Entry.VerifyBinds` later rejects
+			// as being about a different record - the exact failure the foton branch guards, reached
+			// through the door held open by that comment. It is also the known 0.2 signature-loss
+			// limitation wearing a different hat, which is why the reasoning should have gone the
+			// other way.
+			if stored.Envelope.Payload != env.Payload {
+				return fmt.Errorf("the anchored record and the stored claim %s carry the same id but "+
+					"not the same bytes - a claim id is sha256(canon(Statement)), so two serializations "+
+					"of one Statement share it. The entry binds the anchored bytes, which this store "+
+					"does not hold, and the proof could never be verified against what is here. Anchor "+
+					"the envelope this store holds", id)
+			}
 			if err := r.AttachMaterial(vm(id)); err != nil {
 				return err
 			}

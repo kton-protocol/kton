@@ -718,7 +718,22 @@ func (r *Registry) persistRecord(key, fotonID string, env core.Envelope) (core.E
 				//
 				// A stored object that no longer parses is in the same position: its signatures
 				// stand over bytes we cannot identify, so they are not evidence about this record.
-				if _, storedID, perr := parseEnv(of.Envelope); perr == nil && storedID == fotonID {
+				// IDENTITY was not enough. An envelope can derive the right foton id and still be
+				// one this store would never admit - the reported case is a signature ARRAY whose
+				// single entry has an empty `sig`. `HasSignature` correctly calls that unsigned, but
+				// the union's `len(m.Signatures) > 0` counted the entry, so the stored envelope won
+				// (payloads differ, union keeps the first) and re-ingesting the authentic foton left:
+				//
+				//     Add(A): new=true err=<nil>     Len()=0 before, after, and after a reopen
+				//
+				// which is precisely the repair #145 exists to make possible, defeated.
+				//
+				// CheckAdmissible is the gate `Add` itself runs - extracted two changes earlier so
+				// `verify` could stop keeping a shorter copy of it - and not using it here was the
+				// same omission in a third place. A stored object is preserved only if this store
+				// would accept it as a record in its own right.
+				if _, storedID, perr := parseEnv(of.Envelope); perr == nil && storedID == fotonID &&
+					CheckAdmissible(of.Envelope) == nil {
 					if m, _ := unionSignatures(of.Envelope, merged); len(m.Signatures) > 0 {
 						merged = m
 					}
