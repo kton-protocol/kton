@@ -75,12 +75,12 @@ func resolvePredicateArg(x string) string {
 }
 
 // mustTemplateSet is the resolver the RDF projections need. They only ever RESOLVE a CURIE, so a
-// template directory that cannot be read is not fatal here: the result is "no sugar", and a bare
-// CURIE then fails the full-IRI check downstream rather than being silently emitted.
-func mustTemplateSet(aliasesPath string) template.Set {
+// template DIRECTORY that cannot be read is not fatal here: the result is "no sugar" for templates.
+// A malformed ALIAS file is a different matter and IS fatal - see below.
+func mustTemplateSet(aliasesPath string) (template.Set, error) {
 	tset, err := template.Load(envOr("NEKTON_TEMPLATES", "./templates"), aliasesPath)
 	if err == nil {
-		return tset
+		return tset, nil
 	}
 	// Fall back to the ALIASES ALONE, not to nothing. `Load` fails when ./templates is absent, which
 	// is the normal case for the two callers of this function: `export --nanopub` and `nanopublish`
@@ -92,13 +92,22 @@ func mustTemplateSet(aliasesPath string) template.Set {
 	//     ./templates absent:   <https://kton.dev/v/lab/outcome>
 	//
 	// into a signed nanopublication. A missing template directory must cost templates, not aliases.
-	if s, aerr := template.LoadAliases(aliasesPath); aerr == nil {
-		return s
+	s, aerr := template.LoadAliases(aliasesPath)
+	if aerr != nil {
+		// A MALFORMED alias file stays FATAL, and the final `template.New(nil, nil)` fallback that
+		// used to sit here is why it had stopped being so. With no aliases every CURIE resolves to
+		// itself, so `qa:reviewed` went out as <qa:reviewed> - a bare term emitted as an IRI - and
+		// `nanopublish` minted a permanent Trusty URI over that graph and exited 0.
+		//
+		// That is the exact harm LoadAliases' own doc calls out, reached silently in published,
+		// signed RDF. An ABSENT alias file is still fine (LoadAliases returns an empty set for it);
+		// what cannot be tolerated is a file that was meant to define meanings and does not parse.
+		return template.Set{}, fmt.Errorf("alias file %s: %w\n"+
+			"  Without it every CURIE resolves to itself, so a bare term like `qa:reviewed` would be\n"+
+			"  emitted as an IRI into RDF that is published and permanent. Fix the file, or pass a\n"+
+			"  different --aliases; an ABSENT one is fine and simply means no sugar", aliasesPath, aerr)
 	}
-	if s, aerr := template.New(nil, nil); aerr == nil {
-		return s
-	}
-	return tset
+	return s, nil
 }
 
 func envOr(key, def string) string {
@@ -202,6 +211,15 @@ func annotate(args []string) error {
 	// (Cycle-1 finding: hashing the envelope FILE gave a third hash that joined to nothing.) If the
 	// file is not a foton envelope, fall back to hashing its bytes.
 	if foton != "" {
+		// Mutually exclusive with a positional subject. Two positionals are refused a few lines up
+		// because "the wrong one signs a claim about something else"; the same failure survived one
+		// flag over, with `--foton` overwriting a subject the caller had typed and nothing said so.
+		// The claim went out about the foton, exit 0.
+		if subject != "" {
+			return fmt.Errorf("both a subject (%q) and --foton %q were given - they name the same "+
+				"thing, and --foton used to win silently. Pass one: the positional for a hash or URI, "+
+				"--foton for an envelope whose foton id becomes the subject", subject, foton)
+		}
 		b, err := os.ReadFile(foton)
 		if err != nil {
 			// --foton takes a FILE (the foton envelope), so it can resolve the foton's id. A bare hash
@@ -353,16 +371,6 @@ func annotate(args []string) error {
 // listTemplates prints every template in the templates dir with its predicate and any aliases.
 // With `--show <name>` (or a positional name/alias) it instead prints that template's fields -
 // the cycle-1 gap where a session could not discover field names without reading the JSON.
-// reportSkipped names template-directory files that are not templates. Silence here is what let an
-// alias file become a template called "aliases"; failing instead took the whole corpus down for one
-// stray file. Naming them on stderr is the answer that does neither.
-func reportSkipped(set template.Set) {
-	for _, f := range set.Skipped() {
-		fmt.Fprintf(os.Stderr, "note: skipping %q - it declares no fields, predicate or "+
-			"predicateType, so it is not a template.\n", f)
-	}
-}
-
 func listTemplates(args []string) error {
 	tdir := envOr("NEKTON_TEMPLATES", "./templates")
 	aliasesPath := envOr("NEKTON_ALIASES", "./aliases.json")
@@ -498,4 +506,14 @@ func arg(args []string, i int) string {
 		return args[i]
 	}
 	return ""
+}
+
+// reportSkipped names template-directory files that are not templates. Silence here is what let an
+// alias file become a template called "aliases"; failing instead took the whole corpus down for one
+// stray file. Naming them on stderr is the answer that does neither.
+func reportSkipped(set template.Set) {
+	for _, f := range set.Skipped() {
+		fmt.Fprintf(os.Stderr, "note: skipping %q - it declares no fields, predicate or "+
+			"predicateType, so it is not a template.\n", f)
+	}
 }

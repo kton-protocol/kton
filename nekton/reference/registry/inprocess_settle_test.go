@@ -159,3 +159,74 @@ func TestSettlingDoesNotPromoteAnUnresolvedRecord(t *testing.T) {
 		t.Errorf("Deferred() = %d, want 1", n)
 	}
 }
+
+// TestDeferredBookkeepingIsIdempotent: a deferred claim is not in `r.seen` - it never reached the
+// index - so `Add`'s twin path never catches a re-add, and the deferred branch counted it again
+// every time. Adding one claim twice gave Deferred()=2 and Unresolved()=2 for a single record,
+// appended a SECOND feed entry so Records(cursor) delivered it twice, and left both counters stuck
+// above zero once it resolved: `head` then reports a truncation that is not there, and export's
+// `deferred` count is wrong. Only a reopen cleared it - which the linked consumer this exists to
+// serve does not do.
+func TestDeferredBookkeepingIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedEnv, seedID, err := claim.SignWith(claim.Spec{
+		Subject:       []claim.SubjectSpec{{URI: "urn:nekton:scope:sc"}},
+		PredicateType: claim.ScopePredicateType,
+		PredicateBody: map[string]any{"scope": "sc", "genesis": true, "by": "CN=t", "when": "2026-07-16T00:00:00Z"},
+	}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped, scopedID, err := claim.SignWith(claim.Spec{
+		Subject: []claim.SubjectSpec{{URI: "urn:x"}}, Predicate: "https://kton.dev/v/note",
+		Object: map[string]any{"a": "1"}, By: "CN=t", When: "2026-07-16T00:00:00Z",
+		Scope: seedID, Prev: seedID}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := registry.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Add(scoped); err != nil {
+		t.Fatal(err)
+	}
+	_, isNew, err := r.Add(scoped) // the SAME deferred claim again
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isNew {
+		t.Error("re-adding a deferred claim reported it as new")
+	}
+	if n := r.Deferred(); n != 1 {
+		t.Errorf("Deferred() = %d after adding one claim twice, want 1", n)
+	}
+	if n := r.Unresolved(seedID); n != 1 {
+		t.Errorf("Unresolved() = %d after adding one claim twice, want 1", n)
+	}
+	count := 0
+	for _, rec := range r.Records(0) {
+		if rec.ClaimID == scopedID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("the feed carries the claim %d times - a peer's cursor would deliver it twice", count)
+	}
+
+	if _, _, err := r.Add(seedEnv); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.Deferred(); n != 0 {
+		t.Errorf("Deferred() = %d once everything resolved, want 0 - export would carry that count", n)
+	}
+	if n := r.Unresolved(seedID); n != 0 {
+		t.Errorf("Unresolved() = %d once everything resolved, want 0 - `head` would report a "+
+			"truncation that is not there", n)
+	}
+}

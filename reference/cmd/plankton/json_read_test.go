@@ -158,7 +158,13 @@ func TestReuseAndAddMachineSurface(t *testing.T) {
 		Hits      []struct {
 			FotonID        string `json:"fotonId"`
 			DeclaredSigner string `json:"declaredSigner"`
-			Verified       bool   `json:"verified"`
+			// The field is `verification`, a STRING. It was `"verified": false` - a constant, and
+			// the token a consumer reads as CHECKED AND FAILED rather than NOBODY LOOKED. When the
+			// command was changed this struct was not, so `Verified bool` silently decoded a key
+			// that no longer exists, was always false, and the assertion below could never fire:
+			// the regression test for the very property the change is about became vacuous while
+			// still passing. Decoding the real key is what makes it an assertion again.
+			Verification string `json:"verification"`
 		} `json:"hits"`
 	}
 	raw := captureStdout(t, func() {
@@ -174,8 +180,9 @@ func TestReuseAndAddMachineSurface(t *testing.T) {
 	}
 	// A cache key binds inputs+protocol, not signer: hits COMPETE, and the keyid is the envelope's
 	// unauthenticated hint. That has to be on the record a machine reads, not only in a stderr note.
-	if got.Hits[0].Verified {
-		t.Error("a cache hit reported verified - reuse verifies nothing")
+	if got.Hits[0].Verification != "unchecked" {
+		t.Errorf("a cache hit reported verification=%q - reuse verifies nothing, and anything but "+
+			"\"unchecked\" reads as a verdict it did not reach", got.Hits[0].Verification)
 	}
 	if got.Hits[0].DeclaredSigner == "" {
 		t.Error("the declared signer is missing; a consumer cannot pick a signer it trusts")

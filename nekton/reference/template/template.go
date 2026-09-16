@@ -100,7 +100,13 @@ func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (
 	for key, b := range templates {
 		var t Template
 		if err := json.Unmarshal(b, &t); err != nil {
-			return Set{}, fmt.Errorf("template %q: %w", key, err)
+			// SKIPPED, like a file that parses but declares nothing. "One stray file does not
+			// disable the corpus" only covered files that unmarshal INTO a Template, so a `.json`
+			// whose top level is an array, or with a field of the wrong type, still failed the whole
+			// Load - and those are the likeliest shapes of a stray config or data file. The
+			// regression that change targets was still reachable through them.
+			s.skipped = append(s.skipped, key)
+			continue
 		}
 		// A template's NAME is the one it declares. The key it arrived under - a filename, a fetch
 		// path - is only a fallback, and a lossy one: `a/b-c` and `a/b/c` reach the same file.

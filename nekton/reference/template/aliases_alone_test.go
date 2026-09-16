@@ -81,3 +81,28 @@ func TestDuplicateTemplateNamesAreRefused(t *testing.T) {
 		t.Errorf("two distinct names were refused: %v", err)
 	}
 }
+
+// TestAStrayFileThatDoesNotUnmarshalIsAlsoSkipped: "one stray file does not disable the corpus" only
+// covered files that unmarshal INTO a Template. A `.json` whose top level is an array, or with a
+// field of the wrong type, still failed the whole Load - and those are the likeliest shapes of a
+// stray config or data file, so the regression that change targets stayed reachable through them.
+func TestAStrayFileThatDoesNotUnmarshalIsAlsoSkipped(t *testing.T) {
+	for _, body := range []string{`[1,2,3]`, `{"name":{"a":1}}`, `"just a string"`} {
+		t.Run(body, func(t *testing.T) {
+			dir, aliases := setup(t)
+			if err := os.WriteFile(filepath.Join(dir, "notes.json"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			set, err := template.Load(dir, aliases)
+			if err != nil {
+				t.Fatalf("a stray %s disabled the whole template surface: %v", body, err)
+			}
+			if _, ok := set.Get("qa/review"); !ok {
+				t.Errorf("an unrelated template is gone; Names() = %v", set.Names())
+			}
+			if len(set.Skipped()) != 1 {
+				t.Errorf("Skipped() = %v, want the one stray file named", set.Skipped())
+			}
+		})
+	}
+}

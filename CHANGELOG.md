@@ -93,6 +93,46 @@ that rule as much as the CLI does.
 Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
 are now flag parsing over the methods, the shape `plankton author` already has.
 
+### Fixed — eight more, in the two changes that fixed the previous eighteen
+
+**A malformed alias file was swallowed and reached published RDF.** The fallback chain ended in an
+empty alias set, so every CURIE resolved to itself: `nekton export --nanopub … --aliases broken.json`
+emitted `<qa:reviewed>` — a bare term as an IRI — and `nanopublish` minted a permanent Trusty URI
+over that graph and exited 0. Exactly the harm the function's own doc says must stay fatal. An
+*absent* alias file still means no sugar; one that was meant to define meanings and does not parse
+is now an error on every path that resolves a CURIE.
+
+**Settling deferred records was quadratic.** It re-parsed every pending record on every ingest, and
+the cascade that finally unblocked a chain cost m². The seed `Add` that unblocks n claims went
+153 ms at n=100 and 566 ms at n=200 — doubling n quadrupling the time, in the command that exists
+for bulk out-of-order federation. Indexed by the dependency each record waits on, it is now
+29 ms / 59 ms / 85 ms at n=100 / 200 / 400.
+
+**The deferred counters double-counted and the feed double-delivered.** A deferred claim is not in
+the seen-set, so re-adding one counted it again: `Deferred()=2` for one record, two feed entries, and
+counters stuck above zero after it resolved — `head` reporting a truncation that is not there, and
+the new `deferred` count in `export` wrong. The re-add is now a no-op, which also removes the
+double delivery the settling comment claimed to avoid.
+
+**`add` still contradicted itself when the dependency never arrived at all** — *"indexed 2 claims,
+0 refused (registry now holds 0)"*, exit 0. Deferred has its own count now, and the classification
+happens **after** the batch, so a seed arriving last is not miscounted as leaving its claims
+deferred.
+
+**`--foton` overwrote a positional subject**, the same failure two positionals are refused for, one
+flag over. They are mutually exclusive now.
+
+**A stray file that does not unmarshal still killed the whole template load.** The skip only covered
+files that parsed *into* a Template; `[1,2,3]` and `{"name":{"a":1}}` — the likeliest shapes of a
+stray config or data file — still took the corpus down.
+
+**And a contract test was made vacuous by the rename it was testing:** `reuse --json` renamed
+`"verified"` to `"verification"`, the test still decoded the old key, so it was always false and its
+assertion could never fire. The regression test for the exact property that change was about passed
+while checking nothing.
+
+Two doc comments that had been detached from their functions by insertions are reattached.
+
 ### Fixed — plankton's query commands took the last positional, not the first
 
 The positional hardening reached nekton's `annotate`, `attach` and `material` and stopped at the
