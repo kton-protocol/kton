@@ -211,13 +211,24 @@ func readSourcesFile(path string) ([]string, error) {
 	return out, nil
 }
 
-// verifyStructure runs the gates INGEST runs, so `verify` cannot bless a record the store refuses.
-// It mirrors registry.parseEnv/apply: the whole payload must be canonical JSON (FotonID covers only
-// the projection, so a duplicate key elsewhere would pass the id check and still mean different
-// things to two readers), and a foton's protocol ref must agree with its descriptor (§6.2 - a ref
-// that lies about its descriptor poisons the action key).
+// verifyStructure answers one question - would `add` take this record? - and it answers it by
+// ASKING the admission rules, not by keeping a shorter copy of them.
 //
-// A non-foton envelope has no foton grammar to check; its signature verdict stands alone.
+// It kept a copy, and the copy was wrong in two ways at once. It returned success immediately for
+// any non-foton predicate, and it never computed the action key. So a genuinely signed in-toto
+// Statement that is not a foton, and a foton with two inputs at one path carrying different hashes,
+// both printed
+//
+//	structure:       VALID - the record is one this store would accept
+//
+// while `Add` refused them with ErrNotFoton and a structural error. Anyone who verified a file and
+// did not immediately add it believed it was good. Two lists of admission rules are two opinions
+// about admission.
+//
+// The canonical-JSON check stays here and is NOT in the shared gate on purpose: it is about the
+// whole payload, where FotonID covers only the projection, so a duplicate key elsewhere passes the
+// id check and still means different things to two readers. It is a property of the bytes a
+// verifier was handed, which is this command's subject.
 func verifyStructure(env core.Envelope) error {
 	pb, err := env.PayloadBytes()
 	if err != nil {
@@ -226,18 +237,8 @@ func verifyStructure(env core.Envelope) error {
 	if _, err := core.CanonJSON(pb); err != nil {
 		return fmt.Errorf("payload is not valid canonical JSON: %w", err)
 	}
-	st, err := env.Statement()
-	if err != nil {
-		return err
-	}
-	if st.PredicateType != core.PredicateFoton {
-		return nil
-	}
-	f, err := st.ToFoton()
-	if err != nil {
-		return err
-	}
-	return f.CheckProtocolRef()
+	// Every context-free gate Add runs, from Add's own list.
+	return registry.CheckAdmissible(env)
 }
 
 func run(cmd string, args []string) error {

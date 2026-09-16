@@ -93,6 +93,37 @@ that rule as much as the CLI does.
 Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
 are now flag parsing over the methods, the shape `plankton author` already has.
 
+### Fixed — `plankton verify` blessed records `add` refuses
+
+`verify` prints
+
+```
+structure:       VALID - the record is one this store would accept
+```
+
+and that sentence is a claim about `Add`. It was false for two genuinely signed records, because
+`verify` kept its **own, shorter** list of admission rules: it returned success immediately for any
+non-foton predicate, and it never computed the action key.
+
+- a signed in-toto Statement that is not a foton — `Add` refuses it with `ErrNotFoton`
+- a foton with two inputs at one path carrying different hashes — `Add` refuses it: the action key
+  is a `{path → hash}` map and could hold only one, so an input would silently vanish from the
+  computation's identity
+
+Both printed a clean bill of health. Anyone who verified a file and did not immediately add it
+believed it was good.
+
+The context-free gates moved into `registry.CheckAdmissible`, which `Add` and `verify` both call —
+two lists of admission rules are two opinions about admission, the same reasoning that put the
+§5.1/§6.1/§6.3 rules in `core.Foton.ValidateStructure` beside the type they validate. The
+canonical-JSON check deliberately stays in `verify`: it is about the whole payload, where the foton
+id covers only the projection, so a duplicate key elsewhere passes the id check and still means
+different things to two readers.
+
+The regression does not assert that `verify` refuses. It asserts that `verify` and `Add` **agree**,
+in both directions and about the reason — so a rule added to one and not the other fails the test,
+and an ordinary foton still passes both.
+
 ### Fixed — four argument-parsing traps that succeeded while doing something else
 
 A command that fails is a signal. A command that succeeds while doing something other than what was

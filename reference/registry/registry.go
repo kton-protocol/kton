@@ -349,26 +349,39 @@ func (r *Registry) apply(rec Record) {
 
 // Add ingests a signed envelope, assigning it a local seq, persisting and indexing it.
 // Idempotent: a record already present (by content) returns isNew=false.
-func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
-	// Ingest admits only SIGNED records (SPEC §8 / §15): ingest does not VERIFY the signature
-	// (that is `plankton verify`), but a record carrying no signature at all is structurally
-	// invalid and is rejected - matching nekton, so the shared trust layer behaves the same on
-	// both kernels (cold-session finding: plankton used to admit unsigned fotons).
+// CheckAdmissible runs every CONTEXT-FREE gate Add runs, and nothing else - no store lookup, no
+// duplicate detection, no write. It exists so `plankton verify` can answer "would `add` take this?"
+// by asking the admission rules themselves rather than keeping a second, shorter list of them.
+//
+// `verify` used to keep that second list: it checked canonical JSON and the §6.2 protocol binding,
+// and for a non-foton predicate returned success immediately. So a genuinely signed in-toto
+// Statement that is not a foton, and a foton whose action key is ambiguous, both printed
+//
+//	structure:       VALID - the record is one this store would accept
+//
+// while `Add` refused them with ErrNotFoton and a structural error. Anyone who verified a file and
+// did not then add it believed it was good.
+//
+// Two lists of admission rules are two opinions about admission, which is the same reasoning that
+// put the §5.1/§6.1/§6.3 rules in core.Foton.ValidateStructure beside the type they validate. The
+// signature is deliberately NOT checked here: authenticity is `verify`'s own business, and ingest
+// only requires that a signature be PRESENT (SPEC §8).
+func CheckAdmissible(env core.Envelope) error {
 	if !env.HasSignature() {
-		return "", false, fmt.Errorf("foton has no signature (SPEC §8: ingest admits only signed records; use `plankton verify` to check authenticity)")
+		return fmt.Errorf("foton has no signature (SPEC §8: ingest admits only signed records; use `plankton verify` to check authenticity)")
 	}
 	f, fotonID, err := parseEnv(env)
 	if err != nil {
-		return "", false, err
+		return err
 	}
 	if fotonID == "" {
-		return "", false, ErrNotFoton
+		return ErrNotFoton
 	}
 	// Enforce the §6.2 binding at the trust boundary: a carried descriptor MUST hash to protocol.ref.
 	// Without this a forged/stale ref decouples the action key from the real protocol and poisons the
 	// reuse cache (cold-session finding).
 	if err := f.CheckProtocolRef(); err != nil {
-		return "", false, err
+		return err
 	}
 	// The same context-free structure authoring enforces (§5.1 hash grammar, §6.1 relative paths,
 	// §6.3 unambiguous slots). Ingest used to check only the protocol binding and the action key, so
@@ -376,7 +389,7 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	// arriving by mirror or by a git merge, which this package documents as a supported transport -
 	// was accepted and indexed, and lineage then exposed references that resolve to nothing.
 	if err := f.ValidateStructure(); err != nil {
-		return "", false, fmt.Errorf("foton is structurally invalid: %w", err)
+		return fmt.Errorf("foton is structurally invalid: %w", err)
 	}
 	// A foton whose §6.3 ACTION KEY cannot be computed is structurally ambiguous - two inputs at one
 	// relative path with different hashes, so the {path -> hash} map could hold only one and an input
@@ -385,7 +398,25 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 	// the record fully queryable while missing from the reuse index, with nobody told. A
 	// structural violation is refused here instead of becoming an invisible gap.
 	if _, err := f.ActionKey(); err != nil {
-		return "", false, fmt.Errorf("foton is structurally invalid: %w", err)
+		return fmt.Errorf("foton is structurally invalid: %w", err)
+	}
+	return nil
+}
+
+func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
+	// Ingest admits only SIGNED records (SPEC §8 / §15): ingest does not VERIFY the signature
+	// (that is `plankton verify`), but a record carrying no signature at all is structurally
+	// invalid and is rejected - matching nekton, so the shared trust layer behaves the same on
+	// both kernels (cold-session finding: plankton used to admit unsigned fotons).
+	//
+	// Every context-free gate lives in CheckAdmissible, which `plankton verify` calls too - so the
+	// two can no longer disagree about what this store accepts.
+	if err := CheckAdmissible(env); err != nil {
+		return "", false, err
+	}
+	_, fotonID, err := parseEnv(env)
+	if err != nil {
+		return "", false, err
 	}
 	key, err := recordKey(env, fotonID)
 	if err != nil {
