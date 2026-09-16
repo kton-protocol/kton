@@ -45,11 +45,14 @@ func attachMaterial(args []string) error {
 			i++
 			regDir = arg(args, i)
 		default:
-			if strings.HasPrefix(args[i], "--") {
-				return fmt.Errorf("unknown flag %q", args[i])
+			// Any dash prefix, not just "--" - `-x` used to become the subject.
+			if strings.HasPrefix(args[i], "-") {
+				return fmt.Errorf("unknown flag %q - `nekton attach` takes --scheme, --file, --media "+
+					"and --registry", args[i])
 			}
 			if subject != "" {
-				return fmt.Errorf("attach takes one subject, got %q and %q", subject, args[i])
+				return fmt.Errorf("attach takes one subject, got %q and %q - material binds to one "+
+					"record's content address", subject, args[i])
 			}
 			subject = args[i]
 		}
@@ -98,8 +101,14 @@ func listMaterial(args []string) error {
 			i++
 			regDir = arg(rest, i)
 		default:
-			if strings.HasPrefix(rest[i], "--") {
-				return fmt.Errorf("unknown flag %q", rest[i])
+			if strings.HasPrefix(rest[i], "-") {
+				return fmt.Errorf("unknown flag %q - `nekton material` takes --json and --registry", rest[i])
+			}
+			// One subject, named. Last-wins here answered about a record the caller did not ask
+			// about, which for a "does this record carry evidence" question is the wrong record's
+			// answer presented as this one's.
+			if subject != "" {
+				return fmt.Errorf("`nekton material` takes ONE record id, got %q and %q", subject, rest[i])
 			}
 			subject = rest[i]
 		}

@@ -130,12 +130,27 @@ func (r *Registry) AttachMaterial(vm VerificationMaterial) error {
 		if err != nil {
 			return err
 		}
+		// Isolate a TORN TAIL. A crash mid-append leaves an unterminated line; a bare O_APPEND write
+		// lands directly on it, concatenating the two, and the reader discards BOTH - so an
+		// acknowledged attach is lost to somebody else's interrupted one. The record log learned this
+		// in this release and the material log did not, though the failure mode is identical.
+		//
+		// The newline goes out in the SAME call as the content, so no line ever exists without its
+		// terminator.
+		torn, terr := hasTornTail(path)
+		if terr != nil {
+			return terr
+		}
+		line := append(b, '\n')
+		if torn {
+			line = append([]byte{'\n'}, line...)
+		}
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		_, err = f.Write(append(b, '\n'))
+		_, err = f.Write(line)
 		return err
 	})
 	if err != nil {
@@ -143,4 +158,30 @@ func (r *Registry) AttachMaterial(vm VerificationMaterial) error {
 	}
 	r.material[vm.Subject] = append(r.material[vm.Subject], vm)
 	return nil
+}
+
+// hasTornTail reports whether path ends in a partial line - content not terminated by a newline,
+// which is what a crash mid-append leaves behind. Same rule as the nekton side; kept here rather
+// than shared because `core` is the neutral layer and this is a storage detail of one registry.
+func hasTornTail(path string) (bool, error) {
+	fi, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if fi.Size() == 0 {
+		return false, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	var b [1]byte
+	if _, err := f.ReadAt(b[:], fi.Size()-1); err != nil {
+		return false, err
+	}
+	return b[0] != '\n', nil
 }

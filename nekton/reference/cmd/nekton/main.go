@@ -64,7 +64,11 @@ usage:
   nekton head <scope-id> [--json]                              the tip of a scope's chain (publish/anchor it to seal history)
   nekton export [--title T] [out]                     serialize claims as JSON (for the Navigator join)
   nekton export --nanopub <claim.dsse.json> [-o out]  render a claim to its nanopublication (RDF/TriG) face
-  nekton nanopublish <claim.dsse.json> [--rsa key.pem] [--creator IRI] [-o out]  RSA-sign it + mint a Trusty URI
+  nekton nanopublish <claim.dsse.json> [--rsa key.pem] [--creator IRI] [--trust-keys D] [-o out]
+                                                      RSA-sign it + mint a Trusty URI. --trust-keys
+                                                      decides what the PUBLISHED RDF asserts: with a
+                                                      key that verifies, prov:wasAttributedTo; without
+                                                      it, only nk:claimedSigner - and that is permanent
   nekton mirror <local-registry-dir>                  overlay a peer's claims by hash (local, no network)
   nekton man                                          print the embedded manual page (roff)
 

@@ -82,7 +82,15 @@ type Set struct {
 //
 // This is the constructor a browser cockpit uses. Load is the same thing over a directory.
 func New(templates map[string][]byte, aliases []byte) (Set, error) {
-	s := Set{templates: map[string]Template{}, origin: "the supplied templates"}
+	return newWithOrigin(templates, aliases, "the supplied templates")
+}
+
+// newWithOrigin is New with a caller-supplied name for the source, used only in error messages.
+// Load passes the directory, because "two templates in ./templates declare the name X" sends a
+// reader somewhere and "two templates in the supplied templates" does not - and Load could not set
+// it after the fact, since the error naming it is produced in here.
+func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (Set, error) {
+	s := Set{templates: map[string]Template{}, origin: origin}
 	if len(aliases) > 0 {
 		if err := json.Unmarshal(aliases, &s.aliases); err != nil {
 			return Set{}, fmt.Errorf("alias file: %w - continuing without it would resolve a CURIE to "+
@@ -122,9 +130,49 @@ func New(templates map[string][]byte, aliases []byte) (Set, error) {
 			s.skipped = append(s.skipped, key)
 			continue
 		}
+		// A name collision is REFUSED, not resolved by luck. `templates` is a map and New ranges it,
+		// so two files declaring one name made the winner depend on map iteration order: six
+		// consecutive `nekton templates` runs printed one predicate five times and the other once,
+		// which means `annotate --template qa/review` could sign a DIFFERENT predicate run to run.
+		// A predicate is covered by the claim id and is signed.
+		//
+		// The old filename->name mapping was 1:1 by construction, so this could not arise; keying on
+		// the declared name is what makes it possible, and that key was introduced to stop hyphenated
+		// names being mangled. Both properties are wanted, so the collision is named instead of
+		// silently broken either way.
+		if prev, dup := s.templates[name]; dup {
+			return Set{}, fmt.Errorf("two templates in %s declare the name %q (predicates %q and %q) - "+
+				"which one `--template %s` means would depend on map order, and a predicate is signed",
+				s.origin, name, prev.Predicate, t.Predicate, name)
+		}
 		s.templates[name] = t
 	}
 	return s, nil
+}
+
+// LoadAliases reads ONLY the alias file, with no template directory involved. The resulting Set has
+// no templates and resolves CURIEs, terms and prefixes exactly as a full one does.
+//
+// It exists because aliases and templates are different things that happened to be loaded together.
+// `Load` fails when the template directory is absent - correctly, for a command about templates -
+// and callers that only ever RESOLVE a term were falling back to a Set with no aliases at all. The
+// consequence was not a missing convenience: `export --nanopub` and `nanopublish` take `--aliases`
+// explicitly and have nothing to do with templates, so a publisher with no ./templates in the
+// working directory silently emitted a DIFFERENT term IRI into signed RDF, and `by predicate
+// qa:reviewed` answered "(none)" for a record the store held.
+//
+// An absent alias file is not an error here either - it means no sugar - but a malformed one is,
+// for the same reason it is in Load: resolving a CURIE to itself would sign a bare term as though
+// it were an IRI.
+func LoadAliases(aliasPath string) (Set, error) {
+	b, err := os.ReadFile(aliasPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return New(nil, nil)
+		}
+		return Set{}, fmt.Errorf("alias file %s: %w", aliasPath, err)
+	}
+	return New(nil, b)
 }
 
 // Load is New over a directory: every *.json in templateDir is a template (the on-disk `a-b.json`
@@ -174,11 +222,10 @@ func Load(templateDir, aliasPath string) (Set, error) {
 		// the example suite. The name a template declares is the name it has.
 		raw[strings.TrimSuffix(n, ".json")] = b
 	}
-	s, err := New(raw, aliases)
+	s, err := newWithOrigin(raw, aliases, templateDir)
 	if err != nil {
 		return Set{}, err
 	}
-	s.origin = templateDir
 	return s, nil
 }
 

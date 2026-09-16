@@ -55,9 +55,18 @@ func isFullSha256(s string) bool {
 // the full URI matched, while `annotate --template` resolved the alias - an inconsistency that breaks
 // coordination, since an empty result reads as "no one is working this step".)
 func resolvePredicateArg(x string) string {
-	tset, err := template.Load(envOr("NEKTON_TEMPLATES", "./templates"), envOr("NEKTON_ALIASES", "./aliases.json"))
+	aliasesPath := envOr("NEKTON_ALIASES", "./aliases.json")
+	tset, err := template.Load(envOr("NEKTON_TEMPLATES", "./templates"), aliasesPath)
 	if err != nil {
-		return x // no usable template set: the argument is whatever the caller typed
+		// No template DIRECTORY is not the same as no ALIASES. Returning the raw argument here meant
+		// that `nekton by predicate qa:reviewed` answered "(none)" whenever ./templates happened not
+		// to exist - for a record the store held, and with the alias file sitting right there. That
+		// is precisely the silent-empty-answer this function's comment above says it exists to
+		// prevent. Aliases resolve on their own.
+		tset, err = template.LoadAliases(aliasesPath)
+		if err != nil {
+			return x // not even a usable alias file: the argument is whatever the caller typed
+		}
 	}
 	if t, ok := tset.Get(x); ok && t.Predicate != "" {
 		return tset.Resolve(t.Predicate)
@@ -70,10 +79,24 @@ func resolvePredicateArg(x string) string {
 // CURIE then fails the full-IRI check downstream rather than being silently emitted.
 func mustTemplateSet(aliasesPath string) template.Set {
 	tset, err := template.Load(envOr("NEKTON_TEMPLATES", "./templates"), aliasesPath)
-	if err != nil {
-		if s, aerr := template.New(nil, nil); aerr == nil {
-			return s
-		}
+	if err == nil {
+		return tset
+	}
+	// Fall back to the ALIASES ALONE, not to nothing. `Load` fails when ./templates is absent, which
+	// is the normal case for the two callers of this function: `export --nanopub` and `nanopublish`
+	// have nothing to do with templates and take --aliases explicitly. Falling back to an empty Set
+	// dropped every prefix and term, and the same claim with the same alias file then published a
+	// DIFFERENT term IRI depending on whether an unrelated directory existed:
+	//
+	//     ./templates present:  nk:outcome           = https://kton.dev/v/outcome
+	//     ./templates absent:   <https://kton.dev/v/lab/outcome>
+	//
+	// into a signed nanopublication. A missing template directory must cost templates, not aliases.
+	if s, aerr := template.LoadAliases(aliasesPath); aerr == nil {
+		return s
+	}
+	if s, aerr := template.New(nil, nil); aerr == nil {
+		return s
 	}
 	return tset
 }
@@ -140,8 +163,20 @@ func annotate(args []string) error {
 			i++
 			out = arg(args, i)
 		default:
-			if strings.HasPrefix(args[i], "--") {
-				return fmt.Errorf("unknown flag %q", args[i])
+			// Any dash prefix, not just "--": `-x` fell through here and became the SUBJECT.
+			if strings.HasPrefix(args[i], "-") {
+				return fmt.Errorf("unknown flag %q - `nekton annotate` takes flags --template, --set, "+
+					"--foton, --sign, --by, --when, --scope, --prev, --templates-dir, --aliases, "+
+					"--registry, --add, --print-id and -o", args[i])
+			}
+			// LAST-WINS on a SUBJECT. `annotate <a> <b> --template t` signed a claim about <b> and
+			// said nothing. The argument for refusing this on `seed` was that a scope name is
+			// identity; a claim's subject is what the claim is ABOUT, it is covered by the claim id,
+			// and it is signed. It is not the smaller case.
+			if subject != "" {
+				return fmt.Errorf("`nekton annotate` takes ONE subject, got %q and %q - the subject is "+
+					"what the claim is about and is covered by its id, so the wrong one signs a claim "+
+					"about something else", subject, args[i])
 			}
 			subject = args[i]
 		}
@@ -226,6 +261,14 @@ func annotate(args []string) error {
 	files := map[string][]byte{}
 	for k, v := range set {
 		if f, known := t.Fields[k]; known && f.Type == "file" {
+			// An EMPTY value is "not supplied", not "read the file called empty string". A script
+			// passing an unset $REPORT to an OPTIONAL file field used to sign fine; without this it
+			// failed with `open : no such file or directory`, which names neither the variable nor
+			// the fact that the field was optional. A REQUIRED field still fails, one step later and
+			// with the template's own message, because Spec sees the field as absent.
+			if v == "" {
+				continue
+			}
 			b, rerr := os.ReadFile(v)
 			if rerr != nil {
 				return fmt.Errorf("file field %s: %w", k, rerr)
@@ -273,7 +316,10 @@ func annotate(args []string) error {
 	fmt.Fprintln(os.Stderr, "  (resolved via the alias file - confirm this is the meaning you intend)")
 	// default a filename ONLY when we are actually writing one (not for --add without -o)
 	if out == "" && !addFlag {
-		out = "claim." + strings.ReplaceAll(tmplName, "/", "-") + ".dsse.json"
+		// t.Name, not tmplName: resolution moved into tset.Get, so tmplName is still the ALIAS the
+		// caller typed. `--template rev` wrote claim.rev.dsse.json where it wrote
+		// claim.qa-review.dsse.json before. The stderr echo above already uses t.Name.
+		out = "claim." + strings.ReplaceAll(t.Name, "/", "-") + ".dsse.json"
 	}
 
 	msg := humanOut(printID)

@@ -347,7 +347,17 @@ func renderTrig(c *trigCtx, st *claim.Statement, body map[string]any, env core.E
 	} else {
 		// no trusted key verified this signature: carry the CLAIMED signer, but do not assert it as
 		// established attribution (a consumer/gate that trusts prov:wasAttributedTo must not see it here).
-		fmt.Fprintf(&b, "\n    nk:claimedSigner %s ;\n    nk:signerVerified false", agent)
+		fmt.Fprintf(&b, "\n    nk:claimedSigner %s", agent)
+		// NO nk:signerVerified false when nobody was ASKED. `false` conflates "a trusted key was
+		// supplied and did not verify" with "no trusted key was supplied", and this goes into
+		// published, permanent RDF. Absence is the honest form: the attribution is already downgraded
+		// to nk:claimedSigner, which is the part a gate reads. Asserting a verdict nobody established
+		// is what SPEC §8.1's read-path boundary forbids.
+		//
+		// The predicate keeps its meaning where it IS asserted, so no published graph is reinterpreted.
+		if len(c.trustKeys) > 0 {
+			fmt.Fprint(&b, " ;\n    nk:signerVerified false")
+		}
 	}
 	if when != "" {
 		fmt.Fprintf(&b, " ;\n    prov:generatedAtTime %s^^xsd:dateTime", quote(when))
