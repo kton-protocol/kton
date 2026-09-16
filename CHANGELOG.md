@@ -93,6 +93,33 @@ that rule as much as the CLI does.
 Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
 are now flag parsing over the methods, the shape `plankton author` already has.
 
+### Fixed — four argument-parsing traps that succeeded while doing something else
+
+A command that fails is a signal. A command that succeeds while doing something other than what was
+asked is not, and the wrong thing is then signed, stored, or named.
+
+- **`nekton claim <spec> <key> -o out.json` wrote a file literally named `-o`.** `claim` takes its
+  output as a third POSITIONAL while `seed` and `annotate` take `-o`, so one verb in three punishes
+  the habit the other two teach. The flag became the filename, the requested path was dropped, and
+  the command printed `-> -o` as though that were the plan. Without `--add` the record then existed
+  nowhere the caller was looking. A dash-prefixed token is now refused, and the message says where
+  the output actually goes.
+
+- **`nekton seed sc -x v` opened the scope `v`.** The guard tested for `--`, so `-x` fell through to
+  the positional branch, and the *last* positional won. A scope name is identity: it enters the
+  seed's canonical bytes and therefore the scope id that every scoped claim names. Both halves are
+  refused now — any dash prefix, and a second name.
+
+- **`material` answered a malformed question.** `nekton material -x` and `plankton material -x`
+  printed `(none) - no verification material attached to -x` and exited 0. §12 forbids exactly this:
+  *"an empty answer to a malformed question is a successful wrong answer."* A caller asking whether
+  a record carries evidence read that as *checked, none there*, about a string that is not a record
+  id. Both kernels now require a content address — while a well-formed id with nothing attached
+  stays a plain `(none)`, because that is a true answer about a record that could have material.
+
+Same shape as #45, where `templates` read any positional as a template name. Each guard was
+mutation-checked: disabling it fails its own test, and the forms that were always correct still work.
+
 ### Fixed — nekton's record queries answered a shape the spec does not declare
 
 `about --json` and `by --json` are the `claims(subject | object | signer | predicate)` queries of

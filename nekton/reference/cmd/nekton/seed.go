@@ -64,8 +64,20 @@ func seed(args []string) error {
 			i++
 			out = arg(args, i)
 		default:
-			if strings.HasPrefix(args[i], "--") {
-				return fmt.Errorf("unknown flag %q", args[i])
+			// Any dash-prefixed token, not just "--". `-x` fell through to the positional branch and
+			// became the scope NAME, and a scope name is identity: it goes into the seed's canonical
+			// bytes and therefore into the scope id every scoped claim names.
+			if strings.HasPrefix(args[i], "-") {
+				return fmt.Errorf("unknown flag %q - `nekton seed` takes flags --sign, --by, --parent, "+
+					"--when, --add, --registry, --print-id and -o", args[i])
+			}
+			// LAST-WINS is how a scope silently becomes a different scope. `nekton seed sc -x v`
+			// opened the scope "v", not "sc", because the second positional overwrote the first -
+			// and every claim in it then named an id nobody intended. Same defect as #45, where
+			// `templates` read any positional as a template name.
+			if name != "" {
+				return fmt.Errorf("`nekton seed` takes ONE scope name, got %q and %q - the name is "+
+					"part of the scope id, so the wrong one opens a different scope", name, args[i])
 			}
 			name = args[i]
 		}

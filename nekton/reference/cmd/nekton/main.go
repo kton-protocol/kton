@@ -295,6 +295,21 @@ func run(cmd string, args []string) error {
 					regDir = args[i]
 				}
 			default:
+				// A flag-shaped token is NOT a filename. `claim` takes its output as a third
+				// POSITIONAL, while `seed` and `annotate` take `-o` - so one verb in three punishes
+				// the habit the other two teach. `nekton claim spec.json k.key -o out.json` used to
+				// write the envelope to a file literally named `-o`, drop the path the caller asked
+				// for, and print `-> -o` as though that were the plan. Without `--add` the record
+				// then existed nowhere the caller was looking.
+				//
+				// Succeeding while doing something else is worse than failing: `templates` learned
+				// the same lesson in #45, where any positional was read as a template name.
+				if strings.HasPrefix(args[i], "-") {
+					return fmt.Errorf("unknown flag %q - `nekton claim` takes the output as a THIRD "+
+						"POSITIONAL, not -o:\n  nekton claim <spec.json> <key.key> [<out.dsse.json>] "+
+						"[--add] [--registry <dir>] [--print-id]\n(`seed` and `annotate` do take -o; "+
+						"this verb does not)", args[i])
+				}
 				pos = append(pos, args[i])
 			}
 		}
