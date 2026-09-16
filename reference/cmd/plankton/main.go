@@ -630,10 +630,18 @@ func run(cmd string, args []string) error {
 			} else if args[i] == "--via" && i+1 < len(args) {
 				i++
 				via = args[i]
+			} else if strings.HasPrefix(args[i], "-") {
+				return fmt.Errorf("unknown flag %q - `plankton reproduces` takes --via and --json", args[i])
 			} else if ref == "" {
 				ref = args[i]
-			} else {
+			} else if cand == "" {
 				cand = args[i]
+			} else {
+				// A THIRD hash overwrote `cand`, so `reproduces <a> <b> <c>` compared <a> against
+				// <c> and reported a verdict about a pair nobody asked about.
+				return fmt.Errorf("`plankton reproduces` compares TWO output hashes, got a third (%q) - "+
+					"it used to replace the candidate silently, so the verdict was about a different "+
+					"pair than the one asked for", args[i])
 			}
 		}
 		if ref == "" || cand == "" {
@@ -736,9 +744,21 @@ func run(cmd string, args []string) error {
 				sources = append(sources, more...)
 			case args[i] == "--strict":
 				strict = true
-			case strings.HasPrefix(args[i], "--"):
-				return fmt.Errorf("unknown flag %q", args[i])
+			case strings.HasPrefix(args[i], "-"):
+				// Any dash prefix, not just "--": `-x` fell through and became the QUERY.
+				return fmt.Errorf("unknown flag %q - `plankton %s` takes --source, --sources-file, "+
+					"--strict and --json", args[i], cmd)
 			default:
+				// One query, and the SECOND one is refused rather than silently answered. `plankton
+				// producer <a> <b>` answered about <b>: a question the caller did not ask, with no
+				// sign that the first hash had been dropped. The clause quoted just below rules out
+				// an empty answer to a malformed question for the same reason - answering the wrong
+				// question is not better than answering a wrong one. The nekton equivalents (`about`,
+				// `by`, `material`) already refuse this.
+				if q != "" {
+					return fmt.Errorf("`plankton %s` takes ONE %s, got %q and %q - answering about the "+
+						"second would silently drop the first", cmd, "content address", q, args[i])
+				}
 				q = args[i]
 			}
 		}

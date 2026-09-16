@@ -93,6 +93,30 @@ that rule as much as the CLI does.
 Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
 are now flag parsing over the methods, the shape `plankton author` already has.
 
+### Fixed — plankton's query commands took the last positional, not the first
+
+The positional hardening reached nekton's `annotate`, `attach` and `material` and stopped at the
+kernel boundary — in the very change that was fixing a plankton/nekton twin:
+
+```
+plankton producer <a> <b>        answered about <b>
+plankton uses <a> <b>            answered about <b>
+plankton lineage <a> <b>         answered about <b>
+plankton material <a> <b>        answered about <b>
+plankton reproduces <a> <b> <c>  compared <a> against <c>
+```
+
+A question the caller did not ask, answered with no sign the first argument was dropped — and
+`producer`/`uses`/`lineage` are the commands a cockpit consumes. The §12 clause quoted a few lines
+below the shared parser rules out an empty answer to a malformed question for the same reason:
+answering the *wrong* question is not better. A misspelled flag was also reported as a second
+*subject* by `attach`, sending the reader after an argument they never passed.
+
+`reproduces` needed a **subprocess** test, and the reason is worth recording: with two well-formed
+hashes it reaches its verdict path and signals "not reproduced" with `os.Exit(1)`, so removing its
+guard kills the test binary and the run reports nothing at all rather than a failure. The first
+version of that test had exactly that defect — a check that cannot fail, found by mutating it.
+
 ### Fixed — thirteen more, from reviewing the 25 commits no external reviewer had seen
 
 Five of them are regressions from the template extraction earlier in this release, measured against
