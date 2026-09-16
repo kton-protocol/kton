@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,41 +69,52 @@ func TestQueryCommandsRefuseLastWins(t *testing.T) {
 	})
 }
 
-// TestReproducesRefusesAThirdHash needs a SUBPROCESS, and the reason is worth stating: with two
-// well-formed hashes `reproduces` reaches its verdict path and signals "not reproduced" with
-// os.Exit(1). So if the argument guard were removed, an in-process call would kill the test binary
-// instead of returning an error - and the run would report nothing at all rather than a failure.
+// TestReproducesArgs covers the `reproduces` parse directly, and the reason it is not exercised
+// through run() belongs here: everything after the parse reaches a verdict path that ends in
+// os.Exit(1) for "not reproduced". An in-process call of the whole command therefore cannot be
+// mutation-checked - removing a guard would kill the test binary and the run would report NOTHING
+// rather than a failure, which is a check that cannot fail. The first version of this test had
+// exactly that shape.
 //
-// That is a check that cannot fail, which is the defect this repository keeps finding. The first
-// version of this test had it. Running the guard in a child process is what makes the assertion
-// real: a refusal and a verdict are different exits, and the parent can tell them apart.
-func TestReproducesRefusesAThirdHash(t *testing.T) {
-	if os.Getenv("KTON_REPRO_ARG_CHILD") == "1" {
-		// In the child: exercise the parse and let whatever happens, happen.
-		a := "sha256:" + strings.Repeat("a", 64)
-		b := "sha256:" + strings.Repeat("b", 64)
-		c := "sha256:" + strings.Repeat("c", 64)
-		if err := run("reproduces", []string{a, b, c}); err != nil {
-			os.Stderr.WriteString(err.Error())
-			os.Exit(7) // a distinct code: this is the REFUSAL, not the verdict
+// Spawning the binary instead would import os/exec into plankton, and the architecture guard
+// refuses that - plankton documents, never executes - which is how the attempt was caught. A pure
+// parse function satisfies both.
+func TestReproducesArgs(t *testing.T) {
+	a := "sha256:" + strings.Repeat("a", 64)
+	b := "sha256:" + strings.Repeat("b", 64)
+	c := "sha256:" + strings.Repeat("c", 64)
+
+	t.Run("a third hash is refused", func(t *testing.T) {
+		_, _, _, _, err := parseReproducesArgs([]string{a, b, c})
+		if err == nil {
+			t.Fatal("a third hash was accepted - it used to replace the candidate silently, so the " +
+				"verdict was about a different pair than the one asked for")
 		}
-		os.Exit(0)
-	}
-	cmd := exec.Command(os.Args[0], "-test.run=TestReproducesRefusesAThirdHash")
-	cmd.Env = append(os.Environ(), "KTON_REPRO_ARG_CHILD=1",
-		"PLANKTON_DIR="+filepath.Join(t.TempDir(), "reg"))
-	out, err := cmd.CombinedOutput()
-	code := 0
-	if ee, ok := err.(*exec.ExitError); ok {
-		code = ee.ExitCode()
-	} else if err != nil {
-		t.Fatalf("running the child: %v\n%s", err, out)
-	}
-	if code != 7 {
-		t.Fatalf("a third hash was not refused (child exit %d) - it used to replace the candidate "+
-			"silently, so the verdict was about a different pair than the one asked for\n%s", code, out)
-	}
-	if !strings.Contains(string(out), "compares TWO") {
-		t.Errorf("the refusal does not say what the command takes: %s", out)
-	}
+		if !strings.Contains(err.Error(), "compares TWO") {
+			t.Errorf("wrong refusal: %v", err)
+		}
+	})
+
+	t.Run("a single-dash flag is refused", func(t *testing.T) {
+		if _, _, _, _, err := parseReproducesArgs([]string{a, b, "-x"}); err == nil {
+			t.Error(`"-x" was taken as an argument`)
+		}
+	})
+
+	t.Run("one hash is refused", func(t *testing.T) {
+		if _, _, _, _, err := parseReproducesArgs([]string{a}); err == nil {
+			t.Error("a single hash was accepted; reproduces compares two")
+		}
+	})
+
+	t.Run("the correct forms parse", func(t *testing.T) {
+		gotRef, gotCand, via, asJSON, err := parseReproducesArgs([]string{a, b})
+		if err != nil || gotRef != a || gotCand != b || via != "" || asJSON {
+			t.Errorf("parse(%s %s) = %q %q %q %v, err=%v", a, b, gotRef, gotCand, via, asJSON, err)
+		}
+		gotRef, gotCand, via, asJSON, err = parseReproducesArgs([]string{a, b, "--via", c, "--json"})
+		if err != nil || gotRef != a || gotCand != b || via != c || !asJSON {
+			t.Errorf("parse with --via/--json = %q %q %q %v, err=%v", gotRef, gotCand, via, asJSON, err)
+		}
+	})
 }
