@@ -230,3 +230,172 @@ func TestDeferredBookkeepingIsIdempotent(t *testing.T) {
 			"truncation that is not there", n)
 	}
 }
+
+// TestACoSignatureOnADeferredClaimSurvives: the idempotence guard added for the double-count bug
+// returned unconditionally on a re-add, which DISCARDED the merged envelope. A co-signature on a
+// deferred claim reached disk - persistClaim had already unioned it - but not the live record and
+// not the feed, so a syncing peer never received the second signature and the claim was later
+// indexed carrying one. Only a reopen recovered it.
+//
+// That is signature loss, the one class this release's known-limitation note is about. The indexed
+// twin path refreshes the record and appends the new envelope for exactly this reason; the deferred
+// path must do the same, while still counting one deferred record.
+func TestACoSignatureOnADeferredClaimSurvives(t *testing.T) {
+	dir := t.TempDir()
+	_, privA, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, privB, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, seedID, err := claim.SignWith(claim.Spec{
+		Subject:       []claim.SubjectSpec{{URI: "urn:nekton:scope:sc"}},
+		PredicateType: claim.ScopePredicateType,
+		PredicateBody: map[string]any{"scope": "sc", "genesis": true, "by": "CN=t", "when": "2026-07-16T00:00:00Z"},
+	}, privA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := claim.Spec{
+		Subject: []claim.SubjectSpec{{URI: "urn:x"}}, Predicate: "https://kton.dev/v/note",
+		Object: map[string]any{"a": "1"}, By: "CN=t", When: "2026-07-16T00:00:00Z",
+		Scope: seedID, Prev: seedID,
+	}
+	byA, idA, err := claim.SignWith(spec, privA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byB, idB, err := claim.SignWith(spec, privB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idA != idB {
+		t.Fatalf("the two signings produced different ids (%s, %s) - they must be one claim", idA, idB)
+	}
+
+	r, err := registry.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Add(byA); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Add(byB); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, _, ok := r.DeferredClaim(idA)
+	if !ok {
+		t.Fatal("the claim is not deferred - the premise is gone")
+	}
+	if n := len(rec.Envelope.Signatures); n != 2 {
+		t.Errorf("the live deferred record carries %d signatures, want 2 - the co-signature reached "+
+			"disk but not the record", n)
+	}
+	// A peer must receive it: the feed carries the co-signature as its own line.
+	sigs := 0
+	for _, fr := range r.Records(0) {
+		if fr.ClaimID == idA {
+			if len(fr.Envelope.Signatures) > sigs {
+				sigs = len(fr.Envelope.Signatures)
+			}
+		}
+	}
+	if sigs != 2 {
+		t.Errorf("the feed offers at most %d signatures for this claim, want 2 - a syncing peer "+
+			"never receives the second signer's evidence", sigs)
+	}
+	// Still ONE deferred record: the fix must not undo the double-count it replaced.
+	if n := r.Deferred(); n != 1 {
+		t.Errorf("Deferred() = %d, want 1", n)
+	}
+	if n := r.Unresolved(seedID); n != 1 {
+		t.Errorf("Unresolved() = %d, want 1", n)
+	}
+}
+
+// TestDeferredCountsSurviveAReopen: the double-count fix was applied to Add and NOT to settle, so it
+// reproduced on every REPLAY - a co-signed deferred claim has one subnekton line per signature set,
+// and settle counted each of them. The existing idempotence test misses this because it re-adds an
+// identical envelope and never reopens; this one does both.
+func TestDeferredCountsSurviveAReopen(t *testing.T) {
+	dir := t.TempDir()
+	_, privA, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, privB, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedEnv, seedID, err := claim.SignWith(claim.Spec{
+		Subject:       []claim.SubjectSpec{{URI: "urn:nekton:scope:sc"}},
+		PredicateType: claim.ScopePredicateType,
+		PredicateBody: map[string]any{"scope": "sc", "genesis": true, "by": "CN=t", "when": "2026-07-16T00:00:00Z"},
+	}, privA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := claim.Spec{
+		Subject: []claim.SubjectSpec{{URI: "urn:x"}}, Predicate: "https://kton.dev/v/note",
+		Object: map[string]any{"a": "1"}, By: "CN=t", When: "2026-07-16T00:00:00Z",
+		Scope: seedID, Prev: seedID,
+	}
+	byA, id, err := claim.SignWith(spec, privA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byB, _, err := claim.SignWith(spec, privB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := registry.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Add(byA)
+	r.Add(byB)
+
+	// REOPEN: settle replays both lines.
+	r2, err := registry.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := r2.Deferred(); n != 1 {
+		t.Errorf("after reopen Deferred() = %d for ONE claim, want 1", n)
+	}
+	if n := r2.Unresolved(seedID); n != 1 {
+		t.Errorf("after reopen Unresolved() = %d for ONE claim, want 1 - `head` would report a "+
+			"truncation that is not there", n)
+	}
+	// The FEED legitimately carries one line per signature set - `a co-signature is its OWN line, so
+	// it has its own position and is delivered like anything else; the reader unions lines that share
+	// a claim id`. So the assertion is not "one line"; it is that a peer can reconstruct BOTH
+	// signatures from what is offered. (My first version of this test asserted one line and failed,
+	// and the design comment above the feed field is what settled which of the two was wrong.)
+	union := map[string]bool{}
+	for _, fr := range r2.Records(0) {
+		if fr.ClaimID != id {
+			continue
+		}
+		for _, sg := range fr.Envelope.Signatures {
+			union[sg.KeyID] = true
+		}
+	}
+	if len(union) != 2 {
+		t.Errorf("the feed offers %d distinct signers for this claim after reopen, want 2 - a peer "+
+			"must be able to union both", len(union))
+	}
+	// And the counters return to zero once it resolves.
+	if _, _, err := r2.Add(seedEnv); err != nil {
+		t.Fatal(err)
+	}
+	if n := r2.Deferred(); n != 0 {
+		t.Errorf("Deferred() = %d after the seed arrived, want 0", n)
+	}
+	if n := r2.Unresolved(seedID); n != 0 {
+		t.Errorf("Unresolved() = %d after the seed arrived, want 0", n)
+	}
+}

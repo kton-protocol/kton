@@ -133,6 +133,30 @@ while checking nothing.
 
 Two doc comments that had been detached from their functions by insertions are reattached.
 
+### Fixed — a co-signature lost on a deferred claim, and two counts that disagreed with the store
+
+The idempotence guard added a change earlier for a double-count returned unconditionally on a
+re-add, and so **discarded the merged envelope**. A co-signature on a deferred claim reached disk —
+persistence had already unioned it — but not the live record and not the feed, so a syncing peer
+never received the second signature and the claim was later indexed carrying one. Only a reopen
+recovered it. That is loss of signing evidence, the one class the known-limitation note at the head
+of this file is about. A re-add is a no-op only when the merge changed nothing; when it grew the
+envelope the record is refreshed and the co-signature gets its own feed line, exactly as an indexed
+twin does — while still counting one deferred record.
+
+The same double-count fix had been applied to ingest and **not** to replay, so it returned on every
+reopen: a co-signed deferred claim has one stored line per signature set, and each was counted.
+`Deferred()` and `Unresolved()` then read 2 for one record and stuck at 1 after it resolved — `head`
+reporting a truncation that is not there, and `export`'s deferred count wrong.
+
+And `add` printed `already present` for a re-added deferred claim, bypassing the deferred branch
+added in the same release: present and *deferred* are different facts, and reporting them as one is
+the contradiction that branch exists to remove.
+
+`by predicate` also silently ignored a **malformed** alias file — answering `{"records":[]}` and
+exit 0 for records the store holds. The missing-*directory* case had been fixed one function over and
+this one left reachable; both are fatal now, while an absent alias file still simply means no sugar.
+
 ### Fixed — plankton's query commands took the last positional, not the first
 
 The positional hardening reached nekton's `annotate`, `attach` and `material` and stopped at the

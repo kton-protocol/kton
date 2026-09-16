@@ -524,6 +524,7 @@ func run(cmd string, args []string) error {
 			added, present := 0, 0
 			var refused []string
 			var ingested []string
+			reAdded := map[string]bool{}
 			deferred := 0
 			for _, p := range paths {
 				env, err := readEnvelope(p)
@@ -539,10 +540,12 @@ func run(cmd string, args []string) error {
 					refused = append(refused, fmt.Sprintf("%s: %v", p, err))
 					continue
 				}
-				if isNew {
-					ingested = append(ingested, id)
-				} else {
-					present++
+				// Every accepted record is classified after the batch, new or not: a re-added
+				// deferred claim returns isNew=false and would otherwise be counted "already
+				// present" for a store that answers no query for it.
+				ingested = append(ingested, id)
+				if !isNew {
+					reAdded[id] = true
 				}
 			}
 			// Classify AFTER the whole batch, never per record. A record deferred when it arrived
@@ -556,9 +559,12 @@ func run(cmd string, args []string) error {
 			// indexed, nothing was refused, and a caller reading that plus exit 0 as a complete
 			// import was wrong.
 			for _, id := range ingested {
-				if _, _, waiting := r.DeferredClaim(id); waiting {
+				switch {
+				case func() bool { _, _, w := r.DeferredClaim(id); return w }():
 					deferred++
-				} else {
+				case reAdded[id]:
+					present++
+				default:
 					added++
 				}
 			}
@@ -585,7 +591,20 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
+		_, deferredScope, isDeferred := r.DeferredClaim(id)
 		switch {
+		case isDeferred:
+			// Checked BEFORE !isNew. A re-added deferred claim now returns isNew=false, so it fell
+			// into "already present" and exited 0 - the same "indexed and deferred reported as one"
+			// contradiction this branch exists to fix, reintroduced one case over. Present and
+			// DEFERRED are different facts: the store holds it and answers no query for it.
+			verb := "deferred claim"
+			if !isNew {
+				verb = "already present, still deferred:"
+			}
+			fmt.Printf("%s %s  (registry now holds %d claims)\n", verb, id, r.Len())
+			fmt.Printf("  held and offered to peers, but its prev/seed for scope %s has not\n", deferredScope)
+			fmt.Printf("  arrived, so it answers no query here (SPEC §11: incomplete, not invalid).\n")
 		case !isNew:
 			fmt.Printf("already present: claim %s\n", id)
 		default:
@@ -649,7 +668,11 @@ func run(cmd string, args []string) error {
 		case "signer":
 			recs = r.BySigner(keyidFromArg(args[1]))
 		case "predicate":
-			recs = r.ByPredicate(resolvePredicateArg(args[1]))
+			pred, perr := resolvePredicateArg(args[1])
+			if perr != nil {
+				return perr
+			}
+			recs = r.ByPredicate(pred)
 		case "object":
 			recs = r.ByObject(args[1])
 		default:
