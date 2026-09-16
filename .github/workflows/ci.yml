@@ -1,8 +1,10 @@
 name: ci
 
 on:
+  # `dev` is where work lands; running only on main meant a direct push to the active
+  # development branch was ungated, and only PRs were ever checked.
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 jobs:
@@ -12,7 +14,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          # The GATE runs on a SUPPORTED Go line. Go's policy supports a major line until two newer
+          # majors exist, and the standard library ships inside every binary we release - having no
+          # third-party modules does not remove toolchain maintenance. The `compat` job
+          # below still proves the declared `go 1.22` floor in go.mod, so lowering the floor is a
+          # deliberate act rather than an accident.
+          go-version: 'stable'
 
       - name: build / test / vet (all three modules)
         run: |
@@ -22,23 +29,48 @@ jobs:
             ( cd "$m" && go build ./... && go test ./... && go vet ./... )
           done
 
+      - name: gofmt (nothing unformatted)
+        run: |
+          set -e
+          unformatted="$(gofmt -l reference nekton/reference kton/reference)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would change these files:"; echo "$unformatted"
+            exit 1
+          fi
+          echo "ok: every Go file is gofmt-clean"
+
       - name: architecture guard (documents-never-executes, one-way deps, WASM-clean kernels)
         run: bash scripts/check-import-direction.sh
 
-      # The guard above reads imports; this one COMPILES for the browser target. WASM-cleanliness that
-      # is only grepped is cleanliness only until something breaks that grep cannot see, and the
-      # release job is the wrong place to find out - it runs on a tag, after the version is cut.
-      # Reproducibility is checked here too: two builds from different directories must agree, which
-      # is exactly what `-trimpath` buys and what the published sha256 attests to.
-      - name: graph.wasm builds for js/wasm, and builds reproducibly
+      - name: scope guard (the two scope statements must not diverge)
+        run: bash scripts/check-scope-drift.sh
+
+      - name: the sigstore helper signs the Statement, not the envelope file
+        # nekton is the authority on what canonical means: the helper checks a payload's canonicality
+        # by comparing its sha256 to the claim id the kernel reports, rather than reimplementing JCS
+        # in a shell script - which is how the two would come to disagree.
+        # SPEC §8.1 requires an external scheme to sign the canonical Statement bytes and NOT to rest
+        # on a particular serialization of the envelope. A cosign STUB records which bytes the helper
+        # hands the signer, so this runs with no OIDC and no network - the property is about the
+        # binding, not about the signing service. The live round-trip is opt-in (--live) and is a
+        # human's job: it opens an OIDC login and writes a permanent public Rekor entry.
         run: |
-          set -euo pipefail
-          ( cd kton/reference && GOOS=js GOARCH=wasm go build -trimpath -o "$RUNNER_TEMP/graph-1.wasm" ./web/graph )
-          cp -r . "$RUNNER_TEMP/elsewhere"
-          ( cd "$RUNNER_TEMP/elsewhere/kton/reference" && GOOS=js GOARCH=wasm go build -trimpath -o "$RUNNER_TEMP/graph-2.wasm" ./web/graph )
-          cmp "$RUNNER_TEMP/graph-1.wasm" "$RUNNER_TEMP/graph-2.wasm" \
-            || { echo "::error::graph.wasm is not reproducible - same source, two paths, different bytes"; exit 1; }
-          sha256sum "$RUNNER_TEMP/graph-1.wasm"
+          set -e
+          mkdir -p "$RUNNER_TEMP/bin"
+          ( cd nekton/reference && go build -o "$RUNNER_TEMP/bin/nekton" ./cmd/nekton )
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          bash scripts/sigstore-sign-claim_test.sh
+
+      # The guard above reads IMPORTS; this one COMPILES for the browser target. WASM-cleanliness
+      # that is only grepped is cleanliness only until something breaks that grep cannot see, and a
+      # tag build is the wrong place to find out - it runs after the version is cut. The kernels are
+      # the invariant (CONTRIBUTING.md:13); the browser PACKAGE that used to be checked here moved
+      # to kton-web with its reproducibility check, but the kernels' obligation stayed behind.
+      - name: the kernels still compile for js/wasm
+        run: |
+          set -e
+          ( cd reference        && GOOS=js GOARCH=wasm go build ./... )
+          ( cd nekton/reference && GOOS=js GOARCH=wasm go build ./... )
 
       - name: conformance vectors are frozen (regenerate → expect no diff)
         run: |
@@ -52,20 +84,108 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: 'stable'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: toolchain for the example-12 gate attacks (release.py runs SPARQL over rdflib)
+        # Without this the gate could not RUN the two PoCs that exercise the shipped release gate, and
+        # they correctly reported INCONCLUSIVE - a job that cannot run what it gates is not a gate.
+        run: python -m pip install --quiet rdflib
       - name: build binaries
         run: |
           set -e; mkdir -p "$RUNNER_TEMP/bin"
           ( cd reference        && go build -o "$RUNNER_TEMP/bin/plankton" ./cmd/plankton )
           ( cd nekton/reference && go build -o "$RUNNER_TEMP/bin/nekton"   ./cmd/nekton )
           ( cd kton/reference   && go build -o "$RUNNER_TEMP/bin/kton"     ./cmd/kton )
-      - name: checkout kton-examples (for the viewer attack)
+      - name: checkout kton-examples (two gated attacks reproduce there)
+        # NOT continue-on-error any more. Two GATED attacks - screenshot-viewer-labels and
+        # fourEyes-graphpoll - can only run against this checkout. Letting it fail silently meant CI
+        # went green over a gate that had quietly lost coverage, which is the same shape as R08 one
+        # level up. If the fixture cannot be fetched, that is a fact about this run and it should be
+        # loud.
         uses: actions/checkout@v4
-        continue-on-error: true
         with:
           repository: gitmick/kton-examples
           path: kton-examples
       - name: security regression gate (every fixed attack must stay PREVENTED)
+        env:
+          # Strict: an attack that did not run fails the job. Locally the gate reports INCOMPLETE and
+          # exits 0, because a developer without the companion checkout should still get the other
+          # fourteen verdicts. CI has no such excuse - it fetched the fixture above.
+          KTON_GATE_STRICT: '1'
         run: |
           export PATH="$RUNNER_TEMP/bin:$PATH"
           bash security/check.sh "$GITHUB_WORKSPACE/kton-examples"
+
+  # The floor, proven rather than declared. Each go.mod says `go 1.22`; this job is what makes that
+  # true. It builds and tests only - the guards, WASM builds, conformance vectors and security gate
+  # all run once, above, on the supported line.
+  compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: the declared minimum Go line still builds and tests
+        run: |
+          set -e
+          for m in reference nekton/reference kton/reference; do
+            echo "== $m =="
+            ( cd "$m" && go build ./... && go test ./... )
+          done
+
+  # The platforms we SHIP. release.yml publishes linux/amd64, linux/arm64, darwin/amd64,
+  # darwin/arm64 and windows/amd64 - and every job above runs on ubuntu only, so three of those five
+  # had no native test at all. That is not a theoretical gap: it hid two real Windows failures, one
+  # of them the private-key file mode that the keygen protection is documented to rest on
+  # (0600 requested, 0666 delivered). A packaged target with no passing native baseline is a claim
+  # nobody checked.
+  #
+  # Build and test only. The guards, WASM builds, conformance vectors and the security gate stay
+  # single-platform above: they are about the code, not about the host.
+  platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: build and test natively on a packaged platform
+        shell: bash
+        run: |
+          set -e
+          for m in reference nekton/reference kton/reference; do
+            echo "== $m =="
+            ( cd "$m" && go build ./... && go test ./... )
+          done
+
+  # Fuzzing runs as its OWN job, on purpose. `go test` already executes the seed corpus in `verify`
+  # - the seeds are the shapes that have bitten us - but a seed corpus only replays what someone
+  # already thought of, and a whole class of numbers where canon(canon(x)) != canon(x) is exactly
+  # what nobody had thought of. A short search each time is cheap and is the only part of this
+  # suite that can surprise us.
+  #
+  # Separate, because a find here is NOT a regression in the pull request's own code: it is an input
+  # the canonicalizer never handled. Reading it as "this PR broke something" would be wrong, and a
+  # red mark in the main gate would say exactly that.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: short fuzz over the canonicalization boundary
+        working-directory: reference
+        run: |
+          set -e
+          for target in FuzzCanonJSON FuzzNormalizeContentHash; do
+            echo "== $target"
+            go test ./core/ -run XXX -fuzz "$target" -fuzztime 30s
+          done

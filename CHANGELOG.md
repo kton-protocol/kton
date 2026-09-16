@@ -1,0 +1,1617 @@
+# Changelog
+
+## 0.2.0 — unreleased
+
+### ⚠️ Known limitation in 0.2: a claim can lose a signature when the same claim arrives twice
+
+**Not fixed in this release.**
+
+A claim id is `sha256(canon(Statement))`, so two DIFFERENT serializations of one statement — a
+compact one and a pretty-printed one, say — share a claim id while carrying signatures over
+**different literal payload bytes**. A DSSE signature stands over `PAE(payloadType, payload)`, so
+these are two genuine signatures over two genuine byte strings, neither of them wrong.
+
+nekton's signature union correctly refuses to attach a signature to bytes its owner did not sign.
+Persistence then misreads that refusal as *nothing new to store*:
+
+```
+Add A (compact, key A):  isNew=true   err=<nil>
+Add B (pretty,  key B):  isNew=false  err=<nil>     <- reported as a duplicate
+same claim id:           true
+after reopen:            1 signature, key A only
+BySigner(A)=1   BySigner(B)=0
+```
+
+Reverse the arrival order and the result reverses with it: `BySigner(A)=0  BySigner(B)=1`.
+
+**What this costs you.** The second signer's evidence is gone, and nothing says so — `Add` returned
+success. Because the outcome depends on which serialization arrived first, **mirroring is
+order-dependent**: two peers that ingest the same two envelopes in different orders end up retaining
+different signatures, and a consumer's ability to verify against the key *it* trusts becomes an
+accident of replication order. This is loss of signing evidence, not signature forgery: nothing here
+lets anyone produce a signature they could not otherwise produce.
+
+**What you can do now.** Within one authoring toolchain the payload is canonical every time, so the
+case does not arise: it needs two producers, or a hand-assembled envelope, signing the same statement
+in different spellings. If you federate signed claims from parties you do not control, and you rely
+on a specific signer's endorsement being present, verify that signer against the envelope you
+received rather than against the merged store.
+
+**Why it is not fixed here.** The fix is a storage decision — preserve distinct signed envelope
+variants under one canonical claim id, and union signatures only where the signed bytes actually
+match — and it changes how claims are persisted. Rushing it risks exactly what it is meant to
+prevent: canonicalizing payloads on the way in would leave old signatures standing over bytes nobody
+signed. It is scheduled with the shared-validator work rather than taken in a hurry before a tag.
+
+### ⚠️ Read this before upgrading a nekton registry
+
+**A nekton store written by 0.2 reads as EMPTY on 0.1, and 0.1 exits 0 while saying so.**
+
+```
+$ NEKTON_DIR=<a 0.2 store> nekton-0.1 about sha256:...
+(none)
+$ echo $?
+0
+```
+
+The claims are there, signed, intact. A 0.1 binary looks for `objects/**/*.json`, finds none, and
+reports an empty registry successfully — a verification tool answering *"nothing is recorded"*
+where the truthful answer is *"I cannot read this store"*. There is no marker in a 0.1-era store
+that could have prevented this, which is why the layout change ships as a minor version rather
+than a patch, and why this note is the first thing in the file.
+
+**What to do:** upgrade every binary that touches a shared registry at the same time. Do not point
+a 0.1 binary at a 0.2 store to "check something quickly". If a registry is served or mirrored,
+upgrade the server before the peers.
+
+**Going forward this cannot recur.** A 0.2 store records its layout in `objects/.format`, and any
+build reading a format it does not know refuses loudly instead of reporting an empty registry.
+
+### Added — the two reproduction answers are linkable, not only runnable
+
+`Registry.Reproductions(outputHash, trusted)` and `Registry.Reproduces(refHash, candHash, via)`.
+Both existed only inside `cmd/plankton`, so a cockpit could get them only by running a binary and
+parsing its output — while everything else it needs (authoring via `foton.SignWith` and
+`claim.SignWith`, verifying, reading, material, scopes) is already a package it can link.
+
+The reason is not convenience. A consumer that must not take a reproduction level from whoever is
+asking has to **run** the comparison; if the only implementation is a command, every integrator
+writes a second one — and two implementations of an identity rule are two opinions about identity.
+That is the argument that moved foton and claim authoring out of `package main`; these two are what
+was left.
+
+Methods rather than a package, because both are joins over indexes this type already owns
+(`byOutput`, the envelopes, the normalized-output index) — a separate package would have to be
+handed the registry anyway.
+
+Two things travel with the logic rather than staying behind in the CLI: `Reproductions.Verified`
+says whether the count was checked at all (false means self-declared keyids, which are not covered
+by the DSSE signature and are therefore forgeable), and `Reproduces` refuses arguments that are not
+content hashes — equality of two malformed strings is not a reproduction, and a linked caller needs
+that rule as much as the CLI does.
+
+Nothing is removed: `plankton reproductions` and `plankton reproduces` behave exactly as before and
+are now flag parsing over the methods, the shape `plankton author` already has.
+
+### Fixed — eight more, in the two changes that fixed the previous eighteen
+
+**A malformed alias file was swallowed and reached published RDF.** The fallback chain ended in an
+empty alias set, so every CURIE resolved to itself: `nekton export --nanopub … --aliases broken.json`
+emitted `<qa:reviewed>` — a bare term as an IRI — and `nanopublish` minted a permanent Trusty URI
+over that graph and exited 0. Exactly the harm the function's own doc says must stay fatal. An
+*absent* alias file still means no sugar; one that was meant to define meanings and does not parse
+is now an error on every path that resolves a CURIE.
+
+**Settling deferred records was quadratic.** It re-parsed every pending record on every ingest, and
+the cascade that finally unblocked a chain cost m². The seed `Add` that unblocks n claims went
+153 ms at n=100 and 566 ms at n=200 — doubling n quadrupling the time, in the command that exists
+for bulk out-of-order federation. Indexed by the dependency each record waits on, it is now
+29 ms / 59 ms / 85 ms at n=100 / 200 / 400.
+
+**The deferred counters double-counted and the feed double-delivered.** A deferred claim is not in
+the seen-set, so re-adding one counted it again: `Deferred()=2` for one record, two feed entries, and
+counters stuck above zero after it resolved — `head` reporting a truncation that is not there, and
+the new `deferred` count in `export` wrong. The re-add is now a no-op, which also removes the
+double delivery the settling comment claimed to avoid.
+
+**`add` still contradicted itself when the dependency never arrived at all** — *"indexed 2 claims,
+0 refused (registry now holds 0)"*, exit 0. Deferred has its own count now, and the classification
+happens **after** the batch, so a seed arriving last is not miscounted as leaving its claims
+deferred.
+
+**`--foton` overwrote a positional subject**, the same failure two positionals are refused for, one
+flag over. They are mutually exclusive now.
+
+**A stray file that does not unmarshal still killed the whole template load.** The skip only covered
+files that parsed *into* a Template; `[1,2,3]` and `{"name":{"a":1}}` — the likeliest shapes of a
+stray config or data file — still took the corpus down.
+
+**And a contract test was made vacuous by the rename it was testing:** `reuse --json` renamed
+`"verified"` to `"verification"`, the test still decoded the old key, so it was always false and its
+assertion could never fire. The regression test for the exact property that change was about passed
+while checking nothing.
+
+Two doc comments that had been detached from their functions by insertions are reattached.
+
+### Fixed — five from a follow-up review of the fix-review range
+
+**A planted row reached the feed as a "twin" (#190).** The admission gate went on `Add` and on
+replay's ordinary branch and stopped there. A second row filed under a claim id the store already
+holds was taken for a co-signature on the strength of the id *field*:
+
+```
+Len()=1  feed=2  Dropped()=0
+feed row: stored=d3abf60a…  derives=703c9fda…  MATCH=false
+```
+
+and it survived `OpenUnion` too. Every replay branch now checks admission **before** deciding what
+kind of row it is.
+
+**An unsigned same-id object still defeated repair (#191).** The check added for that case verified
+the stored envelope's derived foton id and stopped. An envelope can derive the right id and still be
+one this store would never admit — a signature *array* whose entry carries an empty `sig`. The union
+counted the entry, the stored envelope won, and re-ingesting the authentic foton left `Len()=0`
+before, after, and after a reopen. `CheckAdmissible` — the gate `Add` runs, extracted two changes
+earlier so `verify` could stop keeping a shorter copy — is applied here now.
+
+**`anchor --store` trusted a claim id to pin bytes (#192).** The claim branch skipped the byte check
+the foton branch makes, on reasoning written into the code: *"a claim id IS the payload hash"*. It is
+not — it is `sha256(canon(Statement))`. Two genuinely signed envelopes carrying one Statement in
+different serializations share an id and differ in bytes (236 vs 327, both admissible), and a Rekor
+entry binds the bytes it was handed. The known 0.2 signature-loss limitation in another hat, used as
+an argument for safety where it means the opposite.
+
+**A partial checklist counted as a defence (#193).** The four-eyes PoC excluded *no* checklist and
+not *half* a checklist: a scenario that printed an unrelated condition and stopped before evaluating
+four-eyes fell through to UNTICKED, which the verdict reads as prevention. It now requires the
+four-eyes line itself.
+
+**An empty file was treated as no file (#194).** A zero-length artifact is an ordinary result and has
+a content address like any other. An optional one was silently dropped from what gets signed; a
+required one was refused as *missing* although it had been supplied.
+
+### Fixed — a co-signature lost on a deferred claim, and two counts that disagreed with the store
+
+The idempotence guard added a change earlier for a double-count returned unconditionally on a
+re-add, and so **discarded the merged envelope**. A co-signature on a deferred claim reached disk —
+persistence had already unioned it — but not the live record and not the feed, so a syncing peer
+never received the second signature and the claim was later indexed carrying one. Only a reopen
+recovered it. That is loss of signing evidence, the one class the known-limitation note at the head
+of this file is about. A re-add is a no-op only when the merge changed nothing; when it grew the
+envelope the record is refreshed and the co-signature gets its own feed line, exactly as an indexed
+twin does — while still counting one deferred record.
+
+The same double-count fix had been applied to ingest and **not** to replay, so it returned on every
+reopen: a co-signed deferred claim has one stored line per signature set, and each was counted.
+`Deferred()` and `Unresolved()` then read 2 for one record and stuck at 1 after it resolved — `head`
+reporting a truncation that is not there, and `export`'s deferred count wrong.
+
+And `add` printed `already present` for a re-added deferred claim, bypassing the deferred branch
+added in the same release: present and *deferred* are different facts, and reporting them as one is
+the contradiction that branch exists to remove.
+
+`by predicate` also silently ignored a **malformed** alias file — answering `{"records":[]}` and
+exit 0 for records the store holds. The missing-*directory* case had been fixed one function over and
+this one left reachable; both are fatal now, while an absent alias file still simply means no sugar.
+
+### Fixed — plankton's query commands took the last positional, not the first
+
+The positional hardening reached nekton's `annotate`, `attach` and `material` and stopped at the
+kernel boundary — in the very change that was fixing a plankton/nekton twin:
+
+```
+plankton producer <a> <b>        answered about <b>
+plankton uses <a> <b>            answered about <b>
+plankton lineage <a> <b>         answered about <b>
+plankton material <a> <b>        answered about <b>
+plankton reproduces <a> <b> <c>  compared <a> against <c>
+```
+
+A question the caller did not ask, answered with no sign the first argument was dropped — and
+`producer`/`uses`/`lineage` are the commands a cockpit consumes. The §12 clause quoted a few lines
+below the shared parser rules out an empty answer to a malformed question for the same reason:
+answering the *wrong* question is not better. A misspelled flag was also reported as a second
+*subject* by `attach`, sending the reader after an argument they never passed.
+
+`reproduces` needed a **subprocess** test, and the reason is worth recording: with two well-formed
+hashes it reaches its verdict path and signals "not reproduced" with `os.Exit(1)`, so removing its
+guard kills the test binary and the run reports nothing at all rather than a failure. The first
+version of that test had exactly that defect — a check that cannot fail, found by mutating it.
+
+### Fixed — thirteen more, from reviewing the 25 commits no external reviewer had seen
+
+Five of them are regressions from the template extraction earlier in this release, measured against
+a build of its parent commit rather than inferred.
+
+**Aliases were being discarded with the template directory, changing a published term IRI.**
+`template.Load` fails when `./templates` does not exist, and the fallback had no aliases at all. But
+`export --nanopub` and `nanopublish` have nothing to do with templates and take `--aliases`
+explicitly, so that is the *normal* case for a publisher:
+
+```
+pre-extraction, ./templates present or absent:  nk:outcome  =  https://kton.dev/v/outcome
+after,          ./templates absent:             <https://kton.dev/v/lab/outcome>
+```
+
+A different term, into signed RDF, decided by whether an unrelated directory happened to exist. The
+same root cause made `nekton by predicate qa:reviewed` answer `(none)` for a record the store held —
+the exact silent-empty-answer that function's own comment says it exists to prevent. Aliases now
+load on their own (`template.LoadAliases`).
+
+**A duplicate template name resolved by map order.** Two files declaring one name: six consecutive
+`nekton templates` runs printed one predicate five times and the other once, so
+`annotate --template qa/review` could sign a **different predicate** run to run. Refused now, naming
+the directory and both predicates.
+
+**Two smaller ones from the same extraction:** `--set report=` on an *optional* file field failed
+where it used to sign (a script passing an unset variable), and the default output filename used the
+alias rather than the resolved name.
+
+**`annotate`, `attach` and `material` took last-wins positionals.** `annotate <a> <b>` signed a claim
+about `<b>` and said nothing. The argument for refusing this on `seed` was that a scope name is
+identity; a claim's subject is what the claim is *about*, is covered by its id, and is signed.
+
+**The torn-tail repair had not reached either material appender.** Same failure mode as the record
+log's: a crash mid-append leaves an unterminated line, the next write concatenates onto it, and the
+reader discards **both** — an acknowledged attach lost to somebody else's interrupted one.
+
+**`Add` never re-settled, so a deferred record stayed deferred for the life of the process** even
+after its dependency arrived. The CLI hid it (the next command reopens); a linked consumer saw a
+claim that never resolved. It also made `add`'s own summary contradict itself and depend on argument
+order — *"indexed 2 claims, 0 refused (registry now holds 1)"*.
+
+**Four outputs reported a verdict nobody established**, all the shape §8.1 forbids. `export` answered
+`"claims": []` for a store that holds and serves a record; `signerVerified: false` was emitted for
+every claim when no `--trust-keys` was given; `nanopublish` asserted `nk:signerVerified false` into
+permanent RDF on the same basis, with the flag that changes it undocumented; and `plankton reuse`
+carried a constant `"verified": false`. Verification is reported as `verified` / `failed` /
+`unchecked` now, the unchecked case asserts nothing in published RDF, and `export` names what it
+holds but cannot assert.
+
+Two shell-quoting artefacts (`'"'"'`) that had been committed into source comments were removed.
+
+### Fixed — five defects found by re-reviewing this release's own fixes
+
+An external review reported that several fixes work for their original reproductions and remain
+incomplete. Each claim was checked against a reproduction rather than argued about. All five held.
+
+**A planted subnekton line became the record (#172).** `persistClaim` collected every line whose
+`claimId` **field** matched the id being written and unioned it — without checking the envelope
+derives that id. A planted line (target's id, another claim's envelope) won, because
+`unionSignatures` keeps the first when payloads differ:
+
+```
+Add -> isNew=true  err=<nil>     Len()=0     Claim(target) held=false
+```
+
+A successful ingest of a claim the store does not hold and cannot return, unrepairable by
+re-ingestion. The nekton twin of the plankton fix above; a claim id **is** the payload digest, so
+the line either derives its own id or it is not this claim. A genuine co-signature — same payload,
+second key — still merges.
+
+**The feed carried what the index refused (#171).** `Add` discarded `index()`'s return and appended
+anyway, so a peer received a false id → claim binding and refused it in turn: an import that looks
+complete and is not. `settle` has honoured that answer since this release; `Add` had not. Stated
+plainly in the code: with the fix above in place that branch is now unreachable, and the regression
+beside it does not fail when the gate is removed. It stays because it is where the invariant is
+enforced rather than merely currently true.
+
+**`verify` and `show` asserted a chain verdict without looking (#173).** The chain report was derived
+from one string — empty meant *not deferred* — and a claim read from a **file** leaves it empty, so
+against a registry holding zero records:
+
+```
+chain:           RESOLVED - this store holds what the claim depends on
+"chain": "resolved"
+```
+
+Nothing had been looked up. That is §8.1's read-path boundary exactly, added in this same release:
+*presence is not a check*, and a kernel's own output MUST NOT carry a field that reads as a
+verification verdict. It also inverted the exit contract — a caller branching on `4` got `0` for the
+case it most needs to catch. `unchecked` is now a first-class state and the default.
+
+**One stray file disabled the whole template surface (#174).** A `*.json` in the template directory
+that is not a template failed the entire load, so `templates`, `--show` and even
+`annotate --template qa/review` stopped working — an editor backup made a working corpus unusable
+for signing. It is now skipped and **named** on stderr, which fixes what the guard was for (an alias
+file silently absorbed as a template) without taking the corpus down. A malformed *alias* file stays
+fatal: that one changes what a CURIE means.
+
+**A deferred claim could not be anchored (#175).** `storeAnchor` asked `Claim()`, which answers from
+the index, so a deferred claim fell through to the foton branch and failed as
+`json: cannot unmarshal string into Go struct field Subject.subject.uri` — telling a reader their
+record is malformed when its predecessor simply had not arrived. `AttachMaterial` had the same
+blind spot one level down. Both route it as a claim now; §8.1 says a record's validity never depends
+on its material, and the converse has to hold too.
+
+Measured, not assumed: all 8 templates in the example corpus produce byte-identical claim ids before
+and after the template extraction, and the plankton re-ingest fix was re-probed with two further
+variants and holds.
+
+### Fixed — re-ingesting a valid foton could not repair a planted object
+
+`persistRecord` reused whatever envelope was already at the object path, on the strength of it being
+there. An object whose stored `fotonId` named the target while its signed envelope described a
+**different** foton therefore kept its own envelope — `unionSignatures` keeps the first when the
+payloads differ — and:
+
+```
+new=true, err=nil, Len()=0, degraded count 1 → 2
+```
+
+`Add` reported a successful repair, `apply` rejected the retained envelope again, and re-ingesting
+the authentic foton could never fix it. A store with one planted file held a record that the one
+operation meant to heal it could not heal.
+
+The test is **identity, not bytes**, which is what keeps the legitimate case working: a genuine
+co-signature is the same payload signed by a second key — same id, same bytes — and still merges.
+What cannot merge is an envelope that is not this foton at all; the incoming valid one replaces it,
+and nothing is lost that belonged there, since the read path had already refused it and counted it
+degraded. A stored object that no longer parses is treated the same way: its signatures stand over
+bytes we cannot identify, so they are not evidence about this record.
+
+Not addressed here, and unchanged: a foton arriving in two different **serializations** of the same
+statement still keeps only the first signer's signature. That is the known 0.2 limitation recorded at
+the head of this file, it is a storage-format decision rather than a validation one, and it was
+measured against `dev` rather than assumed while writing this fix.
+
+### Fixed — a deferred claim answered exactly like one the registry never saw
+
+A scoped claim whose `prev` or seed has not arrived is **persisted and offered to peers**, and kept
+out of every index — deliberately, and the code said so. What was never drawn is the consequence for
+a *local* lookup: `records` returned the claim, while `show <id>` and `verify <id>` answered with the
+same message and the same exit code as a hash nobody has ever heard of.
+
+SPEC §12 makes this normative — *"we do not have it" and "we have nothing about it" are different
+answers, and a reader acts differently on each* — and **held but waiting** is a third. The kernel
+already knew which it was; nothing new is tracked, only reported:
+
+```
+unknown id          show: exit 1, an error
+deferred id         show: exit 0, chain: DEFERRED + "waitingOnScope" in --json
+                    verify: exit 4
+resolved            show: exit 0, chain: resolved      verify: exit 0
+tampered / wrong key                                   verify: exit 1 / 2   (unchanged)
+malformed                                              verify: exit 3       (unchanged)
+```
+
+Exit **4** because the existing codes keep their meanings and this is none of them: nothing is wrong
+with the record, something is missing from this store. Reporting it as success would say the chain
+checks out; reporting it as 3 would say the claim is malformed. Both are false — which is why the
+examples workstream, finding no honest way to tell the cases apart, was verifying scope claims
+through their envelope bytes rather than by id.
+
+`export --nanopub` and `nanopublish` note the state on stderr rather than refusing: an unresolved
+predecessor makes a claim *incomplete*, not invalid (§11), and the claim itself is genuine — but a
+projection published from this store asserts it, and the publisher should know the chain has a gap.
+
+Both deferral paths record it — `Add`'s and `settle`'s — because a claim deferred at ingest and one
+deferred on replay are the same fact, and a reader must not get a different answer across a restart.
+The lookup is deliberately separate from `Claim`: a deferred claim must not answer `about`/`by` as
+though its chain resolved, and merging them would put it back into query results by the back door.
+
+### Fixed — `kton anchor --store` archived proofs that could never be checked again
+
+A foton id is the **covered** projection (§6.3); `uri` is carried, not covered (§6.1). So two valid
+signed fotons differing only in an output URI share an id and carry **different payload bytes** — and
+a Rekor entry binds the bytes it was handed.
+
+`--store` attached the proof by id. Store variant A, anchor variant B, and it printed `stored`; on
+reopen the only envelope present is A, and `Entry.VerifyBinds` rejects it as a different payload. The
+archived entry holds a payload digest for bytes nobody kept. A successful archival has to preserve
+the input its own later binding check needs.
+
+The store keeps one envelope per id and `anchor` cannot add a second, so the honest outcome is a
+refusal that names the collision — not a success that defers the failure to whoever verifies next.
+Anchoring a foton the store does not hold at all is refused for the same reason. The nekton branch
+needs none of this: a claim id **is** the payload hash, so a variant is a different claim.
+
+`storeAnchor` had no test at all, which is why a green suite said nothing about it. The regression
+now checks its own premise first (one id, two payloads — if that ever stops holding the test proves
+nothing), then that the mismatch is refused **and writes nothing**, that the matching variant still
+stores and survives a reopen with the envelope its proof binds to, and that an absent record is
+refused.
+
+### Fixed — `plankton verify` blessed records `add` refuses
+
+`verify` prints
+
+```
+structure:       VALID - the record is one this store would accept
+```
+
+and that sentence is a claim about `Add`. It was false for two genuinely signed records, because
+`verify` kept its **own, shorter** list of admission rules: it returned success immediately for any
+non-foton predicate, and it never computed the action key.
+
+- a signed in-toto Statement that is not a foton — `Add` refuses it with `ErrNotFoton`
+- a foton with two inputs at one path carrying different hashes — `Add` refuses it: the action key
+  is a `{path → hash}` map and could hold only one, so an input would silently vanish from the
+  computation's identity
+
+Both printed a clean bill of health. Anyone who verified a file and did not immediately add it
+believed it was good.
+
+The context-free gates moved into `registry.CheckAdmissible`, which `Add` and `verify` both call —
+two lists of admission rules are two opinions about admission, the same reasoning that put the
+§5.1/§6.1/§6.3 rules in `core.Foton.ValidateStructure` beside the type they validate. The
+canonical-JSON check deliberately stays in `verify`: it is about the whole payload, where the foton
+id covers only the projection, so a duplicate key elsewhere passes the id check and still means
+different things to two readers.
+
+The regression does not assert that `verify` refuses. It asserts that `verify` and `Add` **agree**,
+in both directions and about the reason — so a rule added to one and not the other fails the test,
+and an ordinary foton still passes both.
+
+### Fixed — four argument-parsing traps that succeeded while doing something else
+
+A command that fails is a signal. A command that succeeds while doing something other than what was
+asked is not, and the wrong thing is then signed, stored, or named.
+
+- **`nekton claim <spec> <key> -o out.json` wrote a file literally named `-o`.** `claim` takes its
+  output as a third POSITIONAL while `seed` and `annotate` take `-o`, so one verb in three punishes
+  the habit the other two teach. The flag became the filename, the requested path was dropped, and
+  the command printed `-> -o` as though that were the plan. Without `--add` the record then existed
+  nowhere the caller was looking. A dash-prefixed token is now refused, and the message says where
+  the output actually goes.
+
+- **`nekton seed sc -x v` opened the scope `v`.** The guard tested for `--`, so `-x` fell through to
+  the positional branch, and the *last* positional won. A scope name is identity: it enters the
+  seed's canonical bytes and therefore the scope id that every scoped claim names. Both halves are
+  refused now — any dash prefix, and a second name.
+
+- **`material` answered a malformed question.** `nekton material -x` and `plankton material -x`
+  printed `(none) - no verification material attached to -x` and exited 0. §12 forbids exactly this:
+  *"an empty answer to a malformed question is a successful wrong answer."* A caller asking whether
+  a record carries evidence read that as *checked, none there*, about a string that is not a record
+  id. Both kernels now require a content address — while a well-formed id with nothing attached
+  stays a plain `(none)`, because that is a true answer about a record that could have material.
+
+Same shape as #45, where `templates` read any positional as a template name. Each guard was
+mutation-checked: disabling it fails its own test, and the forms that were always correct still work.
+
+### Fixed — nekton's record queries answered a shape the spec does not declare
+
+`about --json` and `by --json` are the `claims(subject | object | signer | predicate)` queries of
+SPEC §12, and the clause pins the answer: `{ "records": [ <envelope> ... ] }`. They returned a bare
+array of `{claimId, envelope}` instead.
+
+The wrapper is the half that bites. Nesting an envelope under a field does not make the array
+element an envelope, so a consumer decoding the declared contract read `payload=""`,
+`payloadType=""`, `signatures=0` — it could neither verify what it held nor re-ingest it, and
+nothing in the answer said why. It had to know a second, undocumented shape.
+
+plankton's record queries had exactly this defect and were fixed earlier in this release; this is
+the nekton half, which stayed open because the test covering it decoded the wrapper the command
+emitted rather than the contract the spec declares. A test shaped like the implementation cannot
+disagree with it. The new one parses the declared types, base64-decodes the payload and re-derives
+the claim id from it — the thing a consumer actually does.
+
+The claim id is not dropped, it moves: keyed by id in a `summary` beside the array, together with
+`predicate`, `by` and the envelope's `declaredKeyid` (named that way because a keyid is
+self-declared and not covered by the signature). For a claim the id is the payload digest, so a
+consumer holding the envelope can also derive it.
+
+**This changes an output shape.** A reader of `nekton about --json` or `nekton by --json` that
+indexes `[0]["claimId"]` or takes the array's length must read `.records` instead.
+
+### Fixed — each kernel now applies its own structure at every boundary
+
+Two findings that get filed together and are **not one fix**. plankton validates fotons — hash
+grammar, work-tree paths, action keys. nekton validates claims — subjects, predicates, scope, `prev`,
+`genesis`. Below the envelope layer they share nothing, and cannot: a foton has no `prev`, a claim
+has no `inputs`. What they share is a defect *shape* — within one kernel, the same context-free rules
+applied at some boundaries and not others.
+
+- **plankton had the rules in one place only.** Authoring refused a malformed hash and an escaping
+  path; ingest checked the protocol binding and the action key; the read path matched ingest. So a
+  foton with input digest `sha256:not-a-digest` or path `/outside.csv`, signed elsewhere and arriving
+  by mirror or by a git merge — a documented federation transport — was accepted and indexed, and
+  lineage then exposed references that resolve to nothing.
+
+  The rules moved to `core.Foton.ValidateStructure`, beside the type they validate, and authoring,
+  ingest and the read path all call it. Authoring keeps no copy: two copies of an identity rule are
+  two opinions about identity.
+
+- **nekton had the plumbing missing, not the rules.** `index()` returned nothing, so `settle` could
+  not learn it had refused a record — the record went into the feed and progress was marked anyway.
+  `records --json` and the JSON export then republished claims the store itself will not serve: a
+  peer refuses them in turn, so a source that looks usable delivers an **incomplete import**. And
+  `Dropped()` did not count them, so the number said everything had arrived.
+
+  `index()` now reports acceptance, only what it accepts reaches the feed, and refused records are
+  counted — separately from deferred ones, because a deferred record may still resolve when its
+  dependency arrives and a refused one never will.
+
+*Not in this group: re-ingesting a valid foton still cannot repair a rejected stored object. That one
+is not a validation gap at all — `persistRecord` unions signatures from an existing object file
+before anything validates it against the requested id, and `Add` reports success when indexing then
+rejects the result. It touches persistence, and rushing persistence is what the signature-loss note
+at the top of this file warns about.*
+
+### Fixed — the specification cited a PAV property that does not exist
+
+`pav:reviewedBy` was named in Annex A, in the vocabulary annex and in the examples for the whole of
+0.1 — and **published**, in four triples of signed nanopublications.
+
+PAV defines 33 terms. `authoredBy`, `createdBy`, `curatedBy`, `importedBy`, `retrievedBy`,
+`contributedBy` are among them; `reviewedBy` is not. It reads as plausible, which is exactly why
+nobody looked it up.
+
+Every other borrowed term was checked the same way, against the fetched ontology rather than from
+memory — `prov:` (9 terms), `dct:` (5), `dcat:downloadURL`, `pav:createdBy`, the four `npx:`
+signature terms, the four nanopublication-schema terms, `sec:controller`, `schema:AcceptAction`,
+`owl:sameAs`, `rdfs:label`, `skos:broader`, `xsd:dateTime`. **All real and correctly spelled.** The
+six RDF files the example suite emits parse cleanly, 772 triples. One invented term in the lot.
+
+**And it would have been the wrong shape even if it existed.** `reviewedBy` is passive — "X was
+reviewed **by** Y" — so its object is the reviewer's identity, and putting a verdict there asserts
+that the record was reviewed by "looks correct". The example suite had already found that half in
+September and moved to an application term of its own whose object is the verdict, leaving the
+reviewer to the signature. Nobody checked whether the term being replaced existed at all.
+
+The annex now says so plainly rather than quietly swapping a name, and notes the near-miss for the
+next person: `oa:assessing` is the right *motivation* in the Web Annotation vocabulary and is real,
+but it is an instance of `oa:Motivation`, not a property — it belongs in `oa:motivatedBy
+oa:assessing` on an `oa:Annotation`, never in a predicate slot. Naming it as one would repeat the
+mistake in a better disguise.
+
+### Fixed — a gated proof that proved nothing, and a coverage claim that was not true
+
+- **`fourEyes-graphpoll` could not conclude anything, twice over.** Its closing
+  `grep -E 'two distinct PRINCIPALS'` could never match — `release.py` prints "two distinct
+  **authority-vouched** PRINCIPALS" — and `|| true` swallowed that, so it exited 0 having printed
+  nothing. Worse, it emitted **no `VERDICT:` line at all**, so `check.sh` could not have read a result
+  even with the grep repaired.
+
+  And the scenario left **all seven** conditions unticked, so "four-eyes stayed unticked" was true
+  with and without the attack — precisely the defect this suite found in `envtally-CF2` and downgraded
+  to INCONCLUSIVE for.
+
+  It now runs **four** scenarios over the shipped gate: two genuine vouched reviewers (must tick — and
+  does, which is what makes the rest evidence), one genuine reviewer plus the author reviewing its own
+  fit (must not), that plus the injected attribution edge (must not — **PREVENTED**), and the honest
+  case *with* the decoy, reported rather than required. That last one answered a question worth
+  asking: it stays ticked, so the injected claim cannot block a legitimate release either. `release.py`
+  ignores it because `Q_AUTHOR` counts only verified agents.
+
+- **An executable PoC in neither `GATED` nor `OPEN` was invisible**, which is how the above went
+  unnoticed: nothing ran it, so `self-check.sh` never saw it and the can-it-fail guard did not cover
+  it. `check.sh` now **fails** if a PoC that emits a verdict is in neither list. Sixteen scripts are
+  unlisted; thirteen are one-line prose notes and stay that way.
+
+- **`security/README.md` claimed coverage that does not exist:** *"The example-12 gate attacks
+  (four-eyes, spectrum-launder, normalizer-forge) run against the full capstone in the kton-examples
+  CI."* They do not — that workflow builds binaries, runs the examples and checks permalinks, and has
+  no such step. The same false framing was in `check.sh`'s own coverage line. Both corrected, with
+  each of the three named and its actual status given.
+
+- **`normalizer-forge` took the binary path as `$1`** where every other PoC takes a kton-examples
+  checkout, which is what made the first attempt to run it look like a failure. It now uses `plankton`
+  from PATH like the rest, and reads the store through `_records.sh` instead of globbing
+  `objects/sha256/*.json` — the very trap that helper exists to close. It stays verdict-less on
+  purpose: it demonstrates *specified* behaviour, and the property it points at is tested by example
+  12's Act 8a.
+
+### Fixed — five divergences between the specification and the reference
+
+A clause-by-clause sweep of `spec/SPEC.md` against both kernels. §5 (canonicalization), §6 (foton
+identity and the action key), §7 (claims, opaque predicates, the scope/seed grammar) and §8
+(signatures, §8.1 material) came back clean. Five real divergences, plus one thing that looked wrong
+and was not:
+
+- **A malformed query parameter answered `(none)` and exited 0** — across five commands and both
+  kernels. §12 says an unrecognised query parameter *"MUST be an error, never an empty result: an
+  empty answer to a malformed question is a successful wrong answer."* That sentence described the
+  behaviour exactly. A script asking who produced a result, with a typo in the hash, was told nobody
+  had, and carried on. `plankton producer|uses|lineage` and `nekton about|by signer` now refuse a
+  parameter that is not a content address (or, for a subject, a URI).
+
+- **A union view carried an empty `epoch`** — both kernels. A union's positions are synthetic,
+  assigned per open over whatever sources were named, so a fresh epoch each time is the honest
+  answer: the epoch's contract is *"if this changed, your cursor means nothing"*, and a cursor
+  against a union means nothing on the next open anyway. An empty one was neither "same" nor a usable
+  "different".
+
+- **`plankton producer|uses|lineage --json` returned summaries, not records.** §12 says the record
+  queries answer `{records: [<envelope> …]}`; a consumer handed `{fotonId, kind, inputs, outputs}`
+  cannot verify a signature or re-derive the id, and has to come back for the record it was just told
+  about. Each element now carries its `envelope`; the summary fields stay alongside it.
+
+- **§15.6 contradicted §7 and §9.** It required a conforming implementation to *"refuse … ill-formed
+  reproduction claims lacking a level"*. §9 assigns that to a conforming **consumer**, and §7 forbids
+  the kernel from doing it — predicates are opaque, and refusing a `reproduces` claim for lacking a
+  level needs exactly the vocabulary knowledge §7 says a kernel MUST NOT require. The implementation
+  follows §7; the clause was wrong and now says whose duty it is.
+
+- **§11's "a verdict MUST carry its corpus" had no subject.** Nothing implements it, and nothing
+  should: a verdict belongs to a gate or a reviewer, not to a kernel that has no verdicts and treats
+  the predicate as opaque. Stated, so an implementer stops looking for it.
+
+- Annex **C** sat between **A** and **B**; reordered.
+
+Not a defect, checked and cleared: §15.2 names an exact foton id and action key that appear nowhere
+in `reference/testdata/`. They are *derived* from `foton.dsse.json` rather than stored, and
+`TestGoldenVectors` asserts both and passes.
+
+**Left open deliberately:** `nekton about --json` answers a bare array where §12 says
+`{records: […]}`. The wrapper cannot be added without breaking `claude-science-cockpit`, which parses
+that array today. Filed rather than changed unilaterally.
+
+### Fixed — identity and the action key disagreed about an empty descriptor
+
+`FotonID` marshalled `Protocol` through `descriptor,omitempty`, and for a map `omitempty` drops an
+**empty** map as well as a nil one — so `descriptor: {}` and no descriptor at all produced the same
+covered bytes and the same foton id. `EffectiveRef` and `ActionKey` draw the opposite distinction,
+and deliberately: only nil is absent there, because a bare ref is an unverifiable pointer to an
+off-record protocol and must not share an action key with an inline descriptor.
+
+Identical id, different action key. Ingest took the `{}` form for a duplicate of the descriptor-less
+one (`new=false`, no error) and it never acquired its own entry in the reuse index — one record,
+two answers about what it is.
+
+Presence is now explicit in the covered projection. A non-empty descriptor and a nil one produce
+exactly the bytes they produced before — the key set is unchanged and canonicalization sorts — so
+**no existing foton id moves**; only `{}` becomes distinct, and no record in this repository or in
+the example suite carries one. Checked before changing it, because covered bytes are identity.
+
+### Fixed — two checks of my own that could report a pass without having looked
+
+Both were added earlier the same day, and both had the defect they were written to prevent.
+
+- **A gated attack reported PREVENTED when its negative scenarios had not run.** The four-eyes PoC
+  guards the *honest* control against `NORUN` — the case where the release gate produces no checklist
+  at all — but tested the self-review and attack scenarios only for `TICKED`. A `NORUN` there fell
+  straight through to the final verdict:
+
+  ```
+  honest=TICKED, self-review=NORUN, attack=NORUN
+  VERDICT: PREVENTED
+  ```
+
+  *"The attack did not tick"* read as evidence when the attack had not been evaluated. The honest
+  control proves the branch **can** light; it says nothing about whether the other two were run. A
+  negative scenario must now come back explicitly `UNTICKED`; anything else is `INCONCLUSIVE`, which
+  the strict gate fails.
+
+- **The sigstore helper checked that the payload decoded, not that it was canonical.** A DSSE payload
+  need not be canonical — the kernel canonicalizes when deriving the claim id — so a pretty-printed
+  payload is a valid, genuinely signed claim with the same id as its compact twin, and signing those
+  bytes binds the external identity to bytes the claim is not addressed by. The fixtures varied the
+  **envelope** serialization and never the **payload** serialization, so the test could not see it.
+
+  A non-canonical payload is now **refused** rather than canonicalized. Signing `canon(payload)` would
+  leave the Sigstore bundle standing over different bytes than the envelope's own DSSE signatures —
+  one claim, two signatures, two artifacts. Refusing keeps both over the same bytes; re-author through
+  the kernel, which always emits canonical.
+
+  The canonicality test asks the kernel instead of reimplementing JCS in a shell script: **a claim id
+  is `sha256(canon(payload))`, so a payload whose own sha256 equals the claim id is canonical.** The
+  test gained a fixture that varies the payload spelling, and the script now names its own missing
+  prerequisite rather than letting every case fail under a misleading summary.
+
+### Fixed — the record queries did not answer the wire form §12 pins for them
+
+§12 fixes **two** shapes and they are not the same:
+
+```
+sync            { "records": [ { "seq", "fotonId", "envelope" } … ], "max", "epoch" }
+record queries  { "records": [ <envelope> … ] }
+```
+
+`producer --json` and `uses --json` answered summary objects with an envelope nested inside. A
+consumer decoding the declared shape therefore got an array of things that were not envelopes —
+empty `payloadType`, no signatures, nothing to verify or re-ingest:
+
+```
+records=1, payload="", payloadType="", signatures=0
+```
+
+`records` now carries bare envelopes. The summary is not lost, it moves: **keyed by foton id** beside
+the array, so a reader that wants `kind` or the slot counts still has them without a second lookup
+and without index-matching two parallel arrays.
+
+*Why this survived two spec audits: `reference/testdata/federation/` holds a conformance fixture for
+the `sync` answer and none for the record queries, so half the clause was never exercised. The tests
+now decode the record-query answer through `[]core.Envelope` — the declared shape — because that is
+precisely what a conforming consumer must be able to do.*
+
+**Two requirements meet here and the resolution is worth stating.** An earlier change made the id a
+NAMED field on each record, so a consumer would never have to regex one out of prose. §12 wants bare
+envelopes, and an id inside an element makes that element something other than an envelope. The id
+therefore moved rather than went: `summary` is keyed by it, so it is still a named thing a reader
+looks up rather than parses, and the array is what the clause says it is.
+
+
+### Fixed — adding an empty source to a union removed evidence from the sync feed
+
+`OpenUnion` zeroes foreign positions on purpose: a number issued by another store means nothing here.
+The position was then reassigned on one `settle` path only — and a **co-signature row** takes the
+already-seen path, which never reaches `index()`. So it kept `Seq 0`, and `Records(since)` answers
+`Seq > since`, which filters `0` out of every answer including `Records(0)`.
+
+The claim still carried both signatures in the index. The feed simply stopped offering the second one
+to any peer — **merely widening a union reduced what the public sync API delivers**, with an empty
+store as the second source.
+
+Every record entering the feed is now positioned, deferred ones included: held and owed to a peer,
+but never delivered, is the same loss. The old line also read `r.maxSeq + 1` without moving `maxSeq`,
+which was harmless only where `index()` advanced it afterwards — a collision on any other path.
+
+### Fixed — two ways to lose work: a torn log tail, and a number that costs seconds
+
+- **An acknowledged write was lost to somebody else's interrupted one.** A crash mid-append leaves a
+  torn final line with no newline. Losing *that* line is correct — it was never acknowledged. What
+  happened next was not: an `O_APPEND` write landed directly on the fragment, concatenating them, so
+  the reader discarded **both**. `Add` had already returned success and indexed the claim:
+
+  ```
+  Add B: acknowledged
+    in-memory after the acknowledged Add: 2
+    after reopen:                          1
+  ```
+
+  The tail is now isolated before appending — a lone newline turns the fragment into a line of its
+  own, which the reader skips with a warning, and the new record starts clean. Written in one call
+  with the record, so the repair cannot itself be interrupted halfway. A read error on the tail is a
+  persistence failure, not a shrug: appending onto a file we could not inspect is how the record was
+  lost in the first place. The one-file subnekton is 0.2's headline layout change, and this failure
+  arrived with it.
+
+- **A 1,101-byte document took 1.8 seconds to canonicalize.** The exact-integer check parses the
+  literal with `big.Rat`, and `1e-1000000` builds a denominator of 10^1000000 — hundreds of kilobytes
+  of digits — for a value `ParseFloat` has already underflowed to zero. Ingest and verify
+  canonicalize externally supplied payloads, so work decided by an **exponent's value** rather than by
+  the **input's size** is an amplifier: a hundred small numbers, no large document needed.
+
+  ```
+  ordinary                   401 bytes       144µs
+  tiny negative exponent    1101 bytes    1.82235s
+  ```
+
+  The exact parse now runs only where it can fire. A value below 2^53 is not the case it exists for,
+  and a number with a negative exponent cannot be a large integer at all, so an upper bound on the
+  integer magnitude — computed from the literal by counting digits and reading the exponent, never by
+  arbitrary-precision arithmetic — decides whether the parse is worth doing. Every spelling that was
+  refused before is still refused, `canon(canon(x)) == canon(x)` still holds, and the regression test
+  asserts the **ratio** against ordinary numbers of the same size rather than a wall-clock threshold,
+  which would be a property of the machine that ran it.
+
+  *This one arrived with the fix for the earlier canonicalization finding: the exactness check that
+  made acceptance depend on the value rather than the spelling brought an unbounded parse with it.*
+
+### Fixed — four more from the development-branch review
+
+- **`sync(since)` did not answer in append order.** §12 promises *"records with a local sequence above
+  `since`, **in append order**"*. `Records(since)` filtered the in-memory slice and never sorted it,
+  and after a reopen that slice is in object-filename order — hash order, which has nothing to do
+  with when anything was appended. A consumer that checkpoints incrementally reads a batch in order
+  and keeps the last seq it saw; handed a descending batch it either mis-checkpoints or has to
+  re-sort a promise it was already given. Sorted on a copy, so the store's own slice is never
+  reordered under a concurrent reader. Tested before and after a reopen and with a non-zero cursor,
+  which is how a peer actually calls it.
+
+- **`spectrum define` replaced a manifest it could not read.** Every `loadSpectrum` error was treated
+  as "not there yet", so a manifest that was malformed, truncated or unreadable was overwritten with
+  a fresh one holding only what that invocation named — a qualification corpus silently reduced, and
+  a later check then run over fewer cases than the operator believed. **A file we cannot read is not
+  a file that is not there:** only `os.IsNotExist` starts a fresh manifest now; anything else refuses
+  and says why.
+
+- **The JSON export showed one claim as two rows.** `buildClaims` iterated the arrival feed. Two
+  envelopes carrying the same payload signed by different keys are two feed entries with **one** claim
+  id, so the claim exported twice — same `claimId`, and with only one key trusted, contradictory
+  `signerVerified`. A consumer keying a map by claim id kept whichever row arrived second, making the
+  projection depend on arrival order rather than on evidence. It now iterates the unique indexed
+  claims and computes trust over the merged record's whole signature set: `keyids` lists every
+  declared signer and `verifiedSigners` every trusted key that actually signed — a co-signed claim
+  with two trusted signers is the case four-eyes rests on, and reporting one of them loses exactly
+  the fact that matters. *(The RDF/nanopub projection is a separate path and is unchanged.)*
+
+- **`sigstore-sign-claim.sh` signed the envelope file.** §8.1 requires an external scheme to sign the
+  canonical Statement bytes and says outright it "MUST NOT rest on … a particular serialization of
+  the envelope". Handing cosign the whole `.dsse.json` meant re-indenting the file, or adding a
+  co-signature, changed the signed artifact while the claim was unchanged. It now decodes the
+  payload, checks it really is an in-toto Statement, and signs those bytes — the same bytes the claim
+  id is computed over.
+
+  **`scripts/sigstore-sign-claim_test.sh`** proves it without OIDC, network or real cosign: a stub
+  records which bytes the helper hands the signer. Three serializations of one claim — compact,
+  pretty-printed, co-signed — must produce **one** signed artifact. Against the old script they
+  produced three. Runs in CI; a live round-trip against real cosign is opt-in (`--live`), because it
+  needs a human at an OIDC prompt and writes a permanent public Rekor entry.
+
+### Fixed — three declared shapes that did not match the bytes
+
+A second pass over the specification, asking one question the earlier passes did not: **does the
+reference emit the shape the spec declares?** Every structure in `SPEC.md` was compared field by field
+against a signed record produced by the reference. Three disagreed, and in each case the spec's own
+normative prose elsewhere already said what the code does — so the shape, not the code, was wrong.
+
+- **§6.6's wire form omitted a field the reference signs.** It declared `subject` and
+  `predicate.inputs` as `{name, digest}`, while §6.1 says a `FileRef`'s carried `uri` **is** emitted
+  and round-tripped at 0.1 — and it is, as a list, on inputs and subjects alike. `specVersion` was
+  missing too. An implementer working from §6.6 would have produced records missing a field this one
+  signs. The listing is now complete, says `path`→`name` and `hash`→`digest.sha256`, and states that
+  it is exhaustive.
+
+- **§7.3's claim wire form had no room for a scoped claim.** It listed
+  `{predicate, object?, context?, by, when, why?, evidence?}` — and §7.4 requires `scope` and `prev`
+  on every scoped statement, which the reference duly emits. Two clauses, one set of bytes, no
+  overlap. §7.3 now says the structural fields of §7.4 travel in the same predicate.
+
+- **§7.4 made `responsible` look mandatory.** The seed shape read
+  `{ scope, parent?, responsible: [Identity], genesis: true }` — `parent` marked optional, so the
+  unmarked `responsible` reads as required. The reference never emits it, the kernel never requires
+  it, and the field is `omitempty`; §7.4 itself says its *meaning* is convention rather than kernel.
+  Requiring its presence would be the kernel enforcing a convention it does not interpret. Marked
+  optional, and `by`/`when` — which the reference does emit — added.
+
+Verified afterwards the way the divergence was found: every field in a signed foton, a seed and a
+scoped claim is now named by the clause that declares it, and no clause declares a required field the
+reference omits.
+
+### Changed — the specification no longer reserves an application vocabulary
+
+`spec/vocabulary.md` said, in one paragraph, both that application vocabulary "live[s] in
+aliases/templates, not the spec" **and** that a specific namespace was RESERVED, enumerating seven
+terms and naming the template that carried one of them. The example suite then renamed that
+namespace, and the two sides contradicted each other: a published specification reserving a
+vocabulary no example uses.
+
+The reservation is gone; the substance is not. What mattered was the warning — **use a term that
+asserts regulated weight only when a real validated process stands behind the claim** — and that
+stays, without naming a prefix or a template. The live set is whatever the example suite ships, and
+the kernel requires none of it (§7.1: every predicate is an opaque IRI).
+
+- **`plankton spectrum check` stopped naming a template in its own output.** It printed *"record it
+  in nekton (…/tool-validation)"* — a kernel command telling the operator which application term to
+  use, and depending on what a template in another repository happened to be called. It now says to
+  record the judgment as a claim, and leaves the term to the reader's vocabulary.
+
+- **A gated attack no longer hard-codes the companion suite's names.** `fourEyes-graphpoll` built its
+  scenario with `--template <a fixed name>`. When the example suite renamed that template the
+  `annotate` calls resolved to nothing, the honest control stopped ticking, and the PoC reported
+  `INCONCLUSIVE` — correctly, and the gate went red. It now **discovers** the review template
+  (`nekton templates`, first `*/review`) and refuses with a reason if none exists. Verified against
+  both the pre-rename and post-rename example suites, so the two repositories can merge in either
+  order.
+
+  The property under test — whether four-eyes can be forged — never had anything to do with what the
+  template is called.
+
+### Fixed — `nekton verify` said yes to records `add` refuses
+
+`verify`'s exit 0 is documented to mean *"this claim is genuine AND storable"*. It answered only the
+first half.
+
+The structural check sat inside `if st, _, perr := claim.ParseEnvelope(env); perr == nil { … }`, so a
+payload that could not be parsed at all — duplicate JSON member names, say — fell through to
+`return nil`. The command printed a clean signature verdict, **no `structure:` line**, and exited 0.
+The absence of a line was the only signal, and no automation reads an absence. `add` refused the same
+file outright:
+
+```
+$ nekton verify duplicate-members.dsse.json k.pub
+signature:       VALID - verified as keyid 790901b82a89fe50
+$ echo $?                                            # was 0; `add` rejects this file
+```
+
+A parse failure is now a structural failure: exit 3, with the reason printed. So is a predicate that
+will not parse, whose error was being discarded into `_`.
+
+**And the seed rules moved to where both commands can see them.** The second case was a
+scope/v0 seed carrying `genesis:false`: it parses, so `verify` said `structure: VALID`, and `add`
+refused it. The rule lived *only* in the registry's chain check, and `verify` never reaches a
+registry. The context-free part of §7.4 — where `genesis` may appear, that a seed carries no `prev` —
+is now `claim.ValidateChainStructure`, called from **both** the registry and `verify`. Two copies of
+a rule is how two commands come to disagree about what a storable record is.
+
+What stays with the registry is what needs registry state: whether a scope resolves, whether a `prev`
+links to something present. That split is the point: a shared validator is worth having where the
+rules are context-free, and moving a context-dependent check into one would break it.
+
+### Fixed — a DNS rebind in `kton fetch`, and no native test on two shipped platforms
+
+- **`kton fetch` followed a DNS rebind.** `checkDestination` resolved the hostname, and the
+  `http.Client` then resolved it **again** on its own — two lookups with nothing tying them together,
+  so a resolver answering a public address to the check and a loopback address to the connection
+  bypassed `--allow-local` without it ever being passed. A hash check afterwards does not help: the
+  request has already been made, and making the request *is* the exploit against a metadata service
+  or an internal host.
+
+  The previous release note said this "leaves with #103". That was a deferral dressed as a
+  mitigation: `kton fetch` **ships in 0.2**, so the binary in the archive had the bypass whatever a
+  future issue says. Fixed here instead. The name is resolved once, every address it returns is
+  checked, and the connection is made to a checked address **as an IP literal** — there is no second
+  lookup for a second answer to come back from. TLS still verifies against the URL's hostname.
+
+- **CI never ran on two of the five platforms we publish.** `release.yml` ships linux/amd64,
+  linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64; every CI job ran on ubuntu. A packaged
+  target with no passing native baseline is a claim nobody checked, and it was hiding two real
+  failures — a test-setup bug that built a directory name out of an absolute path (a drive letter
+  produced `...\reg\C::`), and one that matters:
+
+  **A private key file asks for `0600` and gets `0666` on Windows.** Every statement this project
+  makes about a private key being unreadable by other users rests on that mode. `WriteKeyFile` now
+  **verifies** the mode after writing rather than assuming the platform honoured the request, reports
+  the shortfall to its caller, and `keygen` prints a warning naming the mode it actually got — at the
+  one moment the operator can still act on it. Implementing Windows ACLs would need
+  `golang.org/x/sys`, and the kernels carry no third-party dependencies; what changed is that the
+  protection is now checked instead of asserted. A new `platforms` job builds and tests natively on
+  windows-latest and macos-latest.
+
+### Fixed — a gate that proved nothing, a keygen that deleted keys, and two false answers
+
+- **The security gate printed PASS having executed nothing.** With the binaries absent from
+  `PATH` every one of the sixteen gated attacks reported `N-A`, `N-A` was accepted in the GATED list
+  as though it were a pass, and the gate ended with *"every finding recorded as fixed is still
+  PREVENTED"* and exit 0 — a security claim over zero executed proofs. Worse, the banner added days
+  earlier **already printed "NOT ON PATH" three times**: the evidence was on screen and the verdict
+  ignored it, which makes a hollow run look thorough.
+
+  Prerequisites (`plankton`, `nekton`, `kton`, `jq`) are now checked before a single verdict is
+  printed, and a missing one refuses to produce a verdict at all. `N-A` in the gated list is no
+  longer a pass: the only honest reason left is the companion checkout, so those attacks report
+  **NOT RUN** and the gate ends `INCOMPLETE`, naming how many of its proofs actually executed.
+  `KTON_GATE_STRICT=1` — now set in CI — makes missing coverage fail the build, and CI's
+  kton-examples checkout is no longer `continue-on-error`: two gated attacks can only run against it,
+  and a fixture allowed to fail silently is the same defect one level up. With it present the gate runs
+  **16 of 16** rather than 14.
+
+- **`keygen` deleted a private key it had never written.** `WriteKeyFile` returns success for a
+  file that already holds exactly the requested key, so the caller could not tell *I created this*
+  from *it was already here* — and on a failure writing the public half it removed `name.key`
+  unconditionally. Re-running `keygen` over an existing identity whose `.pub` had drifted therefore
+  destroyed the private key, while printing *"refusing to overwrite an identity"* and *"would destroy
+  the only copy of that private seed"* in the same breath. The message described a protection that
+  was not there.
+
+  `WriteKeyFile` now returns a `KeyWrite` saying what it did — created, or renamed a previous file
+  aside — and `Undo` reverses only that. A pre-existing key is left alone; a half-written pair is
+  rolled back; a `--force` replacement that fails restores the original from its backup. Four cases,
+  four tests, in both kernels, verified to fail against the old code.
+
+- **`reproduces` claimed a byte-identity match between two malformed strings.** Hash
+  normalization was attempted and its failure ignored, so `reproduces not-a-hash not-a-hash --json`
+  answered `{"level":"L0","matched":true}` with exit 0. L0 means *the same output bytes*; neither
+  argument named any bytes. Both compared arguments must now normalize. Equivalent spellings — bare
+  hex, uppercase, surrounding whitespace — still compare equal, which is why normalizing happens at
+  all.
+
+- **`seed --parent` signed a reference its own parser cannot read.** It emitted the *subject*
+  shape, `{"digest":{"sha256":…}}`, while `claim.Ref` reads `{hash?, uri?}` (nekton SPEC §7.4:
+  `parent?: Ref`). A seed authored with `--parent` round-tripped to an empty `Hash` and an empty
+  `Parent.Key()`: the scope hierarchy the operator asked for was signed into a permanent claim id in
+  a form nothing could interpret. Now emits `{"hash":"sha256:…"}`, normalizes the argument, and
+  refuses one that is neither a content hash nor a URI. The test asserts the round trip through the
+  public parser, not the shape of the JSON — a test that merely grepped for `"hash"` would pass on
+  output nothing can read.
+
+- **`cursor-shift` was crying wolf** (found while re-running the gate). Its nekton half grinds a
+  scope id that sorts below an existing one, and used a **random** key — so whether the precondition
+  could be built in 60 attempts was luck, and a failure to build it was counted as a miss and
+  reported **VULNERABLE**. A PoC that flakes into a false REGRESSION costs exactly the attention a
+  real one needs. The key and timestamps are now fixed, so the ids are identical on every machine and
+  every run, and an unbuildable precondition reports `INCONCLUSIVE` — *I could not set up the attack*
+  and *the attack worked* are different answers.
+
+### Fixed — the kernel reported a verification verdict it is forbidden to have
+
+- **`material --json` emitted `"verified": false`, in both kernels.** SPEC §8.1 defines
+  `VerificationMaterial` as **four** fields and says outright *"The kernel MUST NOT interpret or
+  verify `material`"* — so the JSON projection added a fifth field asserting exactly the posture the
+  clause denies it. The value was a constant, so it carried no information, and it carried the wrong
+  one: a consumer reads `verified: false` as **checked and failed** when the truth is **nobody
+  looked**. One word, two meanings, in the field a cockpit is most likely to key on. Removed; the
+  four fields of §8.1 and nothing else.
+
+  Found by a cockpit implementer building against this surface, before 0.2 froze it. After a release
+  it would have cost a migration note instead of a line.
+
+- **The test that should have caught it could not fail.** nekton's material CLI test read the field
+  into a `bool` and asserted it was false — against a hardcoded `false`. It now asserts the **key
+  set** against §8.1's four fields, which fails when a fifth appears (verified both ways). plankton's
+  `material --json` had no test at all; it has one now, covering a listed scheme and a carried
+  unknown one.
+
+- **SPEC §8.1 now states the read-path boundary** rather than leaving it to be inferred. A kernel
+  does not verify material when it stores it and does not verify it when it hands it back:
+  **presence is not a check.** Whatever verification happened, happened in some tool at some earlier
+  moment under a trust configuration the kernel neither recorded nor can reproduce. The clause also
+  says what a kernel's output must not contain, and points a consumer that *does* evaluate evidence
+  at a three-way vocabulary — *verified here* (naming who checked), *carried*, *failed* — because a
+  single boolean cannot hold those three apart.
+
+### Fixed — six divergences between the specification and the reference
+
+All **103** normative statements in `spec/SPEC.md` were checked against the reference. Ninety-seven
+held; six did not, and each is closed on the side that was actually wrong.
+
+- **`reproduces --via` did not surface the consumer's obligation in `--json`** (§9). The human line
+  did; `--json` did not — and `--json` exists precisely so a machine consumer stops parsing prose. An
+  L1 (normalized) match is only valid if the normalizer is **itself** L0-qualified; a consumer that
+  never sees that requirement treats L1 as settled. Now emitted as `consumerObligation`, carrying the
+  clause, the requirement, the normalizer and the command that discharges it.
+- **Five places where the spec overstated and the implementation was right.** §5.1's SHOULD to keep
+  the hash algorithm identifier pluggable (it is hardcoded — now recorded as a deliberate 0.1 choice
+  with its cost); §5.3's SHOULD to use a tested JCS rather than a hand-rolled one (impossible here:
+  zero third-party dependencies is the property that keeps the kernels auditable and
+  WebAssembly-compilable, so what stands in for "tested" is now named — the frozen §15 vectors, a
+  `canon(canon(x)) == canon(x)` fuzz target, and the RFC 8785 example set); §6.5's `EnvData`, defined
+  but unimplemented and, unlike `meta`, not marked reserved (now **RESERVED at 0.1**); and §12's
+  demand that ingest "always advance the peer cursor", asked of kernels that do not sync at all — now
+  stated as a duty of the party that **pulls**, which is who holds the cursor.
+- **A cross-reference that pointed at nothing.** §5.3 claimed the string-for-precision rule was
+  "called out where plankton/nekton fields are defined". It was not — one occurrence in the whole
+  document. The honest options were to delete the claim or to write the callouts; deleting it would
+  have been the cheaper lie, because a measurement really can enter a record at exactly two places.
+  §6.1 now carries the rule for a `FileRef`'s `meta` (non-covered, so no identity protects it from a
+  lossy round-trip) and §7.2 for a claim's `object` Literal — where the stakes are highest, since a
+  claim id is `sha256(canon(Claim))` and a rounded value would be **signed**, leaving the claim
+  attesting to a number nobody measured.
+
+### Fixed — the `envtally-CF2` proof can finally decide something
+
+- It had **two** reasons it could never run its own scenario, and both had to go before it could say
+  anything. The `EXDIR` pointing at its own directory was the first (fixed earlier); the second was
+  that it passed `fit.dsse.json` as a fourth argument to `release.py`, whose contract is
+  `ttl trig query FIT_HASH HEAD_HASH`. So `fit_hash` was the **filename**, the gate was bound to a
+  submission that does not exist, and not one condition could light whatever the graph said.
+
+  It now runs **two** scenarios over the shipped gate — an honest 3/3 and a forged one — because
+  "the attack did not light it" and "this branch never lights" are indistinguishable without the
+  control. The honest one lights; the forged one lights too:
+
+  ```
+  CONTROL  foton 3/3, claim 3/3  ->  [x] the fit's environment is qualified
+  ATTACK   foton 2/3, claim 3/3  ->  [x] the fit's environment is qualified
+  ```
+
+  `release.rq`'s `FILTER(?nful = ?ntot)` compares the numbers **in the qualification**, which its
+  author writes; the verdict recorded inside the cited fulfilment foton is never read. The gate's own
+  comment says the forgery is caught by a re-run in Act 8a — so the guarantee is real but lives
+  outside the gate, while the checklist line reads as though the gate verified it. Filed as
+  gitmick/kton-examples#14.
+
+  Recorded **OPEN** and VULNERABLE, not gated: it is a property of the shipped example gate, not of
+  the kernels, which record the 2/3 verdict faithfully.
+
+### Added — properties, not just examples
+
+- **Fuzz targets over the canonicalization boundary**, and a CI job that actually searches (30 s per
+  target) rather than only replaying the seed corpus. There were no `Fuzz` entrypoints at all, and
+  what makes that matter is a whole class of numbers where `canon(canon(x)) != canon(x)` — which no
+  example-based test would have found, because they all used values someone had already thought of. Measured locally at **1.48 M executions, 406 new
+  interesting inputs, no failure**.
+
+  The job is separate from the main gate deliberately: a find is *not* a regression in the pull
+  request's own code, and a red mark in `verify` would say exactly that.
+
+- **Sync convergence as a property** (nekton). §12's cursor makes one promise — follow it and you
+  lose nothing — and the failure mode it has to exclude is one where a full rescan recovers what an
+  incremental follow cannot. The test drives the interleavings that broke it (a co-signature arriving
+  after the peer is past the claim; a chain whose seed arrives late) and asserts the **consumer's
+  final state**: a peer that only ever followed cursors must hold exactly what a peer reading from
+  zero holds. Verified against the pre-fix behaviour, where it reports
+
+  > the cursor-following peer holds 4 claims, the full-read peer 5 - following the cursor lost
+  > something a rescan would have found
+
+### Changed — guards and housekeeping
+
+- **The architecture guard now enforces that the kernels open no socket** (#104). It checked
+  `net/http` only, so a kernel could have grown a network dependency through bare `net` (which dials
+  one directly) or `crypto/tls` (which wraps one) with the guard green. It now covers both, plus
+  `net/url`. The cockpit *may* reach an address — that is what it is for — but the files that do are
+  named in the guard, so growing that surface is a deliberate act visible in a diff. Verified to fail
+  in both directions.
+
+- **CI checks `gofmt`.** Nothing did; two files sat unformatted on `dev` for weeks.
+
+- **A truncated verification-material file is reported, not swallowed.** `bufio.Scanner` stops at the
+  first error and reports it only through `Err()`, which neither reader checked — one line longer
+  than the 16 MiB buffer ended the loop silently and every attachment *after* it disappeared, the
+  file reading as though it had simply ended. §8.1 keeps material from affecting a record's validity,
+  and it still does; what was wrong was losing evidence without a word. Both readers now say the file
+  is incomplete, and still return what they could read.
+
+- **nekton's `SetPeerCursor` takes the lock plankton got in #77.** `peers.json` is one file every
+  mirror mutates, so two concurrent mirrors lost one another's cursor — and a lost cursor is a
+  silently re-fetched or silently *skipped* range. Merged by maximum under the lock and written
+  atomically, so a cursor only ever moves forward.
+
+### Fixed — documentation honesty
+
+- **`docs/federation.md` named a federation client that was deleted** (#128). The line said the
+  reference implementation "has a federation **client** (`kton mirror`) and **no server**". Half of
+  that has been false since #101: `kton serve` went in #83, the HTTP client went with #101, and what
+  `kton mirror` dispatches to today overlays a peer registry on the **local filesystem** by hash.
+  Restated precisely rather than sweepingly — the kernels open no socket in either direction and
+  `check-import-direction.sh` fails the build if that changes, while the cockpit still makes outbound
+  requests from exactly two files on record (`kton fetch`, Rekor anchoring), neither of which
+  federates.
+
+- **§8.1 no longer overstates the binding for foton ids.** It justified a *structural* binding using
+  the claim case alone — `claimId = sha256(canon(Statement))`, which is exactly the payload digest.
+  For a foton that is not true: `fotonId = sha256(canon(Foton))` over the covered projection, so a
+  scheme signing the payload commits to the Statement that *derives* the id, one canonicalization
+  away. Measured: the two digests differ. Still checkable with no outside information, but a
+  derivation rather than an identity — and a consumer comparing digests without performing it finds
+  they do not match. My overclaim, corrected.
+
+- **`security/REPORT.md` no longer presents 70 dead permalinks as evidence.** They pointed at the
+  archived predecessor repository, whose history did not carry over, so none of them resolves — while
+  a footer claimed they "resolve for repo members". The hashes are kept as plain text, so the trail
+  survives for anyone holding the archive and nothing claims to be checkable that is not.
+
+### Fixed — the cursor contract: `sync(since)` delivers what it promises
+
+- **A change to a record that a peer is already past now reaches it, and the feed no longer hides
+  what the store holds.** Two failures, both measured, and neither was really a numbering problem:
+
+  **A co-signature reached nobody.** The subnekton was **rewritten in place**, so nothing was
+  appended, nothing got a position, and no cursor could notice. A subnekton is an append-only log
+  *because in nekton the order carries meaning* (`prev`, head, seal) — rewriting an entry erased the
+  record that anything had changed. A co-signature is now its own **line**, carrying the signature
+  set it arrived with; the reader unions lines that share a claim id, exactly as `Add` already
+  unioned a twin at ingest.
+
+  **A deferred claim reached nobody either.** A claim whose seed or `prev` is not held is persisted
+  and structurally valid — incomplete is not invalid (§11) — but it was absent from `Records()`, so
+  a peer never received it *at all*; and when the dependency later arrived and it resolved locally,
+  it entered the index at its **original** position, below every cursor already issued. The feed was
+  hiding a record the store was holding. `Records()` now answers from the store's lines, not from
+  the index: a deferred record is offered (and still answers no query here, joins no head, and
+  counts toward no scope).
+
+  A position is now issued against the **stored bytes** rather than the record's identity, so "a new
+  stored thing" and "a new position" are the same event, and a re-mirror of identical bytes is
+  idempotent for free. The two kernels then differ, correctly: nekton leaves the old line in place
+  and appends; plankton keeps one file per record and fotons are an *unordered* set of
+  content-addressed facts, so there is no order to preserve and the record simply takes the new
+  position.
+
+  `MaxSeq` now comes from the feed, not the index — it used to return a cursor that did not cover
+  what had just been delivered, so a peer would have been handed the same co-signature on every
+  sync, forever.
+
+- **§12 restated.** The normative properties belong to the **cursor's guarantee**, not to the
+  record: never decreases, newer-or-changed is higher, never derived from author-influenced content.
+  *"Issued once"* was an implementation detail masquerading as a promise and is gone; nothing it
+  guaranteed is lost. §12 also now says a participant MUST offer records it holds but cannot
+  resolve, and that how a change reaches a peer is the participant's business as long as rule 2
+  holds.
+
+- **The numbering carries an `epoch`** (`sync` answers `{records, max, epoch}`). If a store's
+  numbering is lost or replaced — a deleted counter, a restored backup, a rebuild — positions start
+  again from the beginning and a peer holding a high cursor would sit silently above everything it
+  is offered, receiving nothing, forever. A peer whose stored epoch differs MUST discard its cursor
+  and resync. A comment in `ReadSeqMap` used to assert that peers "just resync"; nothing in the wire
+  form made them, so that was a claim the protocol did not support.
+
+- `co-signer-drop` measured `max(signatures per stored line)` — the storage shape rather than the
+  finding, which is whether a co-signer can be **lost**. It now counts distinct signers surviving a
+  mirror *and* asks `by signer` for each, which is what the finding was about.
+
+### Fixed — boundary and identity rules
+
+- **Canonicalization is idempotent, and the number rule is on the value rather than the spelling**. The exactness check ran only when the literal held no `.`, `e` or `E`, so acceptance
+  depended on how a number was written:
+
+  ```
+  100000000000000000000   refused
+  1e20                    ACCEPTED -> canonicalized to 100000000000000000000, which the same
+                          canonicalizer then refused on a later parse
+  9007199254740993.0      ACCEPTED and silently rounded, while the integer token was refused
+  ```
+
+  Two tests now run on every number, because neither alone suffices: the **literal**, parsed
+  exactly (`9007199254740993` rounds to a double whose magnitude is exactly 2^53, so a test on the
+  parsed value would accept 2^53+1 and sign its neighbour), and the resulting **value**
+  (`12345678901234567890.5` is no integer literal, but its double is a huge integer whose canonical
+  form the first test would then refuse). `canon(canon(x)) == canon(x)` now holds for everything
+  accepted, checked over a corpus.
+
+  **This narrows the accepted input set relative to RFC 8785**, which happily serializes `1e30`.
+  That is deliberate: `9007199254740993` and `9007199254740992` serialize to the *same* bytes, so
+  two records differing by one would share a content address. §5.3 now states the restriction, and
+  its normative example list no longer implies `1E30` is accepted.
+
+- **A field that would vanish before signing is refused**. Both authoring parsers decoded
+  straight into structs, which destroys the evidence: Go keeps the **last** of a duplicate name and
+  stops at the end of the first document. `"why":"first","why":"second"` was signed as `"second"`;
+  `CanonJSON` accepted `{"x":1} {"ignored":2}` and returned only `{"x":1}`. The new
+  `core.CheckJSONDocument` runs on the raw bytes — one complete document, no duplicate names — and
+  plankton's foton spec additionally rejects unknown fields, so a misspelled `inputs` no longer
+  disappears. The opaque `descriptor` stays fully extensible.
+
+- **A precomputed foton id now equals the id of the record signed**. `FotonID` used the
+  supplied hash strings verbatim while the signing path normalized them, so an accepted uppercase
+  hash produced two different ids for one spec — a cockpit that precomputes a result id held a
+  reference that did not resolve to the record it went on to sign. Both paths go through one
+  normalized representation.
+
+- **Structural foton validation is complete, and its failures are refusals**. A signed
+  foton with two different hashes at the same **absolute** input path was accepted *and indexed*;
+  its action key then failed to compute and the registry silently omitted the action-key index while
+  leaving the record queryable everywhere else. `Validate` now checks bound-hash syntax, relative
+  work-tree paths and duplicate input paths (path-only unbound slots stay legitimate), and both
+  ingest and the read path refuse a record whose action key cannot be computed.
+
+  Separately, `len(descriptor) == 0` conflated `descriptor: {}` with **no** descriptor, so an empty
+  object let an arbitrary incorrect ref through unchecked and shared the bare-ref action-key
+  namespace. Only `nil` is absent now; a present descriptor is hashed, empty or not.
+
+### Changed — release and contributor plumbing
+
+- **CI runs on `dev`, not only `main`** — a direct push to the active development branch was
+  ungated; only pull requests were ever checked.
+
+- **The gate and released binaries build on a supported Go line**. 1.22 is outside Go's
+  support window, and the standard library ships inside every released binary — having no
+  third-party modules does not remove toolchain maintenance. The declared `go 1.22` floor is now
+  *proven* by a separate `compat` job rather than doubling as the release baseline.
+
+- **`CONTRIBUTING` no longer tells readers to run `go test ./...` from the repo root**,
+  which fails: the workspace root is not a module. It gives the per-module loop CI actually runs.
+
+- Stale capability claims removed: the root README advertised `serve`, Annex C said the reference
+  ships the HTTP federation **client** (deleted in #101), §13 said `kton anchor` cannot store a
+  proof though `--store` does, and `kton/README` gave a build command from the wrong directory.
+
+### Fixed — a union is now commutative
+
+- **A multi-source read gave a different answer depending on argument order**. §11–§12 promise a conflict-free set union, and an operation whose result depends on the
+  order of its arguments is not one. Three separate ways it did:
+
+  | | before | after |
+  |---|---|---|
+  | a scoped child in A whose seed is in B | `child_first=false, seed_first=true` | held either way |
+  | the same claim signed by two parties | 1 signature; which signer survived depended on order | 2 signatures either way |
+  | material attached in the second source | lost (plankton: lost even to an **empty** second source) | merged from every source |
+
+  `OpenUnion` opened `dirs[0]` normally — which *settled it alone* and **dropped**
+  whatever did not resolve — and then settled only the remaining sources against that finished
+  view. A's unresolved child was therefore discarded before B had even been read. Every source's
+  raw records are now collected first and settled **together**, once.
+
+  `settle` skipped a claim id it had already seen. A claim id covers the **payload**
+  only, so two independent signers of identical bytes are one claim with two signatures — which is
+  what `Add` already did at ingest. The union now merges them in memory (never writing: a read must
+  not mutate a source), and refreshes the signer index so `BySigner` finds both. `unionSignatures`
+  still refuses to merge across **differing** payload bytes, which is the point and is preserved.
+
+  plankton allocated an empty material map for a union and never filled it; nekton kept
+  only the first source's. Material is now merged from every source, deduplicated by attachment, and
+  independently of settling — §8.1 says a record's validity never depends on its material, and the
+  converse has to hold too.
+
+  Regression tests walk **all six permutations** of a three-link chain across three stores, both
+  orders of a co-signed twin, and material in every source position including empty and duplicate
+  sources — each verified to fail without its fix.
+
+### Fixed — identities are protected, and failed writes say so
+
+- **`keygen` no longer overwrites an identity, and no longer inherits a file's permissions**. `os.WriteFile(path, seed, 0600)` looks safe and is not: the mode applies only when the
+  call *creates* the file, so a pre-existing world-readable `alice.key` kept `0644` and received the
+  new private seed. And `keygen alice` twice succeeded twice — the first seed was gone, and records
+  signed with it could no longer be checked against that filename. The signatures stayed
+  cryptographically valid; what was destroyed was the ability to check them.
+
+  Both kernels now go through one shared `core.WriteKeyFile`: `O_EXCL`, so the mode is always the
+  one asked for; an existing destination is refused with a message naming the fix; `--force`
+  **moves** the old file to `<name>.key.old` rather than deleting it — this path destroys key
+  material under no circumstances. An identical `--seed` is a no-op, so a reproducible snapshot
+  re-runs without `--force`. A failure writing the public half removes the private half rather than
+  leaving a keypair whose public key nobody has.
+
+- **A mirror that cannot write now fails, loudly**. All three entrypoints reported success
+  after storing nothing:
+
+  ```
+  plankton mirror <peer>      "0 new; registry holds 0 fotons"                        exit 0
+  kton mirror plankton <peer> "0 new, 2 skipped"                                      exit 0
+  nekton mirror <peer>        "1 unresolved (missing dependency - an incomplete chain)" exit 0
+  ```
+
+  The nekton wording was not merely vague, it was a wrong diagnosis of the only error class that
+  could arrive: `Add` **persists** a claim whose seed or prev is missing and returns nil (§11 —
+  incomplete is not invalid), so a missing dependency never reached that branch. Every error that
+  did was permanent (unparseable, unsigned, structurally invalid) or environmental (a local write
+  failure). The retry loops could therefore heal nothing, and are gone.
+
+  `nekton/registry` gains `ErrPersist`, mirroring plankton's, so a caller can tell *"this record is
+  invalid, skip it"* from *"I could not write, nothing was stored"*. A local write failure now
+  returns non-zero and names the cause; a refused peer record is counted, named, and also exits
+  non-zero, because a silent skip is how an incomplete mirror looks complete.
+
+- **`nanopublish --rsa` no longer claims to have saved a key it lost**. With a path whose
+  parent did not exist, the command generated an RSA key, published, printed *"generated a new RSA
+  key and saved it to …"* and exited 0 — and the file did not exist, so the next run minted a
+  different identity. The save's error was discarded with `_ =`. Separately, **any** read error was
+  treated as "no key here" and fell through to generating a new one, so a permission problem
+  silently replaced the identity that was requested. Both now fail with the reason.
+
+### Changed
+
+- **A subnekton is one file** (#41). A nekton store is now one JSONL file per scope plus one for
+  the unscoped nekton:
+
+  ```
+  objects/scope/<scope_id>.nekton.jsonl    a subnekton: its seed and every claim chained under it
+  objects/unscoped.nekton.jsonl            the unscoped nekton
+  objects/.format                          the layout marker
+  ```
+
+  A scope is a bounded, federatable sub-registry, and this gives it one artifact — a thing that can
+  be chmod'd, sparse-checked-out, copied or handed over whole, none of which a flat pile of
+  per-claim hashes can be. The file is a bag, not a sequence: order stays the chain's alone
+  (`prev`), so the file never becomes a second, unsigned representation of order that could drift
+  from the signed one. Reads still resolve pre-0.2 per-claim objects, and a write migrates a record
+  the first time it touches it, so an existing store keeps working and converts as it is used.
+
+- **`sync(since)` stops losing records** (#97). §12 always said the answer is "records with
+  a local sequence above `since`, **in append order**". Both kernels instead derived that sequence
+  from the record's rank in the hash-sorted store, recomputed on every load — so the one guarantee a
+  cursor exists to give (*ask again with this number and you lose nothing*) did not hold. In plain
+  use, only a record whose hash happened to sort last was ever delivered to an already-synced peer:
+  measured at **7 of 8** new records silently withheld. It is also grindable — a scope id is the
+  hash of a seed an attacker writes, and a scope that sorts early pushes an existing scope's records
+  back under the peer's cursor for good (1–20 attempts, measured).
+
+  A position is now issued **once**, at first sight, and never recomputed. It lives in a `.seq` file
+  next to `peers.json` — deliberately outside `objects/`, so the record tree a git federation ships
+  stays byte-identical across peers and conflict-free to merge. Gated as `cursor-shift`.
+
+  **On upgrade:** an existing store is numbered on first open, in the same order it was already
+  being numbered in, so peers do not re-sync. Positions are not dense — a record that is dropped or
+  refused may still consume one — and gaps carry no meaning.
+
+- Claim ids, envelopes, signatures and the wire format are unchanged. `specVersion` stays `0.1`:
+  this is a storage layout revision, not a protocol change.
+
+- **`pin` and `blob` are plankton commands** (#102). `plankton pin <file>` and
+  `plankton blob <sha256:…>`. Pinning needs no address — a hash says *what*, and the bytes are
+  already on this machine — so it was never a cockpit capability. Fetching bytes that are **not**
+  here is a different thing and stays in the cockpit (`kton fetch`).
+
+  The store's location moves with them: `blobstore.Subdir` and `blobstore.OpenFor(registryDir)`
+  replace a `filepath.Join` every caller wrote by hand against a constant that lived in the
+  cockpit's `federation` package — plankton's own storage layout declared in a package that
+  *depends on* plankton.
+
+  The path is unchanged (`<registry>/blobs`), so an existing store stays readable and both
+  spellings reach the same bytes; a test pins that layout so a later refactor cannot quietly
+  relocate everyone's pinned data. `kton pin` and `kton blob` still work and print a deprecation
+  note; they go when the cockpit leaves the repository.
+
+### Fixed
+
+- **A claim spec could name a subject that silently disappeared** (#106). The authoring spec spells a
+  subject `hash: "sha256:…"`; the signed statement spells the same thing `digest: {sha256: …}` (the
+  in-toto form, SPEC §7.3). Anyone who read a signed statement and reasoned backwards wrote `digest`
+  in the spec — `encoding/json` dropped the field it did not know, and the subject rendered as `{}`.
+
+  ```
+  in                          out
+  {hash:"sha256:…"}           {digest:{sha256:…}}   ok
+  {name, hash:"sha256:…"}     {digest, name}        ok
+  {digest:{sha256:…}}         {}                    everything gone, in silence
+  {name, digest:{…}}          {name}                the hash gone, in silence
+  ```
+
+  The claim was then **signed, ingested, verified and attachable** — and about nothing. `about <hash>`
+  could never reach it, because it was about no hash. `show` printed `subject:` followed by an empty
+  line. Not one word of warning.
+
+  Three changes, because the hole had three mouths:
+
+  1. `Validate` now refuses a subject entry whose `Key()` is empty — neither a `digest` nor a `uri`.
+     Counting the subjects was never enough; `subject: []` was refused while `subject: [{}]` passed.
+     It sits at the gate **every** claim crosses, so a record arriving by mirror or by a git merge is
+     caught too, not only one authored locally. A `name` alone is a label, not an identity.
+  2. `ParseSpec` refuses an **unknown field** instead of dropping it, and says what to write instead
+     when it sees `digest`. A misspelling in a document about to be signed must never be an omission;
+     this also catches `predicat`, `subjects`, and every other typo at the one place a human writes
+     the file.
+  3. `verify` now reports the **structure** as well as the signature, in both kernels, and exits 3
+     when the signature is genuine but ingest would refuse the record. A valid signature says who
+     signed the bytes, not that the substrate will store them — so `verify` used to issue a clean
+     bill of health for a claim `add` rejects, and anyone who verified a file without adding it
+     believed it was good. Exit 0 now means genuine **and** storable; 1 and 2 keep their meanings.
+
+  Found by the examples workstream while writing claims by hand. One of the project's own test
+  fixtures had fallen into the same trap: `claim_test.go` built a Statement with `subject: [{"hash":
+  …}]`, which is the spec spelling in the wire position, and had been asserting over a claim about
+  nothing — green the whole time.
+
+- **`nekton seed --when` / `nekton annotate --when`** (#42). `when` is covered by the claim id, and a
+  scope id *is* its seed's claim id — so a wall-clock timestamp made the identity a function of when
+  you ran the command. A 2243-claim corpus rebuilt three times produced three different root ids,
+  and every child scope and claim moved with it. Pin the timestamp and a rebuild lands on the same
+  ids. A non-RFC-3339 value is refused before signing, not at ingest: a timestamp caught after
+  signing has already been signed.
+
+- **`keygen --seed <64-hex>` and `pubkey <key.key|hex>`**, both kernels (#44). The sibling of #42 for
+  the other half of a record's identity: the public key sits inside every signed payload, so a random
+  key per run moved every record id no matter how fixed `when` was. A hand-written seed was already
+  accepted as a `.key`; what was missing was the way back to the `.pub` hex that `verify`,
+  `--trust-keys` and the viewer key directories read. With both, two runs of the same corpus produce
+  a byte-identical store. A seeded key is only as strong as its seed — for fixtures, not for an
+  identity anyone must trust.
+
+- `plankton add` no longer needs one process per record for bulk ingest (#37).
+
+- `nekton about` / `nekton by` emit structured JSON with `--json`, so a consumer can read the claim
+  axis without parsing prose (#39).
+
+- Foton authoring lifted out of the CLI into `kton.dev/plankton/foton` (#35).
+
+- A claim about a URI subject renders as an edge, not a floating node (#33).
+
+### Removed
+
+- **The HTTP federation client** (#101) — `kton mirror <url>`, the `kton/federation` package, and
+  the two raw `http.Get` call sites behind `--with-material`. `kton serve` went in #83; this is the
+  other half. A protocol repository is about bytes, not about which other protocol carries them
+  somewhere: §12 fixes the queries and the wire form and leaves the **transport** unspecified, and
+  the HTTP binding in Annex C is informative.
+
+  It had **no caller**. `kton mirror` appears 25 times across the examples, the cockpit and
+  kton-web — not once with an `http(s)://` peer. The only URL occurrences anywhere were two lines
+  of documentation.
+
+  Three of the four unbounded HTTP clients in the repository disappear with it, rather than being
+  hardened: `federation.Sync` and `federation.GetBlob` (no timeout; `GetBlob` read the **whole**
+  body into memory before comparing the hash), `nektonHTTPMirror`, and the material pull that made
+  one untimed request **per claim id**. `mirror --pin` and `mirror --with-material` go too: both
+  only ever did anything for a URL peer and were silent no-ops on a local directory.
+
+  **What replaces it:** nothing, because nothing used it. `plankton records --json --since N` and
+  `nekton records --json --since N` answer `sync(since)` on stdout — the binding the cockpit
+  already reads. Mirroring a local registry directory is unchanged and stays in the kernels
+  (`plankton mirror` / `nekton mirror`); a URL is now refused with a message saying where the
+  capability went.
+
+  The deleted package held the only tests over the §12 conformance vectors, and they tested the
+  **consuming** side. They are replaced by a producer-side test that asserts
+  `plankton records --json` re-emits `testdata/federation/sync-plankton.json` as the same document —
+  the direction that matters now, and the first thing to actually compare the two.
+
+- **`kton serve`, and the whole HTTP server** (#83) — the largest breaking change in this release.
+  `federation.NewServer`, the nekton handler, the `serve` verb, and with them the `:8787`/`:8788`
+  defaults. **A consumer that read a registry over `/sync` must move to `plankton records --json
+  --since N` / `nekton records --json --since N`**, which return exactly the same document on stdout.
+
+  SPEC Clause 12 was restated first: the queries and the wire form are normative, the transport is
+  not, and the HTTP binding moved to informative Annex C. A specification of a protocol is not a
+  place to distribute a network service — a listening socket brings authentication, transport
+  security, rate limiting and request bounds with it, and those belong to a deployment. Writing a
+  server over the Clause 12 table is a small amount of code in any language, and
+  `reference/testdata/federation/` fixes the bytes it must produce.
+
+  The federation **client** is unaffected: `kton mirror` over a URL or a directory still works.
+
+- **`kton/reference/web/graph/`** (#72) - ~2500 lines of browser-facing code, and with it the
+  `graph.wasm` release artifact, its `wasm_exec.js`, their checksums and the `graph.wasm.buildinfo`
+  recipe. Nothing in Go imported it; it was a leaf `package main` whose own harness described it as
+  validating "the exact logic that the wasm build serves to the browser". kton-web already built it,
+  copying `graph.go` and `sign.go` out of a pinned kernel checkout, and already superseded
+  `main_wasm.go` with its own export groups. It belongs there.
+
+  The reproducibility check moves rather than dies - two builds from different directories with
+  `-trimpath`, required to be byte-identical - because reproducibility of a browser artifact is
+  kton-web's concern. What stayed here is the kernels' own obligation to compile for
+  `GOOS=js GOARCH=wasm` (`CONTRIBUTING.md:13`), which CI now proves by compiling rather than by
+  grepping imports.
+
+  Consumers of the `graph.wasm` release asset must take it from kton-web from 0.2 on.
+
+- The 3.7 MB unstripped native harness binary that `web/graph` had committed into the tree.
+
+### Added
+
+- **`plankton records` / `nekton records`** (#85) — every record with its signed envelope, the
+  Clause 12 `sync(since)` answer on stdout. `plankton show --json` now carries the envelope too: a
+  consumer that has to *verify* needs the bytes the signature stands over, and a projection is not
+  those bytes.
+
+- **`plankton attach` / `material`, `nekton attach` / `material`** (#62, #64) — bind external
+  verification material to a record by its content address (§8.1) and read back what is attached.
+  Stored, never evaluated.
+
+- **`kton anchor --store`** (#62) — record the verified Rekor entry on the record, which is what §13
+  asks for; without it the proof only ever reached stdout.
+
+- **`kton mirror --with-material`** (#62) — make this copy of the evidence complete, asking the peer
+  about every claim held rather than about the last sync batch.
+
+- **`--print-id`** on `nekton claim`, `annotate` and `seed` (#56) — the bare id alone on stdout, the
+  contract `plankton author` already had. `plankton add` too (#74).
+
+- **`--json`** on `plankton producer`/`uses`/`lineage`/`reproductions`/`reuse` and `nekton head`
+  (#57, #74, #89). A record's id is a named field there, so nothing has to assume it is the first
+  hash on a line — and `reproduces --json` reports its **level** as a field, which a signed
+  `reproduces` claim records and which the exit code cannot distinguish.
+
+- **`kton fetch --allow-local`** (#81) — see Security.
+
+### Security
+
+- **`kton fetch` no longer dereferences a locator nobody verified** (#81). A located-at claim is a
+  suggestion from whoever signed it, and ingest stores signed claims *without* verifying them
+  (§8: the wire carries a keyid, not a key) — so anyone able to put a claim in front of a registry
+  chose the URI this process opened. Dereferencing is a request made from the host, and for
+  `file://` a read of its disk; the hash check afterwards proves what the bytes are, cannot undo the
+  request, and for a file whose hash is known does not even reject the result.
+
+  `--trust-keys <dir>` is now required, the signer is derived from the key that actually verifies
+  (never the declared keyid), `file://` and addresses on this host or network need `--allow-local`
+  on top, redirects are re-checked against the same rule, and a body is bounded.
+
+- **`blobstore` refuses a path built from anything that is not a content hash** (#79), and `/blob`
+  answers 400 rather than 404 for a malformed one. Fixing it surfaced a second bug: `Get` compared
+  the content hash against the caller's *spelling*, so an uppercase or bare digest found its file
+  and then reported it corrupt.
+
+### Security suite
+
+- **`security/REPORT.md` was overclaiming its own coverage — in the release whose headline is that
+  the security suite stopped doing that.** Its posture line said *"27/29 spectrum members fulfilled ·
+  27 closed · 2 open"* over a Closed table with **24** rows, and *"10 of the 28 PoCs are executable
+  and run in `check.sh`"* when **17** are executable and the gate runs **16**. Four gated PoCs
+  (`cursor-shift`, `read-path-ungated`, `scope-path-traversal`, `union-across-payloads`) had no row
+  in any summary table, and `cursor-shift` had no entry at all. Recounted from the directory: **27
+  closed · 3 open · 2 accepted boundary, of 32**.
+
+- **`envtally-CF2` was recorded closed and is not.** REPORT.md had it under Closed with a fixed-at
+  commit; `check.sh` has it in the OPEN list because, once the PoC's path to the shipped release gate
+  was repaired, the gate ticks **none** of its seven conditions — so "env-qualified stayed unticked"
+  is true with *and without* the attack and decides nothing. It reports `INCONCLUSIVE`, never a pass.
+  Filed as gitmick/kton-examples#14, still open. Moved to Open with the reason written down.
+
+- **`security/check-report-counts.sh`** — new guard, run by `check.sh`. REPORT.md states counts about
+  its own directory; a number in prose is maintained by whoever remembers to, which is the same
+  defect this suite keeps finding in the code it attacks: a claim nothing can falsify. The guard
+  recomputes attack totals, closed/open/boundary rows, executable PoCs and what the gate actually
+  runs, and fails on any disagreement — including a PoC on disk that no table records. Verified to
+  fail both ways (a wrong count, and an unrecorded script) before being wired in.
+
+- **`check.sh` now prints which binaries it tested** and warns when one predates the working tree.
+  Four findings read as REGRESSION during the spec audit against stale binaries in `~/bin` while the
+  tree was clean. Every PoC resolves `plankton`/`nekton`/`kton` off `PATH`, so a green gate — and a
+  red one — is a statement about whatever binaries happened to be there. A gate whose verdicts cannot
+  be attributed to a build is not evidence.
+
+- **The plankton registry takes a lock around its signature union** (#77), and re-reads from disk
+  under it. `concurrency-races` was VULNERABLE on every run: the union merged against this process's
+  in-memory copy, so two processes co-signing one record each merged into a stale view and the
+  second atomic rename discarded the first's signature. Atomic rename makes each write indivisible;
+  it does nothing for a read-modify-write spanning two of them. The lock is **per object file**, not
+  store-wide — writers contend only on the same record, and a bulk ingest of distinct records has
+  nothing to serialize. `peers.json` gets its own, and merges cursors by maximum rather than
+  overwriting, so two concurrent mirrors cannot lose one another's position. Posture returns to 24
+  closed / 2 open, this time with an executable PoC behind the claim.
+
+- `security/REPORT.md` recorded `concurrency-races` as closed with an "atomic temp+rename + locked
+  union-write". There is no lock in the plankton registry — nekton serialises its union with
+  `.objects.lock`, plankton does not — so two processes still lose a co-signature. Reopened, with
+  the half that was genuinely fixed (the atomic write) stated as such. Posture is now 23 closed /
+  3 open, not 24 / 2.
+
+- The `concurrency-races` PoC was a stub that printed a sentence and no verdict, so the gate could
+  not see the gap. It is executable now and loses a signature in every run.
+
+- `security/check.sh` gained an `OPEN` list, so a known-open finding runs and reports without
+  failing the build; it prints its own coverage ratio (10 of 28 recorded attacks) and names a
+  skipped attack instead of dropping it silently from the gate.
+
+- `security/README.md` claimed every PoC prints a verdict and that the gate runs them all; 18 of 28
+  print none and it ran 9. `REPORT.md` claimed it could be regenerated by
+  `provenance/render_report.py` and verified against `keys/redteam.pub`; neither the renderer, the
+  signed claims nor `keys/` are in this repository. Both corrected.
+
+- Attack PoCs read the nekton store through `security/attacks/_records.sh` instead of globbing a
+  layout. Three of them hardcoded `objects/sha256/*.json` and reported a false regression under the
+  new layout while the property they test still held.

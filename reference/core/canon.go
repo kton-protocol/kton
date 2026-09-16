@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,7 +69,7 @@ func CanonJSON(in []byte) ([]byte, error) {
 	// {"x":"BENIGN","x":"EVIL"} would sign/id as EVIL while a first-wins reader sees BENIGN - equal id,
 	// different content-as-read. Reject it BEFORE decoding, so no such record can be canonicalized,
 	// signed, or ingested (cold-session canonicalization finding).
-	if err := checkNoDupKeys(in); err != nil {
+	if err := CheckJSONDocument(in); err != nil {
 		return nil, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(in))
@@ -85,6 +87,38 @@ func CanonJSON(in []byte) ([]byte, error) {
 
 // checkNoDupKeys walks the JSON token stream and errors if any object has a repeated name (at any
 // nesting depth). Streaming, not decode-into-map, precisely because a map silently collapses dups.
+// CheckJSONDocument enforces the two things a decoder will not: exactly ONE complete document, and
+// no DUPLICATE object names. Both must be checked on the RAW bytes, because decoding destroys the
+// evidence - Go keeps the last duplicate and stops at the end of the first document.
+//
+// Duplicate names: I-JSON and RFC 8785 forbid them, and Go silently keeps the LAST, so
+// {"x":"BENIGN","x":"EVIL"} would sign and id as EVIL while a first-wins reader sees BENIGN - equal
+// id, different content-as-read.
+//
+// One document: CanonJSON used to accept `{"x":1} {"ignored":2}` and return only `{"x":1}` because
+// neither decoding pass required end-of-input. Nothing after the first document was
+// canonicalized, hashed, or signed, and nothing said so.
+//
+// Exported because the AUTHORING parsers need it too. They decode straight into structs, so a
+// duplicate of a KNOWN field - `"why":"first","why":"second"` - was signed with no complaint;
+// rejecting unknown fields does not catch a repeated known one.
+func CheckJSONDocument(in []byte) error {
+	if err := checkNoDupKeys(in); err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(in))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return fmt.Errorf("trailing content after the JSON document: exactly one document is allowed, " +
+			"and anything after the first would be silently dropped rather than signed")
+	}
+	return nil
+}
+
 func checkNoDupKeys(in []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(in))
 	dec.UseNumber()
@@ -258,26 +292,112 @@ func writeJCSString(buf *bytes.Buffer, s string) error {
 // jcsNumber serializes a JSON number per RFC 8785 §3.2.2.3 (the ECMAScript Number-to-String
 // algorithm). Values are taken through IEEE 754 double; anything needing more precision or range
 // than a double can hold MUST be carried as a JSON string, not a number (RFC 8785 Appendix D).
+// maxExactInt is 2^53: every integer up to it is exactly representable as an IEEE-754 double, and
+// none beyond it is.
+var maxExactInt = big.NewInt(1 << 53)
+
 func jcsNumber(s string) (string, error) {
-	// An INTEGER literal that does not survive the IEEE-754 double round-trip would silently collide
-	// with its neighbour: 9007199254740993 (2^53+1) canonicalizes to 9007199254740992, so two claims
-	// differing by 1 share an id. RFC 8785 App D says such a value MUST be carried as a string; reject
-	// it as a number rather than sign an ambiguous id (cold-session canonicalization finding).
-	if !strings.ContainsAny(s, ".eE") {
-		if i, perr := strconv.ParseInt(s, 10, 64); perr == nil {
-			if int64(float64(i)) != i {
-				return "", fmt.Errorf("canon: integer %s is not exactly representable as an IEEE-754 double (RFC 8785 App D: carry it as a string)", s)
-			}
-		} else if strings.TrimLeft(strings.TrimPrefix(s, "-"), "0123456789") == "" {
-			// a well-formed integer literal too large for int64 - definitely beyond double precision
-			return "", fmt.Errorf("canon: integer %s exceeds the exactly-representable range (RFC 8785 App D: carry it as a string)", s)
-		}
-	}
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
 		return "", fmt.Errorf("canon: number %q not representable as IEEE 754 double: %w", s, err)
 	}
+	// An INTEGER value that does not survive the IEEE-754 double round-trip would silently collide
+	// with its neighbour: 9007199254740993 (2^53+1) becomes 9007199254740992, so two claims differing
+	// by 1 share an id. RFC 8785 App D says such a value MUST be carried as a string.
+	//
+	// The rule is on the VALUE, not the SPELLING, and that is the fix. It used to run only
+	// when the literal contained no `.`, `e` or `E`, which made acceptance depend on how a number was
+	// written:
+	//
+	//	100000000000000000000  -> rejected
+	//	1e20                   -> ACCEPTED, and canonicalized to 100000000000000000000, which this
+	//	                          same function then rejects on a later parse. Canonicalization was
+	//	                          not idempotent: an accepted input produced output the canonicalizer
+	//	                          refused, and authoring, hashing, sealing and ingestion all
+	//	                          re-canonicalize the same logical content.
+	//	9007199254740993.0     -> ACCEPTED and silently rounded, while the same value written as an
+	//	                          integer token was rejected.
+	//
+	// Two tests, because neither alone is enough and each catches what the other misses.
+	//
+	// (a) the LITERAL, parsed EXACTLY. 9007199254740993 rounds to the double 9007199254740992, whose
+	//     magnitude is exactly 2^53 - so a test on the parsed value alone would accept 2^53+1 and
+	//     silently sign its neighbour. This is the test the old spelling-gated code got right.
+	// (b) the resulting VALUE. 12345678901234567890.5 is not an integer literal, so (a) passes, but
+	//     its double IS a huge integer whose canonical form is an integer token outside the exact
+	//     range - which (a) would then refuse on a later parse. Without (b), canonicalization is
+	//     still not idempotent.
+	//
+	// Together they make acceptance depend on the number, never on how it was written, and
+	// canon(canon(x)) == canon(x) holds for everything accepted.
+	//
+	// (a) runs ONLY where it can fire. `big.Rat.SetString` parses the literal exactly, which for
+	// `1e-1000000` means constructing a denominator of 10^1000000 - about 415 KB of digits - for a
+	// value ParseFloat has already underflowed to zero. A 1101-byte document of those took 1.8
+	// seconds against 112 microseconds for the same document with ordinary numbers, and this runs on
+	// externally supplied payloads at ingest and at verify: work decided by an exponent's VALUE
+	// rather than by the input's SIZE is an amplifier. A number below 2^53 cannot be the case (a)
+	// exists for, and a number with a negative exponent cannot be a large integer at all, so the
+	// magnitude decides whether the exact parse is worth doing - computed from the literal by
+	// counting, never by arbitrary-precision arithmetic.
+	if mag, ok := decimalMagnitude(s); ok && mag >= exactDigits {
+		if !strings.ContainsAny(s, "/") { // a JSON number is never a big.Rat ratio; refuse to parse one
+			if r, ok := new(big.Rat).SetString(s); ok && r.IsInt() {
+				if r.Num().CmpAbs(maxExactInt) > 0 {
+					return "", fmt.Errorf("canon: integer %s is outside the exactly-representable range "+
+						"(|v| <= 2^53, RFC 8785 App D: carry it as a string)", s)
+				}
+			}
+		}
+	}
+	if f == math.Trunc(f) && math.Abs(f) > 1<<53 {
+		return "", fmt.Errorf("canon: %s has the integer value %s, outside the exactly-representable "+
+			"range (|v| <= 2^53, RFC 8785 App D: carry it as a string)", s, strconv.FormatFloat(f, 'f', -1, 64))
+	}
 	return jcsNumberFloat(f)
+}
+
+// exactDigits is the number of decimal digits below which a value cannot reach 2^53. 10^15 is
+// 1e15 and 2^53 is about 9.007e15, so any literal whose integer part has at most 15 digits is
+// certainly inside the exactly-representable range and needs no exact parse.
+const exactDigits = 16
+
+// decimalMagnitude returns an upper bound on the number of decimal digits in the integer part of a
+// JSON number literal, by counting rather than by evaluating. A result <= 0 means |v| < 1.
+//
+// It exists so the exact-integer check can be skipped where it cannot fire. Being an UPPER bound is
+// what makes that safe: it may say "worth checking" for a value that turns out fine (the exact
+// parse then simply finds nothing), and it must never say "not worth checking" for one that is not.
+// Leading zeros are not significant and are dropped, so `0.0000001e9` is magnitude 3, not 10.
+func decimalMagnitude(s string) (int, bool) {
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "-"), "+")
+	mant, expPart, hasExp := s, "", false
+	if i := strings.IndexAny(s, "eE"); i >= 0 {
+		mant, expPart, hasExp = s[:i], s[i+1:], true
+	}
+	intPart := mant
+	if i := strings.IndexByte(mant, '.'); i >= 0 {
+		intPart = mant[:i]
+	}
+	intPart = strings.TrimLeft(intPart, "0")
+	digits := len(intPart)
+	if digits == 0 {
+		// |mantissa| < 1: the first significant digit sits somewhere after the point, so the integer
+		// part is empty and only a positive exponent can lift the value above 1.
+		digits = 0
+	}
+	exp := 0
+	if hasExp {
+		v, err := strconv.Atoi(strings.TrimPrefix(expPart, "+"))
+		if err != nil {
+			// An exponent too long for an int is enormous in either direction: enormous-positive
+			// would have failed ParseFloat before this point, enormous-negative underflows to zero.
+			// Either way the exact check cannot fire, so report "not worth checking".
+			return 0, true
+		}
+		exp = v
+	}
+	return digits + exp, true
 }
 
 func jcsNumberFloat(f float64) (string, error) {

@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"kton.dev/plankton/core"
 	"kton.dev/kton/sigstore"
+	"kton.dev/plankton/core"
 )
 
 func TestRekorLiveAnchor(t *testing.T) {

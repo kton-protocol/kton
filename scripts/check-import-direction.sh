@@ -5,8 +5,10 @@
 #   nekton -> plankton              (commitments about reproducible results)
 #   plankton -> (nothing)           (the clean kernel)
 #
-# and the WASM-cleanliness invariant: neither KERNEL may import net/http (ports/network live
-# only in the kton cockpit). Fails the build if any edge points the wrong way.
+# and the invariant that THE KERNELS OPEN NO SOCKET: neither may import net/http, bare net, or
+# crypto/tls. Reaching an address is a transport and belongs to a cockpit; a hash says WHAT, an
+# address says WHERE, and the kernels work from hashes (#104). This is also what keeps them
+# WASM-compilable. Fails the build if any edge points the wrong way.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fail=0
@@ -29,9 +31,29 @@ check "plankton kernel imports no nekton (direction nekton -> plankton)" 'kton.d
 check "plankton kernel imports no kton (nothing depends on the cockpit)"  'kton.dev/kton'   "$ROOT/reference"
 check "nekton kernel imports no kton (nothing depends on the cockpit)"    'kton.dev/kton'   "$ROOT/nekton/reference"
 
-# WASM cleanliness - kernels open no ports. (Match the import path only, not prose comments.)
-check 'plankton kernel imports no net/http (WASM-clean, no ports)' '"net/http"' "$ROOT/reference"
-check 'nekton kernel imports no net/http (WASM-clean, no ports)'   '"net/http"' "$ROOT/nekton/reference"
+# The kernels open no socket. net/http alone was not enough: bare `net` dials one directly and
+# crypto/tls wraps one, so a kernel could have grown a network dependency with this guard green.
+# (Match the import path only, not prose comments.)
+for mod in reference nekton/reference; do
+  for pkg in '"net/http"' '"net"' '"crypto/tls"' '"net/url"'; do
+    check "${mod} imports no ${pkg} (the kernels open no socket, and stay WASM-clean)" "$pkg" "$ROOT/$mod"
+  done
+done
+
+# The cockpit MAY reach an address - that is what it is for - but each file that does is named here,
+# so growing the network surface is a deliberate act visible in a diff rather than a side effect.
+expected_net='cmd/kton/fetch.go sigstore/rekor.go'
+actual_net="$(cd "$ROOT/kton/reference" && grep -rln --include='*.go' -e '"net/http"' -e '"crypto/tls"' . \
+  | sed 's|^\./||' | grep -v '_test\.go$' | sort | tr '\n' ' ' | sed 's/ $//')"
+if [[ "$actual_net" == "$expected_net" ]]; then
+  echo "ok: kton reaches the network from exactly the files on record ($expected_net)"
+else
+  echo "FAIL: the cockpit's network surface changed" >&2
+  echo "  on record: $expected_net" >&2
+  echo "  actual:    $actual_net" >&2
+  echo "  If this is intended, update expected_net in $0 in the same commit." >&2
+  fail=1
+fi
 
 # "documents, never executes" - no kernel (or cockpit) may spawn a process. Executors are
 # separate programs; plankton/nekton/kton only hash, canonicalize, verify, compare, index, serve.

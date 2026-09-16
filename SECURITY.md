@@ -29,6 +29,24 @@ Out of scope: anything requiring code the substrate never runs (it does not exec
 normalisers, or candidate tools - that is an executor's concern), and denial-of-service from
 maliciously large inputs to the cockpit.
 
+## Known open issues
+
+Stated here rather than left for a reporter to rediscover. Both come from external review.
+
+- **A claim can lose a signature when one statement arrives in two serializations.** Same canonical
+  claim id, different literal signed bytes; the second arrival is misread as a duplicate and its
+  signature is dropped, order-dependently. Loss of signing evidence, not forgery. Details and the
+  reproduction are in `CHANGELOG.md` under 0.2.0.
+
+- **Private key files are not protected by their mode on every platform.** `keygen` asks for `0600`;
+  Windows maps a Go file mode to little more than a read-only attribute, so the key lands `0666`, and
+  FAT/exFAT and some network mounts behave similarly. `WriteKeyFile` now **verifies** the mode after
+  writing instead of assuming it, and `keygen` prints a warning naming the mode it actually got — but
+  the underlying fact stands: on those platforms, file permissions are not what keeps a private key
+  from other users of the machine. Restrict access by other means, or generate keys elsewhere.
+  Implementing Windows ACLs would need `golang.org/x/sys`, and the kernels carry no third-party
+  dependencies.
+
 ## Supported versions
 
 Until a stable release, only the latest tag (currently the `v0.1.x` line) receives security fixes.

@@ -149,7 +149,16 @@ func nanopubQuads(c *trigCtx, st *claim.Statement, body map[string]any, env core
 		add(ASSERT, P["nk"]+"signerVerified", litT("true", P["xsd"]+"boolean"), PROV)
 	} else {
 		add(ASSERT, P["nk"]+"claimedSigner", iriT(agent), PROV)
-		add(ASSERT, P["nk"]+"signerVerified", litT("false", P["xsd"]+"boolean"), PROV)
+		// NO nk:signerVerified false when nobody was ASKED. `false` conflates "a trusted key was
+		// supplied and did not verify" with "no trusted key was supplied", and this goes into
+		// published, permanent RDF. Absence is the honest form: the attribution is already downgraded
+		// to nk:claimedSigner, which is the part a gate reads. Asserting a verdict nobody established
+		// is what SPEC §8.1's read-path boundary forbids.
+		//
+		// The predicate keeps its meaning where it IS asserted, so no published graph is reinterpreted.
+		if len(c.trustKeys) > 0 {
+			add(ASSERT, P["nk"]+"signerVerified", litT("false", P["xsd"]+"boolean"), PROV)
+		}
 	}
 	if when != "" {
 		add(ASSERT, P["prov"]+"generatedAtTime", litT(when, P["xsd"]+"dateTime"), PROV)
@@ -310,9 +319,25 @@ func trustyURI(canon []byte) string {
 	return "RA" + base64.RawURLEncoding.EncodeToString(h[:])
 }
 
+// loadOrGenRSA reuses the key at path, or generates one and SAVES it there. When path is empty the
+// key is deliberately ephemeral.
+//
+// Two failures used to be silent, and both cost the caller the identity they asked for:
+//
+//   - ANY read error was treated as "no key here" and fell through to generating a new one. A
+//     permission problem, or a directory in the way, therefore produced a different identity on
+//     every run instead of an error.
+//   - The save's error was discarded with `_ =`. With `--rsa /nonexistent-dir/identity.pem` the
+//     command generated a key, published, exited 0, and printed "saved it to …" - and the file did
+//     not exist. The next run generated a different identity again.
+//
+// A signature over an unsaved key still verifies against its embedded public key, so nothing
+// published was wrong. What was wrong was the claim that the key had been kept.
 func loadOrGenRSA(path string) (*rsa.PrivateKey, bool, error) {
 	if path != "" {
-		if b, err := os.ReadFile(path); err == nil {
+		b, err := os.ReadFile(path)
+		switch {
+		case err == nil:
 			blk, _ := pem.Decode(b)
 			if blk == nil {
 				return nil, false, fmt.Errorf("no PEM block in %s", path)
@@ -325,6 +350,11 @@ func loadOrGenRSA(path string) (*rsa.PrivateKey, bool, error) {
 			}
 			rk, e := x509.ParsePKCS1PrivateKey(blk.Bytes)
 			return rk, false, e
+		case !os.IsNotExist(err):
+			// An unreadable key is NOT an absent key: refuse rather than quietly mint a new
+			// identity in place of the one that was requested.
+			return nil, false, fmt.Errorf("cannot read the RSA key at %s (refusing to generate a "+
+				"different identity in its place): %w", path, err)
 		}
 	}
 	k, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -332,8 +362,15 @@ func loadOrGenRSA(path string) (*rsa.PrivateKey, bool, error) {
 		return nil, false, err
 	}
 	if path != "" {
-		der, _ := x509.MarshalPKCS8PrivateKey(k)
-		_ = os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600)
+		der, err := x509.MarshalPKCS8PrivateKey(k)
+		if err != nil {
+			return nil, false, err
+		}
+		pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+		if _, err := core.WriteKeyFile(path, pemBytes, 0o600, false); err != nil {
+			return nil, false, fmt.Errorf("generated an RSA key but could not save it to %s, so the "+
+				"identity you asked to keep would have been lost: %w", path, err)
+		}
 	}
 	return k, true, nil
 }
@@ -366,11 +403,23 @@ func nanopublish(args []string) error {
 		}
 	}
 	if in == "" {
-		return fmt.Errorf("usage: nekton nanopublish <claim.dsse.json|sha256:id> [--rsa key.pem] [--creator IRI] [-o out.trig]")
+		return fmt.Errorf("usage: nekton nanopublish <claim.dsse.json|sha256:id> [--rsa key.pem] " +
+			"[--creator IRI] [--trust-keys <dir>] [-o out.trig]\n" +
+			"  --trust-keys decides what the PUBLISHED RDF asserts about the signer: with a key that\n" +
+			"  verifies, prov:wasAttributedTo; without it, only nk:claimedSigner. A nanopublication is\n" +
+			"  permanent, so this is not a display option.")
 	}
-	env, err := readEnvelopeOrID(in)
+	env, deferredScope, _, err := readEnvelopeOrID(in)
 	if err != nil {
 		return err
+	}
+	if deferredScope != "" {
+		// Not a refusal: an unresolved predecessor makes a claim INCOMPLETE here, not invalid
+		// (SPEC §11), and the claim itself is genuine and signed. But a projection published from
+		// this store asserts it, and the publisher should know the chain it belongs to does not
+		// resolve locally - a reader who fetches the scope will find a gap.
+		fmt.Fprintf(os.Stderr, "note: this claim is DEFERRED here - its prev/seed for scope %s has not "+
+			"arrived, so its chain does not resolve in this store.\n", deferredScope)
 	}
 	st, payload, err := claim.ParseEnvelope(env)
 	if err != nil {
@@ -381,7 +430,11 @@ func nanopublish(args []string) error {
 		return err
 	}
 	id := strings.TrimPrefix(claim.ClaimID(payload), "sha256:")
-	c := newTrigCtx(loadAliases(aliasesPath))
+	ts, terr := mustTemplateSet(aliasesPath)
+	if terr != nil {
+		return terr
+	}
+	c := newTrigCtx(ts)
 	if trustDir != "" {
 		ks, err := loadTrustKeys(trustDir)
 		if err != nil {

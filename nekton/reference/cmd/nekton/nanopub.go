@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"kton.dev/nekton/claim"
+	"kton.dev/nekton/template"
 	"kton.dev/plankton/core"
 )
 
@@ -67,16 +68,16 @@ type trigCtx struct {
 	prefixes  map[string]string // prefix -> IRI namespace
 	revExp    []struct{ pfx, ns string }
 	fieldNS   string // default namespace for unresolved object-field keys
-	al        aliasFile
+	al        template.Set
 	trustKeys []ed25519.PublicKey // verifier's trusted keys; attribution is derived from these, not the claimed keyid
 }
 
-func newTrigCtx(al aliasFile) *trigCtx {
+func newTrigCtx(al template.Set) *trigCtx {
 	pfx := map[string]string{}
 	for k, v := range defaultPrefixes {
 		pfx[k] = v
 	}
-	for k, v := range al.Prefixes {
+	for k, v := range al.Prefixes() {
 		pfx[k] = v
 	}
 	c := &trigCtx{prefixes: pfx, fieldNS: pfx["lab"], al: al}
@@ -143,7 +144,7 @@ func (c *trigCtx) curie(iri string) string {
 // fieldIRI resolves an object-field key (e.g. "outcome") to a term IRI, via the aliases if it is a
 // known term/CURIE, else minting it in the default lab namespace.
 func (c *trigCtx) fieldIRI(key string) string {
-	if r := c.al.resolve(key); strings.Contains(r, "://") {
+	if r := c.al.Resolve(key); strings.Contains(r, "://") {
 		return c.curie(r)
 	}
 	return c.curie(c.fieldNS + key)
@@ -203,9 +204,17 @@ func exportNanopub(args []string) error {
 	if in == "" {
 		return fmt.Errorf("usage: nekton export --nanopub <claim.dsse.json|sha256:id> [-o out.trig] [--aliases file]")
 	}
-	env, err := readEnvelopeOrID(in)
+	env, deferredScope, _, err := readEnvelopeOrID(in)
 	if err != nil {
 		return err
+	}
+	if deferredScope != "" {
+		// Not a refusal: an unresolved predecessor makes a claim INCOMPLETE here, not invalid
+		// (SPEC §11), and the claim itself is genuine and signed. But a projection published from
+		// this store asserts it, and the publisher should know the chain it belongs to does not
+		// resolve locally - a reader who fetches the scope will find a gap.
+		fmt.Fprintf(os.Stderr, "note: this claim is DEFERRED here - its prev/seed for scope %s has not "+
+			"arrived, so its chain does not resolve in this store.\n", deferredScope)
 	}
 	st, payload, err := claim.ParseEnvelope(env)
 	if err != nil {
@@ -216,7 +225,11 @@ func exportNanopub(args []string) error {
 		return err
 	}
 	id := strings.TrimPrefix(claim.ClaimID(payload), "sha256:")
-	c := newTrigCtx(loadAliases(aliasesPath))
+	ts, terr := mustTemplateSet(aliasesPath)
+	if terr != nil {
+		return terr
+	}
+	c := newTrigCtx(ts)
 	if trustDir != "" {
 		ks, err := loadTrustKeys(trustDir)
 		if err != nil {
@@ -338,7 +351,17 @@ func renderTrig(c *trigCtx, st *claim.Statement, body map[string]any, env core.E
 	} else {
 		// no trusted key verified this signature: carry the CLAIMED signer, but do not assert it as
 		// established attribution (a consumer/gate that trusts prov:wasAttributedTo must not see it here).
-		fmt.Fprintf(&b, "\n    nk:claimedSigner %s ;\n    nk:signerVerified false", agent)
+		fmt.Fprintf(&b, "\n    nk:claimedSigner %s", agent)
+		// NO nk:signerVerified false when nobody was ASKED. `false` conflates "a trusted key was
+		// supplied and did not verify" with "no trusted key was supplied", and this goes into
+		// published, permanent RDF. Absence is the honest form: the attribution is already downgraded
+		// to nk:claimedSigner, which is the part a gate reads. Asserting a verdict nobody established
+		// is what SPEC §8.1's read-path boundary forbids.
+		//
+		// The predicate keeps its meaning where it IS asserted, so no published graph is reinterpreted.
+		if len(c.trustKeys) > 0 {
+			fmt.Fprint(&b, " ;\n    nk:signerVerified false")
+		}
 	}
 	if when != "" {
 		fmt.Fprintf(&b, " ;\n    prov:generatedAtTime %s^^xsd:dateTime", quote(when))

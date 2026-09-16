@@ -1,0 +1,155 @@
+package main
+
+// material.go is the CLI face of SPEC §8.1 for plankton: attach external evidence to a foton, and
+// read back what is attached. Mirrors `nekton attach` / `nekton material` deliberately - a flag
+// that behaves differently on the two kernels would be its own trap.
+
+import (
+	"encoding/base64"
+	"fmt"
+	"os"
+	"strings"
+
+	"kton.dev/plankton/core"
+	"kton.dev/plankton/registry"
+)
+
+// schemeHint maps the tokens SPEC §8.1 lists to their usual media type. An UNKNOWN scheme is fine
+// and needs --media: refusing unknown evidence would make this list a protocol version.
+var schemeHint = map[string]string{
+	"sigstore-bundle": "application/vnd.dev.sigstore.bundle.v1+json",
+	"rekor-entry":     "application/json",
+	"rfc3161":         "application/timestamp-reply",
+	"cms-detached":    "application/pkcs7-signature",
+	"jades":           "application/jose+json",
+	"pgp-detached":    "application/pgp-signature",
+}
+
+func attachMaterial(args []string) error {
+	var subject, scheme, media, file string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--scheme":
+			i++
+			scheme = arg(args, i)
+		case "--media":
+			i++
+			media = arg(args, i)
+		case "--file":
+			i++
+			file = arg(args, i)
+		default:
+			// Any dash prefix. `-x` used to be reported as a second SUBJECT ("attach takes one
+			// subject, got <a> and -x"), which sends a reader looking for a subject they did not
+			// pass instead of at the flag they misspelled.
+			if strings.HasPrefix(args[i], "-") {
+				return fmt.Errorf("unknown flag %q - `plankton attach` takes --scheme, --file and --media", args[i])
+			}
+			if subject != "" {
+				return fmt.Errorf("attach takes one subject, got %q and %q - material binds to one "+
+					"record's content address", subject, args[i])
+			}
+			subject = args[i]
+		}
+	}
+	if subject == "" || scheme == "" || file == "" {
+		return fmt.Errorf("usage: plankton attach <sha256:fotonId> --scheme <s> --file <evidence> [--media <type>]\n" +
+			"  schemes (SPEC §8.1; the list is open, an unknown one needs --media):\n" +
+			"    sigstore-bundle  rekor-entry  rfc3161  cms-detached  jades  pgp-detached")
+	}
+	if media == "" {
+		hint, ok := schemeHint[scheme]
+		if !ok {
+			return fmt.Errorf("scheme %q is not one of the listed tokens - pass --media <type> so a reader knows how to read the evidence", scheme)
+		}
+		media = hint
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	if n, ok := core.NormalizeContentHash(subject); ok {
+		subject = n
+	}
+	r, err := registry.Open(dir())
+	if err != nil {
+		return err
+	}
+	if err := r.AttachMaterial(registry.VerificationMaterial{
+		Subject: subject, Scheme: scheme, MediaType: media,
+		Material: base64.StdEncoding.EncodeToString(b),
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("attached %s (%d bytes, %s) to %s\n", scheme, len(b), media, subject)
+	fmt.Fprintln(os.Stderr, "note: stored, NOT verified - the kernel never evaluates verification material (SPEC §8.1); a consumer decides which issuers count")
+	return nil
+}
+
+func listMaterial(args []string) error {
+	asJSON := false
+	subject := ""
+	for _, a := range args {
+		switch {
+		case a == "--json":
+			asJSON = true
+		case strings.HasPrefix(a, "-"):
+			return fmt.Errorf("unknown flag %q - `plankton material` takes --json", a)
+		default:
+			// One record id. Last-wins answered about the second, which for a "does this record
+			// carry evidence" question is another record's answer presented as this one's. The
+			// nekton twin refuses it (#178); this side was missed in that same fix.
+			if subject != "" {
+				return fmt.Errorf("`plankton material` takes ONE record id, got %q and %q", subject, a)
+			}
+			subject = a
+		}
+	}
+	if subject == "" {
+		return fmt.Errorf("usage: plankton material <sha256:fotonId> [--json]")
+	}
+	// SPEC §12: "An unrecognised or absent query parameter MUST be an error, never an empty result:
+	// an empty answer to a malformed question is a successful wrong answer." `material` asks about a
+	// RECORD, so its argument is a content address and nothing else - and `material -x` answered
+	// "(none) - no verification material attached to -x" and exited 0. A caller checking whether a
+	// record carries evidence reads that as "checked, none there", which is a different fact from
+	// "that is not a record id". The same rule already refused a bare word in `about`.
+	norm, ok := core.NormalizeContentHash(subject)
+	if !ok {
+		return fmt.Errorf("%q is not a foton id - material attaches to a record, so this takes a "+
+			"content address (\"sha256:<64 hex>\"). Answering \"no material\" would report a fact "+
+			"about a record that does not exist (SPEC §12)", subject)
+	}
+	subject = norm
+	r, err := registry.Open(dir())
+	if err != nil {
+		return err
+	}
+	mats := r.Material(subject)
+
+	if asJSON {
+		out := make([]map[string]any, 0, len(mats))
+		for _, m := range mats {
+			// Exactly the four fields SPEC §8.1 defines, and no fifth. This used to emit
+			// `"verified": false` - a constant, so it carried no information, and a verification
+			// verdict is precisely what §8.1 forbids the kernel to have ("The kernel MUST NOT
+			// interpret or verify `material`"). A consumer reads `false` as CHECKED AND FAILED,
+			// not as NOBODY LOOKED. Bytes go out as stored; judging them is the consumer's job.
+			out = append(out, map[string]any{
+				"subject": m.Subject, "scheme": m.Scheme,
+				"mediaType": m.MediaType, "material": m.Material,
+			})
+		}
+		return printJSON(map[string]any{"subject": subject, "material": out})
+	}
+	if len(mats) == 0 {
+		fmt.Printf("(none) - no verification material attached to %s\n", subject)
+		return nil
+	}
+	for _, m := range mats {
+		raw, _ := base64.StdEncoding.DecodeString(m.Material)
+		fmt.Printf("%-16s %-46s %d bytes\n", m.Scheme, m.MediaType, len(raw))
+	}
+	fmt.Fprintln(os.Stderr, "note: listed, NOT verified - evaluating this evidence is a consumer's job, not the kernel's (SPEC §8.1)")
+	return nil
+}

@@ -16,77 +16,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
+	"kton.dev/nekton/template"
 	"kton.dev/plankton/core"
 )
-
-// aliasFile is the federated CURIE/term/template sugar (kton.dev/aliases/v0). All three maps
-// are optional; an absent file just means "no sugar" (bare IRIs still work).
-type aliasFile struct {
-	Prefixes  map[string]string `json:"prefixes"`
-	Terms     map[string]string `json:"terms"`
-	Templates map[string]string `json:"templates"` // short name -> template name (this is the template alias)
-}
-
-// fieldDef is one typed slot in a template.
-type fieldDef struct {
-	Type      string   `json:"type"`      // string | enum | date | ref | file
-	Role      string   `json:"role"`      // object (default) | evidence
-	Required  bool     `json:"required"`  //
-	MediaType string   `json:"mediaType"` // for file fields
-	Values    []string `json:"values"`    // enum options (advisory; shown by `templates --show`)
-}
-
-// tmpl is a template: a predicate + optional context + typed fields, over opaque IRIs.
-type tmpl struct {
-	Name      string              `json:"name"`
-	Target    string              `json:"target"` // file | foton | either (advisory)
-	Predicate string              `json:"predicate"`
-	Context   string              `json:"context"`
-	Fields    map[string]fieldDef `json:"fields"`
-}
-
-func loadAliases(path string) aliasFile {
-	var a aliasFile
-	if b, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(b, &a)
-	}
-	return a
-}
-
-// resolve turns a term / CURIE / IRI into a full IRI. A value containing "://" is already an
-// IRI; a bare term resolves via `terms`; a `prefix:local` CURIE expands via `prefixes`.
-func (a aliasFile) resolve(x string) string {
-	if strings.Contains(x, "://") {
-		return x
-	}
-	if v, ok := a.Terms[x]; ok {
-		x = v
-	}
-	if i := strings.IndexByte(x, ':'); i >= 0 {
-		if pfx, ok := a.Prefixes[x[:i]]; ok {
-			return pfx + x[i+1:]
-		}
-	}
-	return x
-}
-
-// resolveTemplate maps a template alias (short name) to its template name; a name that is not an
-// alias is returned unchanged.
-func (a aliasFile) resolveTemplate(name string) string {
-	if v, ok := a.Templates[name]; ok {
-		return v
-	}
-	return name
-}
-
-func templatePath(dir, name string) string {
-	return filepath.Join(dir, strings.ReplaceAll(name, "/", "-")+".json")
-}
 
 // looksLikeBrokenHash reports a value that is clearly a MANGLED content hash: it mentions "sha256" but is
 // neither a clean sha256:<64-hex> nor a proper URI (scheme://…). Catches a bare "sha256" (no digest), a
@@ -119,16 +54,69 @@ func isFullSha256(s string) bool {
 // IRI unchanged. (cold-session finding: `by predicate working-on` silently returned (none) because only
 // the full URI matched, while `annotate --template` resolved the alias - an inconsistency that breaks
 // coordination, since an empty result reads as "no one is working this step".)
-func resolvePredicateArg(x string) string {
-	aliases := loadAliases(envOr("NEKTON_ALIASES", "./aliases.json"))
-	name := aliases.resolveTemplate(x)
-	if b, err := os.ReadFile(templatePath(envOr("NEKTON_TEMPLATES", "./templates"), name)); err == nil {
-		var t tmpl
-		if json.Unmarshal(b, &t) == nil && t.Predicate != "" {
-			return aliases.resolve(t.Predicate)
+func resolvePredicateArg(x string) (string, error) {
+	aliasesPath := envOr("NEKTON_ALIASES", "./aliases.json")
+	tset, err := template.Load(envOr("NEKTON_TEMPLATES", "./templates"), aliasesPath)
+	if err != nil {
+		// No template DIRECTORY is not the same as no ALIASES. Returning the raw argument here meant
+		// that `nekton by predicate qa:reviewed` answered "(none)" whenever ./templates happened not
+		// to exist - for a record the store held, and with the alias file sitting right there. That
+		// is precisely the silent-empty-answer this function's comment above says it exists to
+		// prevent. Aliases resolve on their own.
+		tset, err = template.LoadAliases(aliasesPath)
+		if err != nil {
+			// A MALFORMED alias file is fatal here too, and for the same reason it is in
+			// mustTemplateSet: with no aliases nothing resolves, so `by predicate qa:reviewed`
+			// answered `{"records":[]}` and exit 0 for a record the store holds. That is a silent
+			// wrong answer to a well-formed question - the thing this function's comment above says
+			// it exists to prevent - and it was left reachable when the missing-DIRECTORY case was
+			// fixed one function over. An absent alias file is still fine: LoadAliases returns an
+			// empty set for it, and a bare CURIE then fails the full-IRI check downstream.
+			return "", fmt.Errorf("alias file %s: %w\n"+
+				"  Without it %q cannot be resolved to the IRI claims are stored under, and the query\n"+
+				"  would answer \"none\" for records this store holds", aliasesPath, err, x)
 		}
 	}
-	return aliases.resolve(x)
+	if t, ok := tset.Get(x); ok && t.Predicate != "" {
+		return tset.Resolve(t.Predicate), nil
+	}
+	return tset.Resolve(x), nil
+}
+
+// mustTemplateSet is the resolver the RDF projections need. They only ever RESOLVE a CURIE, so a
+// template DIRECTORY that cannot be read is not fatal here: the result is "no sugar" for templates.
+// A malformed ALIAS file is a different matter and IS fatal - see below.
+func mustTemplateSet(aliasesPath string) (template.Set, error) {
+	tset, err := template.Load(envOr("NEKTON_TEMPLATES", "./templates"), aliasesPath)
+	if err == nil {
+		return tset, nil
+	}
+	// Fall back to the ALIASES ALONE, not to nothing. `Load` fails when ./templates is absent, which
+	// is the normal case for the two callers of this function: `export --nanopub` and `nanopublish`
+	// have nothing to do with templates and take --aliases explicitly. Falling back to an empty Set
+	// dropped every prefix and term, and the same claim with the same alias file then published a
+	// DIFFERENT term IRI depending on whether an unrelated directory existed:
+	//
+	//     ./templates present:  nk:outcome           = https://kton.dev/v/outcome
+	//     ./templates absent:   <https://kton.dev/v/lab/outcome>
+	//
+	// into a signed nanopublication. A missing template directory must cost templates, not aliases.
+	s, aerr := template.LoadAliases(aliasesPath)
+	if aerr != nil {
+		// A MALFORMED alias file stays FATAL, and the final `template.New(nil, nil)` fallback that
+		// used to sit here is why it had stopped being so. With no aliases every CURIE resolves to
+		// itself, so `qa:reviewed` went out as <qa:reviewed> - a bare term emitted as an IRI - and
+		// `nanopublish` minted a permanent Trusty URI over that graph and exited 0.
+		//
+		// That is the exact harm LoadAliases' own doc calls out, reached silently in published,
+		// signed RDF. An ABSENT alias file is still fine (LoadAliases returns an empty set for it);
+		// what cannot be tolerated is a file that was meant to define meanings and does not parse.
+		return template.Set{}, fmt.Errorf("alias file %s: %w\n"+
+			"  Without it every CURIE resolves to itself, so a bare term like `qa:reviewed` would be\n"+
+			"  emitted as an IRI into RDF that is published and permanent. Fix the file, or pass a\n"+
+			"  different --aliases; an ABSENT one is fine and simply means no sugar", aliasesPath, aerr)
+	}
+	return s, nil
 }
 
 func envOr(key, def string) string {
@@ -140,8 +128,8 @@ func envOr(key, def string) string {
 
 // annotate parses the CLI, resolves the template + aliases, builds a claimSpec, and signs it.
 func annotate(args []string) error {
-	var subject, foton, tmplName, out, by, keyPath, scope, prev, regDir string
-	addFlag := false
+	var subject, foton, tmplName, out, by, keyPath, scope, prev, regDir, when string
+	addFlag, printID := false, false
 	tdir := envOr("NEKTON_TEMPLATES", "./templates")
 	aliasesPath := envOr("NEKTON_ALIASES", "./aliases.json")
 	set := map[string]string{}
@@ -149,6 +137,8 @@ func annotate(args []string) error {
 		switch args[i] {
 		case "--add":
 			addFlag = true
+		case "--print-id":
+			printID = true
 		case "--registry":
 			i++
 			regDir = arg(args, i)
@@ -161,6 +151,9 @@ func annotate(args []string) error {
 		case "--prev":
 			i++
 			prev = arg(args, i)
+		case "--when":
+			i++
+			when = arg(args, i)
 		case "--template":
 			i++
 			tmplName = arg(args, i)
@@ -188,8 +181,20 @@ func annotate(args []string) error {
 			i++
 			out = arg(args, i)
 		default:
-			if strings.HasPrefix(args[i], "--") {
-				return fmt.Errorf("unknown flag %q", args[i])
+			// Any dash prefix, not just "--": `-x` fell through here and became the SUBJECT.
+			if strings.HasPrefix(args[i], "-") {
+				return fmt.Errorf("unknown flag %q - `nekton annotate` takes flags --template, --set, "+
+					"--foton, --sign, --by, --when, --scope, --prev, --templates-dir, --aliases, "+
+					"--registry, --add, --print-id and -o", args[i])
+			}
+			// LAST-WINS on a SUBJECT. `annotate <a> <b> --template t` signed a claim about <b> and
+			// said nothing. The argument for refusing this on `seed` was that a scope name is
+			// identity; a claim's subject is what the claim is ABOUT, it is covered by the claim id,
+			// and it is signed. It is not the smaller case.
+			if subject != "" {
+				return fmt.Errorf("`nekton annotate` takes ONE subject, got %q and %q - the subject is "+
+					"what the claim is about and is covered by its id, so the wrong one signs a claim "+
+					"about something else", subject, args[i])
 			}
 			subject = args[i]
 		}
@@ -198,15 +203,16 @@ func annotate(args []string) error {
 		return fmt.Errorf("usage: nekton annotate <subject|--foton FILE> --template <name|alias> --set k=v ... [--sign key.key] [--by ID] [-o out]")
 	}
 
-	aliases := loadAliases(aliasesPath)
-	tmplName = aliases.resolveTemplate(tmplName)
-	tb, err := os.ReadFile(templatePath(tdir, tmplName))
+	// The template set is the package's, so this command and a linked cockpit resolve, validate and
+	// shape a claim through one implementation.
+	tset, err := template.Load(tdir, aliasesPath)
 	if err != nil {
-		return fmt.Errorf("no template %q in %s (%v)", tmplName, tdir, err)
+		return err
 	}
-	var t tmpl
-	if err := json.Unmarshal(tb, &t); err != nil {
-		return fmt.Errorf("template %s: %w", tmplName, err)
+	reportSkipped(tset)
+	t, ok := tset.Get(tmplName)
+	if !ok {
+		return fmt.Errorf("no template %q in %s", tmplName, tdir)
 	}
 
 	// Subject: --foton resolves to the FOTON'S identity (matching plankton's foton id), so the
@@ -214,6 +220,15 @@ func annotate(args []string) error {
 	// (Cycle-1 finding: hashing the envelope FILE gave a third hash that joined to nothing.) If the
 	// file is not a foton envelope, fall back to hashing its bytes.
 	if foton != "" {
+		// Mutually exclusive with a positional subject. Two positionals are refused a few lines up
+		// because "the wrong one signs a claim about something else"; the same failure survived one
+		// flag over, with `--foton` overwriting a subject the caller had typed and nothing said so.
+		// The claim went out about the foton, exit 0.
+		if subject != "" {
+			return fmt.Errorf("both a subject (%q) and --foton %q were given - they name the same "+
+				"thing, and --foton used to win silently. Pass one: the positional for a hash or URI, "+
+				"--foton for an envelope whose foton id becomes the subject", subject, foton)
+		}
 		b, err := os.ReadFile(foton)
 		if err != nil {
 			// --foton takes a FILE (the foton envelope), so it can resolve the foton's id. A bare hash
@@ -265,50 +280,34 @@ func annotate(args []string) error {
 	if looksLikeBrokenHash(subject) {
 		return fmt.Errorf("subject %q is not a valid sha256:<64-hex> (nor a URI) - a mangled hash attaches the claim to nothing; paste the complete foton id", subject)
 	}
-	var subj subjSpec
-	if strings.HasPrefix(subject, "sha256:") {
-		subj = subjSpec{Hash: subject}
-	} else {
-		subj = subjSpec{URI: subject}
-	}
 
-	// Walk the template fields, consuming --set values into object{} and evidence[].
-	object := map[string]any{}
-	var evidence []any
-	for _, name := range sortedKeys(t.Fields) {
-		f := t.Fields[name]
-		val, ok := set[name]
-		if !ok || val == "" {
-			if f.Required {
-				return fmt.Errorf("missing required field: %s", name)
+	// The template fields are walked by the template package, which is where that logic now lives so
+	// a cockpit can link it instead of running this binary. Reading a `file` field's bytes stays HERE:
+	// this caller has a filesystem, and the package deliberately does not assume one.
+	values := map[string]string{}
+	files := map[string][]byte{}
+	for k, v := range set {
+		if f, known := t.Fields[k]; known && f.Type == "file" {
+			// An EMPTY value is "not supplied", not "read the file called empty string". A script
+			// passing an unset $REPORT to an OPTIONAL file field used to sign fine; without this it
+			// failed with `open : no such file or directory`, which names neither the variable nor
+			// the fact that the field was optional. A REQUIRED field still fails, one step later and
+			// with the template's own message, because Spec sees the field as absent.
+			if v == "" {
+				continue
 			}
+			b, rerr := os.ReadFile(v)
+			if rerr != nil {
+				return fmt.Errorf("file field %s: %w", k, rerr)
+			}
+			files[k] = b
 			continue
 		}
-		role := f.Role
-		if role == "" {
-			role = "object"
-		}
-		switch f.Type {
-		case "file":
-			b, err := os.ReadFile(val)
-			if err != nil {
-				return fmt.Errorf("file field %s: %w", name, err)
-			}
-			ref := map[string]any{"hash": core.HashBytes(b)}
-			if f.MediaType != "" {
-				ref["mediaType"] = f.MediaType
-			}
-			if role == "evidence" {
-				evidence = append(evidence, ref)
-			} else {
-				object[name] = ref["hash"]
-			}
-		default: // string | enum | date | ref
-			if f.Type == "ref" && looksLikeBrokenHash(val) {
-				return fmt.Errorf("field %s = %q is not a valid sha256:<64-hex> - a mangled hash links to no foton; paste the complete id", name, val)
-			}
-			object[name] = val
-		}
+		values[k] = v
+	}
+	tspec, err := tset.Spec(tmplName, subject, values, files)
+	if err != nil {
+		return err
 	}
 
 	priv, ephemeral, err := signingKey(keyPath)
@@ -319,54 +318,63 @@ func annotate(args []string) error {
 		by = "key:" + keyidHex(priv.Public().(ed25519.PublicKey))
 	}
 	if ephemeral {
-		fmt.Printf("annotate: signer    keyid=%s (ephemeral - unlinkable; use --sign for attribution)\n", keyidHex(priv.Public().(ed25519.PublicKey)))
+		humanOut(printID)("annotate: signer    keyid=%s (ephemeral - unlinkable; use --sign for attribution)\n", keyidHex(priv.Public().(ed25519.PublicKey)))
 	}
 
-	spec := claimSpec{
-		Subject:   []subjSpec{subj},
-		Predicate: aliases.resolve(t.Predicate),
-		By:        by,
-		When:      time.Now().UTC().Format(time.RFC3339),
-		Scope:     scope, // optional: place this claim in a (sub)nekton scope
-		Prev:      prev,  // the previous claim id in the scope (or the seed id for the first link)
+	stamp, err := whenOr(when)
+	if err != nil {
+		return err
 	}
-	if t.Context != "" {
-		spec.Context = aliases.resolve(t.Context)
-	}
+	// tspec carries what the TEMPLATE decided: subject, resolved predicate and context, object and
+	// evidence. What the command line decided - who signs, when, which scope - is added here.
+	spec := tspec
+	spec.By = by
+	spec.When = stamp
+	spec.Scope = scope // optional: place this claim in a (sub)nekton scope
+	spec.Prev = prev   // the previous claim id in the scope (or the seed id for the first link)
 	// ECHO the RESOLVED meaning before signing: the template + alias files are external, mutable, and
 	// unauthenticated, so a MITM'd NEKTON_ALIASES/NEKTON_TEMPLATES could change what this signature
 	// attests. Showing the resolved full-IRI predicate (and context) lets the signer catch a swapped
 	// meaning; buildPredicate then refuses to sign anything that is not a full IRI (template/alias-trust).
-	fmt.Fprintf(os.Stderr, "annotate: template=%s  predicate=%s", tmplName, spec.Predicate)
+	fmt.Fprintf(os.Stderr, "annotate: template=%s  predicate=%s", t.Name, spec.Predicate)
 	if spec.Context != "" {
 		fmt.Fprintf(os.Stderr, "  context=%s", spec.Context)
 	}
 	fmt.Fprintln(os.Stderr, "  (resolved via the alias file - confirm this is the meaning you intend)")
-	if len(object) > 0 {
-		spec.Object = object
-	}
-	if len(evidence) > 0 {
-		spec.Evidence = evidence
-	}
 	// default a filename ONLY when we are actually writing one (not for --add without -o)
 	if out == "" && !addFlag {
-		out = "claim." + strings.ReplaceAll(tmplName, "/", "-") + ".dsse.json"
+		// t.Name, not tmplName: resolution moved into tset.Get, so tmplName is still the ALIAS the
+		// caller typed. `--template rev` wrote claim.rev.dsse.json where it wrote
+		// claim.qa-review.dsse.json before. The stderr echo above already uses t.Name.
+		out = "claim." + strings.ReplaceAll(t.Name, "/", "-") + ".dsse.json"
 	}
 
-	fmt.Printf("annotate: template %s  predicate %s\n", tmplName, spec.Predicate)
+	msg := humanOut(printID)
+	msg("annotate: template %s  predicate %s\n", tmplName, spec.Predicate)
 	if spec.Context != "" {
-		fmt.Printf("annotate: context   %s\n", spec.Context)
+		msg("annotate: context   %s\n", spec.Context)
 	}
-	fmt.Printf("annotate: subject   %s\n", subject)
+	msg("annotate: subject   %s\n", subject)
 	if spec.Scope != "" {
-		fmt.Printf("annotate: scope     %s\n", spec.Scope)
+		msg("annotate: scope     %s\n", spec.Scope)
 		prevShown := spec.Prev
 		if prevShown == "" {
 			prevShown = "(none)"
 		}
-		fmt.Printf("annotate: prev      %s\n", prevShown)
+		msg("annotate: prev      %s\n", prevShown)
 	}
-	return signClaim(spec, priv, out, addFlag, regDir)
+	if err := signClaim(spec, priv, out, addFlag, regDir, printID); err != nil {
+		// The bare-term refusal (claim/spec.go) is right, but the case that actually triggers it is
+		// almost always a MISSING alias file: the template resolved through an empty alias map and
+		// came out as its own short name. The message describes the symptom and points at the
+		// template, so that is where people go looking - one reader nearly filed it as a kernel
+		// finding. The kernel deliberately does not know the path; the CLI does, so say it here.
+		if strings.Contains(err.Error(), "bare term with no vocabulary") {
+			return fmt.Errorf("%w\n(aliases resolved from %q - set NEKTON_ALIASES or --aliases if that is not your alias file)", err, aliasesPath)
+		}
+		return err
+	}
+	return nil
 }
 
 // listTemplates prints every template in the templates dir with its predicate and any aliases.
@@ -388,71 +396,86 @@ func listTemplates(args []string) error {
 			i++
 			showName = arg(args, i)
 		default:
-			if !strings.HasPrefix(args[i], "--") {
-				showName = args[i]
+			if strings.HasPrefix(args[i], "--") {
+				return fmt.Errorf("unknown flag %q", args[i])
 			}
+			// `templates` has NO subcommands. This used to take any positional as a template name and
+			// let the LAST one win, which produced three bad outcomes at once: `templates ls` reported
+			// `no template "ls"`, reading as a misspelled name rather than an unknown verb; the
+			// documented `templates show <name>` appeared to work only because <name> overwrote
+			// `show`, so any word would have done; and `templates HUHU <name>` behaved identically.
+			// Anyone spot-checking docs/cli.md against the binary therefore had it CONFIRMED (#46).
+			switch args[i] {
+			case "ls", "list", "show", "search", "pull", "push", "add", "rm", "remove":
+				return fmt.Errorf("`nekton templates` has no subcommand %q - it lists templates, or shows one with --show <name>.\n"+
+					"`nekton man` is the command surface this build actually has", args[i])
+			}
+			if showName != "" {
+				return fmt.Errorf("`nekton templates` takes at most one template name, got %q and %q", showName, args[i])
+			}
+			showName = args[i]
 		}
 	}
-	aliases := loadAliases(aliasesPath)
-	if showName != "" {
-		return showTemplate(tdir, aliases, showName)
-	}
-	// invert template aliases: template name -> [short names]
-	rev := map[string][]string{}
-	for short, full := range aliases.Templates {
-		rev[full] = append(rev[full], short)
-	}
-	entries, err := os.ReadDir(tdir)
+	// ONE reader of the template directory, the same the annotate path uses. Two readers would let
+	// `templates` list something `annotate` then refuses - a template with no predicate, say - and
+	// the difference would surface only when somebody tried to sign.
+	tset, err := template.Load(tdir, aliasesPath)
 	if err != nil {
-		return fmt.Errorf("no templates dir %s (%v)", tdir, err)
+		return err
 	}
-	found := 0
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+	reportSkipped(tset)
+	if showName != "" {
+		return showTemplate(tset, showName)
+	}
+	rev := tset.TemplateAliases()
+	names := tset.Names()
+	if len(names) == 0 {
+		fmt.Printf("(no templates in %s)\n", tdir)
+		return nil
+	}
+	for _, n := range names {
+		t, ok := tset.Get(n)
+		if !ok {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(tdir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var t tmpl
-		if json.Unmarshal(b, &t) != nil || t.Name == "" {
-			continue
-		}
-		found++
-		al := rev[t.Name]
-		sort.Strings(al)
 		aliasStr := ""
-		if len(al) > 0 {
+		if al := rev[t.Name]; len(al) > 0 {
 			aliasStr = "  (alias: " + strings.Join(al, ", ") + ")"
 		}
-		fmt.Printf("%-28s %s%s\n", t.Name, aliases.resolve(t.Predicate), aliasStr)
-	}
-	if found == 0 {
-		fmt.Printf("(no templates in %s)\n", tdir)
+		// A seed template has no predicate, and printing an empty column made it look like a broken
+		// entry rather than a different KIND of entry. Say what it produces instead.
+		what := tset.Resolve(t.Predicate)
+		if t.IsSeed() {
+			what = "(scope seed - no predicate; `nekton seed`, not `annotate`)"
+		}
+		fmt.Printf("%-28s %s%s\n", t.Name, what, aliasStr)
 	}
 	return nil
 }
 
 // showTemplate prints one template's predicate, context, and typed fields (name/type/required/role).
-func showTemplate(tdir string, aliases aliasFile, name string) error {
-	name = aliases.resolveTemplate(name)
-	b, err := os.ReadFile(templatePath(tdir, name))
-	if err != nil {
-		return fmt.Errorf("no template %q in %s", name, tdir)
-	}
-	var t tmpl
-	if err := json.Unmarshal(b, &t); err != nil {
-		return err
+func showTemplate(tset template.Set, name string) error {
+	t, ok := tset.Get(name)
+	if !ok {
+		return fmt.Errorf("no template %q", name)
 	}
 	fmt.Printf("template:  %s\n", t.Name)
-	fmt.Printf("predicate: %s\n", aliases.resolve(t.Predicate))
+	if t.IsSeed() {
+		// Not a claim. Saying so HERE is the point: the fields below look like claim fields, and a
+		// reader who takes them to `annotate` gets a refusal at signing time instead of an
+		// explanation at reading time.
+		fmt.Printf("produces:  a scope SEED (%s), not a claim - it opens a scope with\n", t.PredicateType)
+		fmt.Printf("           scope/parent/responsible/genesis and has no predicate (SPEC §7.4).\n")
+		fmt.Printf("           Build it with `nekton seed`.\n")
+	} else {
+		fmt.Printf("predicate: %s\n", tset.Resolve(t.Predicate))
+	}
 	if t.Context != "" {
-		fmt.Printf("context:   %s\n", aliases.resolve(t.Context))
+		fmt.Printf("context:   %s\n", tset.Resolve(t.Context))
 	}
 	fmt.Printf("subject:   %s\n", t.Target)
 	fmt.Printf("fields (use --set name=value):\n")
-	for _, fn := range sortedKeys(t.Fields) {
+	for _, fn := range sortedFieldNames(t.Fields) {
 		f := t.Fields[fn]
 		role := f.Role
 		if role == "" {
@@ -466,18 +489,25 @@ func showTemplate(tdir string, aliases aliasFile, name string) error {
 		if len(f.Values) > 0 {
 			enum = "  {" + strings.Join(f.Values, "|") + "}"
 		}
-		fmt.Printf("  %-12s %-8s %-9s role=%s%s\n", fn, f.Type, req, role, enum)
+		// `file` fields say so: the value is a PATH here, and the bytes are what gets hashed. A
+		// reader porting to the package hands bytes instead, and the package refuses a path - this
+		// line is where that difference is first visible.
+		note := ""
+		if f.Type == "file" {
+			note = "  (--set gives a PATH; its BYTES are hashed)"
+		}
+		fmt.Printf("  %-12s %-8s %-9s role=%s%s%s\n", fn, f.Type, req, role, enum, note)
 	}
 	return nil
 }
 
-func sortedKeys(m map[string]fieldDef) []string {
-	ks := make([]string, 0, len(m))
+func sortedFieldNames(m map[string]template.Field) []string {
+	out := make([]string, 0, len(m))
 	for k := range m {
-		ks = append(ks, k)
+		out = append(out, k)
 	}
-	sort.Strings(ks)
-	return ks
+	sort.Strings(out)
+	return out
 }
 
 func arg(args []string, i int) string {
@@ -485,4 +515,14 @@ func arg(args []string, i int) string {
 		return args[i]
 	}
 	return ""
+}
+
+// reportSkipped names template-directory files that are not templates. Silence here is what let an
+// alias file become a template called "aliases"; failing instead took the whole corpus down for one
+// stray file. Naming them on stderr is the answer that does neither.
+func reportSkipped(set template.Set) {
+	for _, f := range set.Skipped() {
+		fmt.Fprintf(os.Stderr, "note: skipping %q - it declares no fields, predicate or "+
+			"predicateType, so it is not a template.\n", f)
+	}
 }

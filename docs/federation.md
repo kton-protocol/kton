@@ -64,6 +64,19 @@ Because fotons/files/attestations are **immutable and content-addressed**:
   everywhere → no conflicts, CRDT-trivial; Merkle-style reconciliation to find diffs).
 - A **public instance** = open read; a **private instance** = authenticated read with
   access control. Federation is "ask the registries you're allowed to, union the answers."
+
+  That is a description of deployments, not of anything this repository ships. The reference
+  implementation has **no federation client and no server**: `kton serve` went in #83 and the HTTP
+  federation client went in #101. The kernels open **no socket at all**, inbound or outbound, and
+  `scripts/check-import-direction.sh` fails the build if that changes; the cockpit still makes
+  outbound requests, but only from two files on record (`kton fetch` dereferencing a locator, and
+  Rekor anchoring) - never to federate. What federates is `plankton mirror` / `nekton mirror`, which
+  overlay a peer registry **on the local filesystem** by hash: federation as a data operation, with
+  no transport in it at all. The §12 queries are
+  normative, the transport is not (SPEC Annex C), and a listening socket brings authentication,
+  transport security, rate limiting and request bounds with it — obligations that belong to whoever
+  deploys, not to a protocol reference. Serving the §12 table is a small amount of code in any
+  language, and `reference/testdata/federation/` fixes the bytes it has to produce.
 - Lazy as ever: you exchange *metadata*; bytes are fetched from uris on demand, verified by
   hash.
 

@@ -147,6 +147,7 @@ re-running everything:
 | Tier | What it proves | Needs |
 |---|---|---|
 | **record-authentic** | signature + id ([example 01](https://github.com/gitmick/kton-examples/tree/main/examples/01-hello-foton)) | the record only - always available |
+| **signer-accountable** | *whose* key that was - an OIDC identity, an organisation's X.509, a qualified certificate | attached verification material (SPEC §8.1) + a trust policy naming the issuers you accept |
 | **content-present** | the bytes hash to the recorded hash (fetch via a signed `dcat:downloadURL`, re-hash) | byte availability |
 | **reproduced** | re-run in a qualified environment ([examples 03/10](https://github.com/gitmick/kton-examples/tree/main/examples/10-tool-spectrum)) at L0/L1 | bytes + an executor |
 
@@ -156,6 +157,14 @@ re-running everything:
 > arrival (`sha256 == hash`), so a location is a hint, not an authority: bytes may come from any mirror,
 > including an untrusted one, and corruption is detected. What the system does not guarantee is that the
 > bytes still exist somewhere; that is a retention obligation, stated rather than assumed.
+
+> **Named boundary - accountability.** `record-authentic` proves a *key* signed. It does not say whose
+> key it was: a keyid is a hash of a public key, and a key with no bound identity is exactly as valid
+> as one held by a named person. Closing that gap needs evidence from outside the record - a Sigstore
+> bundle, an organisation's certificate chain, a qualified signature - which SPEC §8.1 gives a place to
+> live and a binding (the record's own content address), and which the **kernel never evaluates**. It
+> stores the evidence; a consumer decides which issuers count. That is the same split as trust policy,
+> for the same reason: whose word counts is not a property of the record.
 
 ## The three boundaries, together
 

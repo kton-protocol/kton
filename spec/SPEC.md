@@ -40,22 +40,35 @@ executes**.
 This specification defines:
 
 - the **canonicalization** and **content-addressing** rules by which record identity is computed
-  (Clause 5);
+  (Clause 5); <!-- scope:in canonicalization -->
 - the **plankton** result format - `FileRef`, `Foton`, action key, potentials, optional environment -
-  and its wire form (Clause 6);
+  and its wire form (Clause 6); <!-- scope:in plankton-format -->
 - the **nekton** attestation format - `Ref`, `TermRef`, `Claim`, and the scope/seed/chain grammar -
-  and its wire form (Clause 7);
-- the shared **signature and identity** model (Clause 8);
+  and its wire form (Clause 7); <!-- scope:in nekton-format -->
+- the shared **signature and identity** model (Clause 8), including where external verification
+  material - identity and time evidence produced by other schemes - attaches (Clause 8.1);
+  <!-- scope:in signing-model --> <!-- scope:in verification-material -->
 - **reproduction and normalization** semantics (Clause 9) and **tool/environment qualification**
-  (Clause 10);
+  (Clause 10); <!-- scope:in reproduction --> <!-- scope:in tool-qualification -->
 - **registry resolution** and the completeness/validity distinction (Clause 11), **federation and
   aggregation** (Clause 12), and **conformance** (Clause 15).
+  <!-- scope:in registry-resolution --> <!-- scope:in federation -->
 
 The following are **out of scope** (implementation choices; no patent commitment attaches):
-specific transports and hosting (git, GitHub, HTTP, object stores); specific signing backends
-(Sigstore, RSA/nanopublication, a particular transparency log); specific tools, executors, and
-cockpits; and the reference source code (licensed separately, Apache-2.0). See
-`../community-specification/02-scope.md`.
+specific transports and hosting (git, GitHub, HTTP, object stores) <!-- scope:out transports -->;
+specific signing backends (Sigstore, RSA/nanopublication, a particular transparency log, an eIDAS
+trust service) <!-- scope:out signing-backends --> and the evaluation of any evidence they produce
+<!-- scope:out evidence-evaluation -->; **document-rendered signature forms** such as signed PDFs,
+which sign a rendering rather than the record and are therefore projections (Clause 14, and 8.1)
+<!-- scope:out document-rendered -->; specific tools, executors, and cockpits
+<!-- scope:out tools-and-cockpits -->; and the reference source code (licensed separately,
+Apache-2.0) <!-- scope:out reference-code -->.
+
+The **patent** Scope of this Working Group - what the Community Specification License commits - is
+defined by `../Scope.md`, not by this clause. The two are deliberately
+kept in step and `scripts/check-scope-drift.sh` fails CI if they diverge, but they answer different
+questions: this clause says what *this document* specifies, that file says what the commitment
+covers.
 
 A conforming implementation MUST NOT require any particular cockpit, executor, transport, or hosting
 provider, and MUST NOT execute the protocols, normalizers, or tools that records describe.
@@ -83,7 +96,13 @@ provider, and MUST NOT execute the protocols, normalizers, or tools that records
 - **scope / seed** - the structural chain grammar for accountable claim ordering (Clause 7.4).
 - **spectrum** - the object that defines a tool or environment by a reference foton set (Clause 10).
 - **reproduction level** - L0 byte-identical / L1 canonical-identical / L2 within-tolerance (Clause 9).
+- **kernel** - an implementation of the record layer itself: canonicalization, identity, storage,
+  indexing, resolution and verification. Requirements addressed to "a conforming kernel" bind that
+  layer, whether it ships as a library or behind a command-line tool. A *cockpit* (a tool that
+  drives a kernel), an *executor* and an *aggregator* are not kernels.
 - **aggregator** - a discovery index over records; not a store and not a trust anchor (Clause 12).
+- **verification material** - external evidence *about* a record - who signed it, or that it existed
+  by a given time - bound to the record by its content address and opaque to the kernel (Clause 8.1).
 
 ## 4 Conventions
 
@@ -101,6 +120,12 @@ do so if the canonical byte form is exact.
 by the lowercase hex encoding of the 32-byte digest. Implementations SHOULD keep the algorithm
 identifier pluggable for future agility, but MUST emit and accept `sha256:` at 0.1.
 
+*The reference implementation does NOT follow that SHOULD: `HashBytes` calls `sha256.Sum256` directly
+and `NormalizeContentHash` hardcodes the seven-character prefix and the 64-character digest. That is a
+deliberate choice at 0.1 - a pluggable identifier with exactly one value is indirection without
+agility - and the cost of changing it later is a search for two literals. Stated so the gap is a
+decision rather than an oversight.*
+
 5.2 A **file's** content hash is computed over its uncompressed byte content.
 
 5.3 **Canonical JSON** is defined as **RFC 8785 (JSON Canonicalization Scheme, JCS)**. A conforming
@@ -111,11 +136,25 @@ testable (see the conformance tests in `../reference/core/canon_test.go`):
 
 - **Numbers** MUST be serialized by the ECMAScript Number-to-String algorithm (RFC 8785 §3.2.2.3):
   shortest round-tripping IEEE-754 double form, lowercase `e`, explicit `+` on positive exponents, no
-  trailing zeros - e.g. `4.50` → `4.5`, `1E30` → `1e+30`, `2e-3` → `0.002`, `1.0` → `1`. **A value that
-  needs more precision or range than an IEEE-754 double can hold - a high-precision measurement, a large
-  integer id, an exact decimal - MUST be carried as a JSON string, never a JSON number.** This is a
-  schema-design rule, called out where plankton/nekton fields are defined, not merely a serialization
-  rule.
+  trailing zeros - e.g. `4.50` → `4.5`, `2e-3` → `0.002`, `1.0` → `1`, `1e-27` → `1e-27`.
+- **Numbers are additionally RESTRICTED on input, beyond what RFC 8785 will serialize.** A number whose
+  value is an **integer with `|v| > 2^53`** MUST be REFUSED, in every spelling: `9007199254740993`,
+  `9007199254740993.0` and `1e30` alike. RFC 8785 defines a serialization for such values, and that is
+  the problem: `9007199254740993` and `9007199254740992` serialize to the *same* bytes, so two records
+  differing by one would share a content address. A canonicalizer for a content-addressed substrate
+  cannot accept an input whose identity it cannot keep distinct.
+
+  The restriction is on the **value**, never on the spelling. Enforcing it only for integer literals -
+  and letting the exponent and decimal forms of the same value through - is the defect this rule
+  replaces: it made acceptance depend on how a number was written, and it produced canonical output
+  the same canonicalizer then refused to parse. **`canon(canon(x)) == canon(x)` MUST hold for every
+  accepted input.**
+- **A value that needs more precision or range than an IEEE-754 double can hold** - a high-precision
+  measurement, a large integer id, an exact decimal - **MUST be carried as a JSON string, never a JSON
+  number.** This is a schema-design rule, called out where plankton/nekton fields are defined, not
+  merely a serialization rule; the input restriction above is what enforces it at the boundary. It is
+  called out again at each field that can carry a measurement: §6.1 (a `FileRef`'s carried `meta`) and
+  §7.2 (a claim's `object` Literal and its `evidence`).
 - **Strings** MUST be escaped per RFC 8785 §3.2.2.2: control characters below U+0020 use the five named
   short escapes (backspace, tab, line-feed, form-feed, carriage-return) or otherwise a **lowercase**
   four-hex-digit escape; above U+0020 only the double-quote and the backslash are escaped; every other
@@ -138,6 +177,13 @@ non-double-representable integers, but routes values through the platform JSON l
 **deterministically** replaces invalid UTF-8 with U+FFFD instead of erroring as strict I-JSON requires,
 and does not yet hard-reject lone surrogates. This affects only malformed input; well-formed records are
 fully JCS-conformant and the conformance vectors verify byte-for-byte.)*
+
+*The reference implementation cannot follow the SHOULD above: the kernels carry **zero third-party
+dependencies** - the property that keeps them auditable and WebAssembly-compilable - so its JCS is
+hand-rolled, 392 lines of it. What stands in for "tested" is the frozen conformance vectors of
+Clause 15, a fuzz target asserting `canon(canon(x)) == canon(x)` over machine-generated input, and the
+RFC 8785 example set. An implementation that CAN take a dependency should take one; this one weighs
+the two and chooses.*
 
 5.4 **Record identity** (foton id, claim id, `scope_id`, `protocol.ref`, action key) is `sha256(canon(
 …))` over the indicated value. **Identical content coincides**: two records whose canonical forms are
@@ -172,6 +218,11 @@ FileRef := {
 - Identity and integrity derive from `hash`. `uri`, `id`, `mediaType`, and `meta` are **carried, not
   covered**: they are location/description hints and MUST NOT affect any identity computation (foton id
   or action key). A consumer MUST verify fetched bytes against `hash` (5.6).
+- **`meta` carries descriptions, and a description can be a measurement.** Whenever a `meta` member
+  would hold a value needing more precision or range than an IEEE-754 double - an instrument reading,
+  an exact decimal, a large identifier - it MUST be a JSON string, never a JSON number (5.3). `meta`
+  is non-covered, so no identity protects it from a lossy round-trip; the string form is the only
+  thing that does.
 - **Wire transport at 0.1.** Of the carried fields, only `uri` is emitted onto the wire (6.6) and
   round-tripped by a conforming implementation at 0.1. `id`, `mediaType`, and `meta` are **reserved**:
   defined for forward compatibility but NOT yet emitted or parsed, and a conforming implementation MAY
@@ -234,6 +285,11 @@ How a foton was produced MAY be recorded, executor-agnostically, in two independ
 - **concrete env-data - CARRIED, not covered.** `EnvData := [{ kind, ref, locators? }]` (e.g.
   `oci`/`nix`/`renv`) records the exact stack for reconstruction. It MUST NOT affect any identity.
 
+  **RESERVED at 0.1**, like `meta` in §6.1: the shape is defined for forward compatibility but is NOT
+  emitted or parsed, and a conforming implementation MAY ignore it. The reference records a concrete
+  environment's bytes through a `FileRef`'s carried `uri` locators instead. Because env-data is
+  non-covered, adding it later will not move any identity.
+
 A concrete environment is bound to an env-spectrum by a nekton `qualifies-as` claim (7.2): mechanically
 the environment *fulfils* the spectrum (Clause 10); acceptance as qualified is a signed claim on top.
 
@@ -243,10 +299,16 @@ A foton travels as an in-toto Statement (`_type = "https://in-toto.io/Statement/
 `predicateType = "https://kton.dev/foton/v0"`:
 
 ```
-subject:            outputs            # [{ name, digest: {sha256} }]
-predicate.inputs:   [ {name, digest} ] # materials / dependencies
+subject:            outputs            # [{ name, digest: {sha256}, uri? }]
+predicate.inputs:   [ {name, digest, uri?} ]   # materials / dependencies
 predicate.protocol: { kind, ref, descriptor? }
+predicate.specVersion?:  string        # the spec revision this was authored under (§16)
 ```
+
+A `FileRef`'s `path` travels as `name` and its `hash` as `digest.sha256`. Of the CARRIED fields
+(§6.1) only `uri` is on the wire at 0.1, and it is a **list**; it appears on subjects and on inputs
+alike, and being non-covered it changes no identity. `id`, `mediaType` and `meta` are reserved and
+are not emitted. This listing is exhaustive: a field not named here is not part of the 0.1 wire form.
 
 The kernel records exactly **one** plankton predicate type - the foton. Signed statements *about*
 fotons are nekton claims (Clause 7). The mechanical L0/L1/L2 comparison of two results is itself a
@@ -290,6 +352,11 @@ Claim := {
   the authoritative identity is the **keyid** (§8). A consumer that trusts a named identity MUST check
   the keyid, not `by`; a reader SHOULD present the proven keyid at least as prominently as `by`.
 - `object` MAY be omitted (unary predicates such as `reviewed`), a `Ref`, or a `Literal`.
+- **A `Literal.value` that is a measurement MUST be a JSON string.** A claim's `object` is the one
+  place in nekton where a free-form quantity enters the record, and a claim id is `sha256(canon(Claim))`
+  - so a value that an IEEE-754 double cannot hold exactly would be signed in its rounded form and the
+  claim would attest to a number nobody measured. Carry it as a string with an explicit `datatype`
+  (5.3). The same applies to any quantity a `why` or an `evidence` Ref describes.
 - **Directional object-refs.** When `object` is a `Ref.hash`, the claim asserts a directional relation
   from `subject` to `object` (e.g. `reproduces`, `refines`, `qualifies-as`). The kernel stores the
   direction; it does not interpret the predicate.
@@ -301,14 +368,21 @@ A claim travels as an in-toto Statement with `predicateType = "https://kton.dev/
 by, when, why?, evidence?}`. A reviewer sign-off, a delegation, and a `sameAs` mapping are all this one
 shape with different `predicate` terms.
 
+A claim that belongs to a **scope** additionally carries the structural fields §7.4 mandates -
+`scope` and `prev` - in the same predicate; a **seed** carries `scope`, `genesis` and an optional
+`parent` instead. Those are not extra shapes but the same one with §7.4's fields present: the kernel
+reads them structurally and interprets none of them.
+
 ### 7.4 Scopes, seeds, and the chain - the one structural grammar
 
 This is the **only** grammar the kernel mandates. It concerns *structure* (identity, order, boundary,
 nesting), never meaning.
 
 - **Seed.** A seed is a signed Statement with `predicateType = "https://kton.dev/scope/v0"` and
-  predicate `{ scope, parent?, responsible: [Identity], genesis: true }`. A scope's identity is
-  `scope_id = sha256(canon(Seed))`. A seed MUST NOT carry `prev`. `genesis: true` is admissible ONLY on
+  predicate `{ scope, genesis: true, by, when, parent?, responsible?: [Identity] }`. A scope's identity
+  is `scope_id = sha256(canon(Seed))`. `by` and `when` are the §7.2 fields every statement carries;
+  `responsible` is OPTIONAL and the reference emits none - its *meaning* is convention (below), so
+  requiring its presence would be the kernel enforcing a convention it does not interpret. A seed MUST NOT carry `prev`. `genesis: true` is admissible ONLY on
   a seed: a conforming kernel MUST reject `genesis: true` on any non-`scope/v0` statement.
 - **Chain.** Every non-genesis statement belonging to a scope MUST carry `scope` (= the `scope_id`) and
   `prev` (the hash of the immediately preceding statement in that scope). **Ingest is monotone:** a
@@ -340,7 +414,11 @@ PAE = "DSSEv1 " + len(payloadType) + " " + payloadType + " " + len(payload) + " 
   verifies. `verify` MUST report the **verifying** key's keyid on success (and SHOULD flag a declared
   keyid that differs from it); a reader MUST NOT present an unverified declared keyid as authoritative.
 - A conforming kernel MUST be able to verify a signature on demand (`verify`, which succeeds if **any**
-  of an envelope's signatures verifies) and MUST NOT itself produce signatures. It does **not** verify
+  of an envelope's signatures verifies). It MUST NOT sign on **ingest**, MUST NOT hold or manage signing
+  keys, and MUST NOT add a signature its caller did not ask for. Offering a signing helper to a caller
+  that holds its own key is permitted and expected; a kernel SHOULD additionally expose the two halves
+  separately - the bytes to be signed, and a seal that takes a signature back - so that a caller signing
+  in a browser, a smartcard or an HSM never hands the kernel a private key at all. It does **not** verify
   signatures on **ingest**: the wire carries a `keyid`, not the key, so ingest cannot check a signature
   - it rejects *unsigned* claims (§7.2) but stores signed ones unverified. Trust is conferred only by an
   explicit `verify` against a key the consumer chooses (trust policy, below). An index / `show` entry
@@ -360,6 +438,80 @@ PAE = "DSSEv1 " + len(payloadType) + " " + payloadType + " " + len(payload) + " 
   omitting the label.)
 - **Trust policy** - *which* keys/identities count, for which predicates/contexts - is OUT of the
   kernel (a cockpit/consumer concern).
+
+### 8.1 Attached verification material *(0.1 - new)*
+
+The DSSE signature proves that *some key* signed the payload. It does not carry what a reader needs to
+decide **whose key that was**, nor that the record existed at a given time. A short-lived Sigstore
+certificate, a transparency-log inclusion proof, an X.509 chain from an organisation's PKI, a
+qualified certificate under eIDAS, an RFC 3161 timestamp token - §8 and §13 both call for these, and
+none of them has anywhere to live. This clause gives them one.
+
+```
+VerificationMaterial := { subject:   "sha256:<hex>",
+                          scheme:    <token>,
+                          mediaType: <media type>,
+                          material:  base64(<the scheme's own artifact>) }
+```
+
+- **`subject` MUST be the record's content address** - a foton id or a claim id - and a scheme that
+  signs bytes MUST sign the **canonical Statement bytes**, which are exactly the envelope's `payload`.
+  It MUST NOT rest on a filename, on a particular serialization of the envelope, or on co-location.
+
+  How tight the binding then is differs between the two layers, and an implementer should know which
+  one they have:
+
+  - For a **claim**, `claimId = sha256(canon(Statement))`, so the digest the external scheme committed
+    to *is* the record's identity. The binding is **structural** - nothing has to be recomputed to see
+    that the witness is about this record.
+  - For a **foton**, `fotonId = sha256(canon(Foton))` over the covered projection, which is **not** the
+    payload digest. A scheme signing the payload therefore commits to the Statement that *derives*
+    this foton id, one canonicalization away. That is still a binding a verifier can check with no
+    outside information, but it is a **derivation**, not an identity, and a consumer that compares
+    digests without performing it will find they differ.
+- **The kernel MUST NOT interpret or verify `material`.** This is the §8 posture exactly: stored is not
+  verified. A kernel carries verification material as opaque bytes; evaluating it - and deciding which
+  issuers, trust lists or identities count - is a consumer concern, like trust policy.
+
+  This holds on **both** paths, and the read path is the one that surprises people: a kernel does not
+  verify material when it stores it, and does not verify it when it hands it back. **Presence is not
+  a check.** Whatever verification happened - a Rekor SET and inclusion proof checked at submission
+  time, say - happened in some tool at some earlier moment, under a trust configuration this kernel
+  neither recorded nor can reproduce. A reader that treats a stored artifact as evidence *because it
+  is stored* has verified nothing.
+
+  A consequence for implementers: **a kernel's own output MUST NOT carry a field that reads as a
+  verification verdict** - a `verified` flag on a listed material, however it is spelled. The kernel
+  has no verdict to report, and a constant one is worse than none: a consumer reads `false` as
+  *checked and failed* when the truth is *nobody looked*. Emit the four fields above. A consumer that
+  does evaluate the evidence SHOULD report in its own vocabulary, distinguishing at least *verified
+  here* (naming who checked), *carried* (nobody here evaluated it), and *failed*.
+- **Presence, absence, or invalidity MUST NOT affect the record's validity or resolvability** (§11).
+  Verification material is evidence *about* a record, never a precondition of it. A registry that
+  cannot read a material MUST still resolve the record.
+- **Several are permitted per record**, and they answer different questions: an identity witness
+  (*who stands behind this*), a time witness (*that it existed by then*), and a legally qualified
+  signature are independent and MAY coexist.
+- **An unrecognised `scheme` MUST be carried, not rejected.** Refusing unknown evidence would make the
+  set of schemes a protocol version, which is precisely what this clause exists to avoid.
+
+Initial scheme tokens (the list is open; registration is out of scope for 0.1):
+
+| `scheme` | typical `mediaType` | answers |
+|---|---|---|
+| `sigstore-bundle` | `application/vnd.dev.sigstore.bundle.v1+json` | who (OIDC identity via Fulcio) |
+| `rekor-entry` | `application/json` | when (transparency-log inclusion, §13) |
+| `rfc3161` | `application/timestamp-reply` | when (qualified timestamp) |
+| `cms-detached` | `application/pkcs7-signature` | who (X.509: organisation PKI, smartcard, detached CAdES) |
+| `jades` | `application/jose+json` | who (the eIDAS JSON signature form) |
+| `pgp-detached` | `application/pgp-signature` | who |
+
+**Document-rendered signature forms (e.g. PAdES / signed PDFs) are OUT of scope.** They sign a
+*rendered* representation of a record, and the relationship between that rendering and the canonical
+bytes is not content-addressed - a second representation free to drift from the first. §14 already
+draws this line for publication projections and requires an explicit provenance reference rather than
+assumed hash equality. A signed document is therefore a §14 projection, and its signature stands over
+the projection, not over the record.
 
 ## 9 Reproduction and normalization
 
@@ -434,6 +586,12 @@ A registry is a self-hosted scope of records. There is no central registry.
      decided over) inside its signed payload. A verdict without its corpus is a configuration, not a
      statement.
 
+     *This obligation is on whoever ISSUES a verdict - a gate, a release process, a reviewer - not on
+     the kernel, which has no verdicts of its own and treats such a claim's predicate as opaque (§7).
+     A kernel carries and indexes it; it neither adds the corpus nor checks for it. Stated because
+     the clause previously said only "MUST" and an implementer could reasonably have read it as a
+     kernel duty and found nothing to implement.*
+
   A conforming reader MUST NOT generalize either closed-world rule (e.g. "a dangling link is rejected")
   to the open substrate; outside a sealed scope or a gate, an unresolved reference is *incomplete*, not
   invalid.
@@ -454,8 +612,13 @@ Records are immutable and content-addressed, so replication is a conflict-free s
 
 - `sync?since=T` returns append-only records since cursor `T`; **mirroring** = `sync` + persistence.
   Because a batch may deliver a scoped child before its seed, ingest MUST settle scoped claims in
-  dependency order and skip records that never become valid, always advancing the peer cursor so one
-  malformed or hostile record cannot wedge replication. A local-directory overlay (`mirror <dir>`) is
+  dependency order and skip records that never become valid, and **the party driving the sync** MUST
+  keep advancing its stored cursor, so one malformed or hostile record cannot wedge replication.
+
+  *The cursor belongs to the party that PULLS, not to the store it pulls into: it is per-peer state
+  about a conversation the kernel does not conduct. The reference kernels expose `PeerCursor` /
+  `SetPeerCursor` for such a party to use and never call them themselves - since the HTTP client left
+  this repository there is no code path here that pulls at all.* A local-directory overlay (`mirror <dir>`) is
   cursorless overlay-by-hash, so it **re-attempts** a previously-unresolved record whenever a later
   mirror supplies its missing ancestry - an incomplete chain heals as its dependencies arrive.
 - **Aggregator independence (Scenario 8).** An aggregator is a **discovery index**: it indexes and
@@ -467,19 +630,83 @@ Records are immutable and content-addressed, so replication is a conflict-free s
 - **Byte pinning is OPTIONAL** and lives outside the kernel: a mirror MAY fetch a referenced file's
   bytes, verify against the hash (5.6), and re-serve them. Fetched bytes MUST be rejected if their hash
   differs from the request.
-- Minimum federation surface (binding MAY vary; HTTP(S) is the reference): plankton
-  `producer?hash=`, `uses?hash=`, `sync?since=`, optional `blob?hash=`; nekton `claims?subject=`,
-  `claims?object=`, `claims?signer=`, `claims?predicate=`, `claim?id=`, `sync?since=`.
+- **Minimum federation surface.** A federating implementation MUST offer these QUERIES, and the
+  answers MUST be in the wire form below. **How they are carried is not specified** - a transport is
+  an implementation choice (§1), and this clause is about what is asked and what comes back:
+
+  | query | answers |
+  |---|---|
+  | `producer(hash)` | the foton(s) whose OUTPUT is `hash` |
+  | `uses(hash)` | the foton(s) whose INPUT is `hash` |
+  | `sync(since)` | records with a local sequence above `since`, in append order, with the new cursor |
+  | `blob(hash)` *(optional)* | the pinned bytes for `hash`, if this participant holds them |
+  | `claims(subject\|object\|signer\|predicate)` | the claims matching that axis |
+  | `claim(id)` | the one claim with that id, or a distinct not-held answer |
+
+  A `claim(id)` for a record the participant does not hold MUST be distinguishable from a record it
+  holds with nothing to say - "we do not have it" and "we have nothing about it" are different
+  answers, and a reader acts differently on each. An unrecognised or absent query parameter MUST be
+  an error, never an empty result: an empty answer to a malformed question is a successful wrong
+  answer.
+
+  **The sequence.** `seq` is a participant's own numbering of what it holds. It is LOCAL: two
+  participants holding the same records may number them differently, how a participant numbers is
+  its own business, and a cursor is only ever meaningful against the participant that issued it.
+  What is normative is the GUARANTEE a peer gets, not the mechanism:
+
+  1. **Never decreases.** A record already answered for MUST NOT be renumbered downward.
+  2. **Newer is higher.** Anything first held after a cursor was issued - **or whose stored bytes
+     have changed since** - MUST be numbered above it.
+  3. **Independent of content.** The sequence MUST NOT be derived from the record's identity, its
+     hash, or any ordering a record's author can influence. Otherwise a participant who can write a
+     record - a git merge is a supported transport (§11) - can choose one that reorders the store
+     and pushes an existing record back under a peer's cursor, where that peer will never ask for it
+     again.
+
+  A sequence need not be dense, and gaps carry no meaning: a record dropped, refused, or never
+  indexed may still have consumed a number. Only the ordering is normative.
+
+  **What must be in the answer.** A participant MUST offer every record it holds that satisfies the
+  cursor, including one that is **persisted but unresolved** - a claim whose scope seed or `prev` it
+  does not hold. Such a record is incomplete, not invalid (§11); it answers no query at the
+  participant that holds it, but withholding it loses information, because federation is monotone and
+  the receiver may hold the very dependency that resolves it. A participant that withholds unresolved
+  records and later resolves one locally can never deliver it: it was never offered while unresolved,
+  and once resolved it sits at a position below every cursor already issued.
+
+  A change to a record that has already been answered for - a co-signature added to it - MUST reach a
+  peer that is past it. How is the participant's business: a store whose records carry an order of
+  their own (a hash chain) records the change as a new entry and leaves the existing one in place; a
+  store of unordered content-addressed records may simply renumber. Either satisfies rule 2.
+
+  **The epoch.** `sync` answers carry an `epoch` identifying the numbering that issued the cursor. If
+  a participant's numbering is lost or replaced - a deleted counter, a restored backup, a store
+  rebuilt - positions start again from the beginning, and a peer holding a high cursor would sit
+  silently above everything it is offered and receive nothing, forever. A peer whose stored epoch
+  differs from the one in an answer MUST discard its cursor and resync from zero.
+
+  **Wire form.** `sync` answers `{ "records": [ { "seq", "fotonId"|"claimId", "envelope" } ... ],
+  "max": <cursor>, "epoch": <string> }`; the record queries answer `{ "records": [ <envelope> ... ] }`. Envelopes are
+  as in §8. Conformance fixtures for these answers live in `../reference/testdata/federation/`.
+
+  *An HTTP(S) binding - `GET /sync?since=`, `GET /claim?id=` and so on - is one realization and is
+  described in Annex C. It is informative: an implementation carrying these queries over anything
+  else is equally conforming. The reference implementation answers `sync(since)` over **stdout**
+  (`plankton records --json --since N`, `nekton records --json --since N`), which is why the fixtures
+  are generated from that command rather than written by hand.*
 
 ## 13 Long-term verifiability  *(0.1 - subject to change)*
 
 For a record to remain verifiable long after signing, it should carry what durable verification needs.
 When a short-lived signing certificate is used (e.g. Sigstore-Fulcio), the transparency-log inclusion
 proof (e.g. Rekor) SHOULD be carried **inside the record**, so that verification a year later does not
-depend on the certificate still being valid or an external service still answering. *(Scenario 3. The
-reference `kton anchor` currently prints the Rekor inclusion proof to stdout but does not yet embed it
-in the record, and there is no offline re-verification of a saved proof; the on-record encoding is
-being specified and is expected to change before v1.)*
+depend on the certificate still being valid or an external service still answering. The on-record encoding is
+§8.1: an inclusion proof is verification material with `scheme: "rekor-entry"`, bound to the record by
+its content address like any other. *(Scenario 3. `kton anchor --store` records the verified entry as §8.1
+verification material on the record; without `--store` the proof is only printed. What remains open
+is OFFLINE re-verification of a saved proof - and note that the anchor path reconstructs a root
+supplied by the proof and does not authenticate the log's own checkpoint, so a verified SET is not
+by itself proof that the tree root was authenticated.)*
 
 ## 14 Publication projections  *(informative)*
 
@@ -510,7 +737,18 @@ A conforming implementation MUST:
 4. index and resolve records per Clauses 11–12, including the completeness/validity distinction (11);
 5. enforce the scope/seed/chain grammar (7.4) and reject unsigned claims (7.2) and forged `genesis`
    (7.4);
-6. refuse partial spectrum fulfilment (10) and ill-formed reproduction claims lacking a level (9).
+6. refuse partial spectrum fulfilment (10);
+
+   *A conforming KERNEL does not refuse an ill-formed reproduction claim. §9 assigns that to a
+   conforming **consumer**, and §7 forbids the kernel from doing it: predicates are opaque
+   identifiers, and a kernel that rejected a `reproduces` claim for lacking a level would have to
+   know what `reproduces` means - which is exactly the vocabulary knowledge §7 says it MUST NOT
+   require. The kernel's duty is to carry and index the claim faithfully; the duty to refuse it is
+   the reader's. This item used to name the kernel and contradicted both clauses.*
+7. if it carries verification material (8.1) - which is OPTIONAL to produce and OPTIONAL to carry -
+   not reject an unrecognised `scheme`, not treat its absence or invalidity as affecting a record's
+   validity or resolvability, and not report a record as verified on the strength of material it did
+   not itself evaluate.
 
 The conformance vectors are frozen with deterministic test keys and regenerated by
 `../reference/testdata/gen`; CI fails on drift. Additional behavioral scenarios (canonicalization
@@ -536,15 +774,48 @@ publication round-trip) are maintained as the conformance scenario suite.
 ## Annex A *(informative)* - reuse of established standards
 
 Structure/envelope: in-toto Attestation + DSSE. Hashing/addressing: SHA-256 + multihash. Lineage/agent:
-W3C **PROV-O**. General review provenance: **PAV** (`pav:reviewedBy`). Location/retrieval (the
+W3C **PROV-O**; authoring/versioning provenance: **PAV** (`pav:createdBy`, `pav:authoredBy`).
+Location/retrieval (the
 `located-at` mechanism, Clause 12): **DCAT** (`dcat:downloadURL`). Equivalence/hierarchy: **OWL/SKOS**.
 Licensing identifiers: SPDX. Publication: nanopublication / Trusty URI (Clause 14). Domain vocabularies
 used by *examples* (not the protocol) - EDAM/SWO/STATO/OBI, Cell Ontology, HGNC, SEPIO/micropublication
-for evidence - are application vocabulary, not normative kton terms. The full reuse ↔ native mapping and
-the reserved `gxp:*` set are in [`vocabulary.md`](vocabulary.md).
+for evidence - are application vocabulary, not normative kton terms. The full reuse ↔ native mapping is
+in [`vocabulary.md`](vocabulary.md), which also says why this specification names no application
+namespace of its own.
 
 ## Annex B *(informative)* - scenario → clause map
 
 1 Canonicalization → 5. 2 Tamper → 5.6, 8. 3 Long-term → 13. 4 Identity → 8. 5 Cross-repo chain → 7.4,
 11. 6 Normalization level → 9. 7 Spectrum fulfilment → 10. 8 Aggregator independence → 12. 9 Missing
 links → 11. 10 Publication round-trip → 14.
+
+## Annex C *(informative)* - an HTTP binding for Clause 12
+
+One realization of the §12 queries, and the one the reference client speaks. Nothing here is
+normative: an implementation carrying the same queries and the same wire form over another transport
+conforms equally.
+
+```
+GET /producer?hash=<content hash>          -> { "records": [ <envelope> ... ] }
+GET /uses?hash=<content hash>              -> { "records": [ <envelope> ... ] }
+GET /sync?since=<cursor>                   -> { "records": [ ... ], "max": <cursor> }
+GET /blob?hash=<content hash>              -> the bytes, or 404; 400 if not a content hash
+GET /claims?subject=|object=|signer=|predicate=  -> { "records": [ <envelope> ... ] }
+GET /claim?id=<claim id>                   -> { "records": [ <envelope> ] }, or 404 if not held
+GET /material?subject=<record id>          -> { "subject", "material": [ ... ] }   (§8.1)
+```
+
+A malformed or missing parameter answers 400. A record this participant does not hold answers 404.
+Both are distinct from an empty `records` list, which means "held, nothing matches".
+
+The reference implementation ships **neither half** of this binding: no server, and no client
+either. A specification of a protocol is not a place to distribute a network service - a server that
+binds a port carries security obligations (authentication, transport security, rate limiting, request
+bounds) that belong to a deployment - and the client half turned out to have no caller at all, while
+bringing four unbounded HTTP clients with it. Writing either over the table above is a small amount
+of code in any language, and `../reference/testdata/federation/` fixes the bytes it must produce.
+
+It does answer §12 over a different binding: `plankton records --json --since N` and
+`nekton records --json --since N` return exactly the `sync(since)` document above on stdout. A server
+over HTTP is then a shell around that, which is what "the transport is not specified" means in
+practice.

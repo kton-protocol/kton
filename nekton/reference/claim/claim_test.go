@@ -157,8 +157,12 @@ func TestValidateRejectsNonRFC3339When(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	mk := func(when string) core.Envelope {
 		st := map[string]any{
-			"_type":         "https://in-toto.io/Statement/v1",
-			"subject":       []any{map[string]any{"hash": "sha256:" + strings.Repeat("a", 64)}},
+			"_type": "https://in-toto.io/Statement/v1",
+			// NOTE: a STATEMENT's subject is `digest: {sha256: <bare hex>}` (SPEC §7.3); `hash` is the
+			// shorthand of the authoring SPEC only. This fixture used to write `hash` here, so it
+			// built - and asserted over - a claim whose subject named NOTHING, and passed. That is
+			// the same trap the new subject check exists for, sprung on this file.
+			"subject":       []any{map[string]any{"digest": map[string]any{"sha256": strings.Repeat("a", 64)}}},
 			"predicateType": claim.PredicateType,
 			"predicate": map[string]any{
 				"predicate": map[string]any{"uri": "https://kton.dev/v/note"},
