@@ -587,7 +587,7 @@ func (r *Registry) settle(records []Record) (dropped int) {
 	// fails its own derivation must not be offered by any route.
 	pending := make([]settleItem, 0, len(records))
 	for _, rec := range records {
-		st, ok := admissible(rec)
+		st, id, ok := admissible(rec)
 		if !ok {
 			// REFUSED, not dropped: refused is what settle returns, and a permanently invalid row is
 			// what that number is for. (Incrementing the named return here would be overwritten by
@@ -597,6 +597,9 @@ func (r *Registry) settle(records []Record) (dropped int) {
 			continue
 		}
 		pp, _ := st.ParsePredicate()
+		// The row is filed under what it DERIVES, from here on. Every branch below - twin, deferral,
+		// index, feed - reads rec.ClaimID, so correcting it once here is what keeps them all honest.
+		rec.ClaimID = id
 		pending = append(pending, settleItem{rec: rec, st: st, p: pp})
 	}
 	for {
@@ -779,30 +782,45 @@ func (r *Registry) DeferredClaim(id string) (rec Record, waitingOnScope string, 
 //
 // Chain resolution is deliberately NOT here: an unresolved prev is incomplete, not invalid (SPEC
 // §11), and such a row is still owed to a peer.
-func admissible(rec Record) (*claim.Statement, bool) {
+//
+// It RETURNS THE DERIVED ID, and every caller keys on that rather than on the stored field. The
+// stored `claimId` is a cache of sha256(canon(Statement)), never the identity - "never trust the
+// on-disk claimId" is the rule index() has always stated, and a field nobody is allowed to trust
+// cannot also be the thing the store files a record under. Comparing the two only when the stored
+// one was NONEMPTY left the empty string as an identity: two distinct signed claims whose rows
+// carried `"claimId":""` (or no such property at all) collapsed onto one key -
+//
+//	Len()=1  feed=2  Dropped()=0   Claim(A) held=false   Claim(B) held=false
+//
+// - neither retrievable by its real id, both published to peers under the empty one. Returning the
+// derived id closes the whole class rather than the empty case: any stored id that is not the
+// derived one is either refused (nonempty, so it is an ASSERTION that disagrees) or replaced
+// (absent, so there was nothing to disagree with). A missing cache is incomplete, not invalid.
+func admissible(rec Record) (st *claim.Statement, id string, ok bool) {
 	st, payload, err := claim.ParseEnvelope(rec.Envelope)
 	if err != nil {
-		return nil, false
+		return nil, "", false
 	}
-	if rec.ClaimID != "" && claim.ClaimID(payload) != rec.ClaimID {
+	id = claim.ClaimID(payload)
+	if rec.ClaimID != "" && id != rec.ClaimID {
 		fmt.Fprintf(os.Stderr, "warning: skipping planted claim: stored id %s but its envelope derives %s\n",
-			rec.ClaimID, claim.ClaimID(payload))
-		return nil, false
+			rec.ClaimID, id)
+		return nil, "", false
 	}
 	if !rec.Envelope.HasSignature() {
-		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: it carries no signature (SPEC §8)\n", rec.ClaimID)
-		return nil, false
+		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: it carries no signature (SPEC §8)\n", id)
+		return nil, "", false
 	}
 	p, perr := st.ParsePredicate()
 	if perr != nil {
-		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, perr)
-		return nil, false
+		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", id, perr)
+		return nil, "", false
 	}
 	if verr := st.Validate(p); verr != nil {
-		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", rec.ClaimID, verr)
-		return nil, false
+		fmt.Fprintf(os.Stderr, "warning: skipping claim %s: %v\n", id, verr)
+		return nil, "", false
 	}
-	return st, true
+	return st, id, true
 }
 
 func (r *Registry) index(rec Record) (accepted bool) {
@@ -817,10 +835,11 @@ func (r *Registry) index(rec Record) (accepted bool) {
 	// envelope and stored it, the other refused it. No caller can reach here with one (all three
 	// parse first), so the drift was unreachable - but the next rule added would have gone into one
 	// of them.
-	st, ok := admissible(rec)
+	st, id, ok := admissible(rec)
 	if !ok {
 		return false
 	}
+	rec.ClaimID = id // by value: the copy this function indexes and appends carries the derived id
 	if r.seen[rec.ClaimID] {
 		return true // already held; not a refusal
 	}
