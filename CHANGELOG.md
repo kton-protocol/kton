@@ -1,6 +1,48 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.2.1 — unreleased
+
+### Fixed
+
+**A stored claim id is derived, never declared** ([#197](https://github.com/kton-protocol/kton/issues/197)).
+nekton's replay admission compared a row's stored `claimId` to the id its envelope derives **only
+when the stored one was nonempty**, so the empty string passed as an identity. Neither JSONL nor
+legacy loading requires the field. Two distinct signed claims whose rows carried `"claimId":""` —
+or no such property at all — collapsed onto one key:
+
+```
+Len()=1  len(Records(0))=2  Dropped()=0
+Claim(idA) found=false   Claim(idB) found=false   both feed rows: claimId=""
+```
+
+Neither claim was retrievable by its real id, both were published to peers under the empty one, and
+nothing was reported as rejected. No forged signature is needed: the trigger is a malformed stored
+row arriving through filesystem or git federation. The admission gate now returns the **derived**
+id and every caller keys on that. A nonempty stored id that disagrees is an assertion and is still
+refused; an absent one is a missing cache — incomplete, not invalid (SPEC §11) — and is derived.
+
+Reported by @rschmidt-scinteco (MAIN-FU-01), reviewing `e48c668..7ce67ed`.
+
+### Changed
+
+**`go install` now works for all three modules.** `nekton` and `kton` carried
+`replace kton.dev/plankton => ../../reference`, and `go install` refuses any module with a replace
+directive. The workspace (`go.work`) already resolves the in-repo dependency on its own, so the
+replaces were redundant for every build in this repository and blocking for every build outside it.
+They are gone; each module now requires the published version of what it depends on:
+
+```sh
+go install kton.dev/plankton/cmd/plankton@v0.2.1   # Go 1.25 or newer
+go install kton.dev/nekton/cmd/nekton@v0.2.1
+go install kton.dev/kton/cmd/kton@v0.2.1
+```
+
+The cost is that the three modules must now be **tagged in dependency order** — plankton, then
+nekton, then kton — because a module cannot require a version that does not yet exist. Local
+development is unaffected: inside the workspace the `use` directives still win over the requires,
+so a change to plankton is visible to nekton immediately and without a tag.
+
+## 0.2.0 — released 2026-09-17
 
 ### ⚠️ Known limitation in 0.2: a claim can lose a signature when the same claim arrives twice
 

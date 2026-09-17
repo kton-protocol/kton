@@ -247,7 +247,7 @@ func run(cmd string, args []string) error {
 		fmt.Print(usage)
 		return nil
 	case "--version", "-v", "version":
-		fmt.Println("plankton 0.2 (reference)")
+		fmt.Println("plankton 0.2.1 (reference)")
 		return nil
 	}
 	for _, a := range args {

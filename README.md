@@ -164,7 +164,7 @@ before you run what is inside it - a provenance tool that asks you to trust an u
 has already lost the argument.
 
 ```sh
-ver=v0.2.0                      # see github.com/kton-protocol/kton/releases
+ver=v0.2.1                      # see github.com/kton-protocol/kton/releases
 plat=linux_amd64                # or linux_arm64, darwin_amd64, darwin_arm64, windows_amd64
 base="https://github.com/kton-protocol/kton/releases/download/$ver"
 curl -fLO "$base/kton_${ver}_${plat}.tar.gz"
@@ -180,18 +180,18 @@ The archive holds the three binaries and the licence - nothing to configure: no 
 runtime, no service. `plankton` and `nekton` are the kernels; `kton` is the cockpit and the only one
 that ever reaches the network (`kton fetch`, Rekor anchoring).
 
-**Versions.** The binaries are at **0.2**; the specification they implement is **0.1 (draft)**. Those
+**Versions.** The binaries are at **0.2.1**; the specification they implement is **0.1 (draft)**. Those
 are two axes on purpose - 0.2 changed the nekton store layout, not the protocol - so a record
 authored by a 0.2 binary still stamps `specVersion: "0.1"`. A 0.1 binary **cannot read a 0.2 nekton
 store and does not say so**; upgrade every binary that touches a shared registry at the same time,
 and read the first section of [`CHANGELOG.md`](CHANGELOG.md) before you do.
 
-*`go install` works for **plankton** and not yet for the other two — kton.dev now serves the
-`go-import` meta for all three, but that was never the whole story:*
+*`go install` works for all three, on **Go 1.25 or newer**:*
 
 ```sh
-go install kton.dev/plankton/cmd/plankton@latest   # works, on Go 1.25 or newer
-go install kton.dev/nekton/cmd/nekton@latest       # fails: see below
+go install kton.dev/plankton/cmd/plankton@v0.2.1
+go install kton.dev/nekton/cmd/nekton@v0.2.1
+go install kton.dev/kton/cmd/kton@v0.2.1
 ```
 
 *The modules live in subdirectories (`reference/`, `nekton/reference/`, `kton/reference/`) while
@@ -202,18 +202,21 @@ importpath` — "Starting in Go 1.25, an optional subdirectory will be recognize
 toolchain the field is ignored and resolution fails, which is a stricter requirement than the
 `go 1.22` this repo builds under.*
 
-*`nekton` and `kton` fail for a different reason, unrelated to kton.dev: their `go.mod` carries
-`replace kton.dev/plankton => ../../reference`, which is how the workspace resolves the one-way
-kernel dependency, and `go install` refuses any module with a replace directive. Making them
-installable means replacing those with real version requirements — which needs `plankton` tagged
-first, since `nekton` cannot require a version that does not exist.*
+*Through 0.2.0, `nekton` and `kton` failed for a second reason, unrelated to kton.dev: their
+`go.mod` carried `replace kton.dev/plankton => ../../reference`, and `go install` refuses any module
+with a replace directive. The workspace (`go.work`) already resolved that dependency on its own, so
+the replaces were redundant here and blocking everywhere else; 0.2.1 removed them in favour of real
+version requirements. The price is that the modules must be **tagged in dependency order** —
+plankton, then nekton, then kton — because a module cannot require a version that does not yet
+exist. Inside the workspace nothing changed: the `use` directives still win over the requires, so a
+change to plankton is visible to nekton without a tag.*
 
 *Note also that a versioned install wants a **subdirectory-prefixed tag**: the same help text says
-"If set, all vcs tags must be prefixed with subdir", so `@v0.2.0` looks for `reference/v0.2.0`, not
-`v0.2.0`. Without such a tag Go falls back to a pseudo-version of the default branch, which is what
-the working command above does today.*
+"If set, all vcs tags must be prefixed with subdir", so `@v0.2.1` looks for `reference/v0.2.1`, not
+the repository's `v0.2.1`. Both exist — the prefixed tags are what `go install` resolves, the plain
+one is what builds the release archives.*
 
-*Until then: a release archive, or the source build below.*
+*The alternative remains a release archive, or the source build below.*
 
 ## Build
 
