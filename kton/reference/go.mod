@@ -6,12 +6,12 @@ go 1.22
 // reimplements nothing. This is the ONLY module allowed to depend on both; the dependency
 // direction is kton -> {plankton, nekton}, and nothing ever depends on kton. The kernels
 // stay network-free (WASM-compilable); kton is where the port/HTTP/Rekor/blob surface lives.
-// Resolved locally via the workspace (../../go.work).
+// Inside this repository ../../go.work resolves both to the sibling trees, so a change to either
+// kernel is visible here without a tag. The requires below are what anyone OUTSIDE the workspace
+// gets, and `go install` refuses a module carrying a replace directive - which is why these are
+// real versions. They are also why the three modules must be tagged in dependency order:
+// plankton, then nekton, then kton.
 require (
-	kton.dev/nekton v0.0.0
-	kton.dev/plankton v0.0.0
+	kton.dev/nekton v0.2.1
+	kton.dev/plankton v0.2.1
 )
-
-replace kton.dev/plankton => ../../reference
-
-replace kton.dev/nekton => ../../nekton/reference
