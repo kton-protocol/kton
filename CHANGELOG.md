@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — unreleased
+
+### Added
+
+**`foton/v1`, the canonical form** ([#208](https://github.com/kton-protocol/kton/issues/208)). The same
+work recorded by two producers is now the same record with both signatures. In v0 that failed silently
+whenever the producers differed in input order or carried a locator: the payloads differed, the registry
+kept the first and answered "already there". v1 orders inputs and outputs by path (UTF-8 bytes), carries
+no `uri` and no `specVersion` in the signed bytes, leaves out an absent descriptor, and includes its
+version in the id, so it never contends with a v0 twin. **A registry admits a v1 payload only if it is
+byte-identical to the canonical statement derived from its record**, so two tools that serialise the
+same statement differently, or a field this kernel does not know, cannot take the record from the
+honest producers. `foton.Spec.Statement = "v1"`, `plankton author --statement v1`. SPEC §6.3, §6.6.1,
+§16. PoC: `security/attacks/v1-payload-variant.sh` (gated).
+
+**Locators as material: `kton-locator/v1`** (#208, SPEC §8.1). Each producer signs where its copies of a
+record's files live, as verification material bound to the foton id; `foton.SignLocators`,
+`foton.ReadLocators`. `plankton author --statement v1 --located P=URI --add` attaches them.
+
+## 0.2.2 — unreleased
 
 ### Security
 

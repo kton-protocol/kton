@@ -41,6 +41,11 @@ type Foton struct {
 	Inputs   []FileRef `json:"inputs"`
 	Outputs  []FileRef `json:"outputs"`
 	Protocol Protocol  `json:"protocol"`
+	// Statement is the wire version the record was authored in: "" (v0) or "v1" (SPEC §6.6.1). It
+	// is part of the IDENTITY of a v1 record, so the same work recorded as v0 and as v1 are two
+	// records and never contend for one id - a v0 twin already stored would otherwise keep every v1
+	// co-signature out. The action key does not see it: reuse is about the computation.
+	Statement string `json:"-"`
 }
 
 // coveredRefs projects FileRefs to their COVERED fields only - hash and the structural relative
@@ -65,6 +70,22 @@ func coveredRefs(refs []FileRef) []any {
 // projection excludes carried FileRef fields (id/uri/mediaType), so a foton's identity depends only
 // on its input/output hashes+paths and its protocol - not on where the files happen to be located.
 func (f Foton) FotonID() (string, error) {
+	if f.Statement == "v1" {
+		// K7: inputs and outputs are keyed by path, so their order is not part of the work.
+		ins, outs := append([]FileRef{}, f.Inputs...), append([]FileRef{}, f.Outputs...)
+		SortRefs(ins)
+		SortRefs(outs)
+		b, err := CanonValue(map[string]any{
+			"statement": "v1",
+			"inputs":    coveredRefs(ins),
+			"outputs":   coveredRefs(outs),
+			"protocol":  f.coveredProtocol(),
+		})
+		if err != nil {
+			return "", err
+		}
+		return HashBytes(b), nil
+	}
 	b, err := CanonValue(map[string]any{
 		"inputs":   coveredRefs(f.Inputs),
 		"outputs":  coveredRefs(f.Outputs),
