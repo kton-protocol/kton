@@ -1,6 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — unreleased
+
+### Added
+
+**RDF projections as library packages** ([#204](https://github.com/kton-protocol/kton/issues/204)).
+`kton.dev/plankton/rdf` (`Turtle`, the lineage as PROV) and `kton.dev/nekton/nanopub` (`NewContext`,
+`RenderTrig`, `Registry` for a whole registry as one TriG document). Before, both lived in
+`package main` of the CLIs, so a linking caller could not project a registry for a triple store without
+a second mapping. The CLIs call the packages.
+
+**Structured claim values reach the RDF** (#204). A claim object field holding an object or a list
+was projected with Go's `%v`: `{"role": "step"}` became the literal `"map[role:step]"`, signed but
+unreachable by any query. Both projections (published TriG and signed nanopub quads) now unfold it
+the same way into named nodes `sub:o.<field>`.
+
+### Changed
+
+**Numbers in claim values are written without an exponent** (#204): `1000000`, where `%v` wrote
+`1e+06`. The projection, and therefore the **Trusty URI**, of a re-rendered claim holding such a
+number changes. No record identity changes.
+
+## 0.2.2 — unreleased
 
 ### Security
 
