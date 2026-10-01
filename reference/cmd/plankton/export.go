@@ -71,7 +71,7 @@ func buildGraph(dir, title string) (*exportGraph, error) {
 		if err != nil {
 			continue
 		}
-		if st.PredicateType == core.PredicateFoton {
+		if core.IsFotonPredicate(st.PredicateType) {
 			f, err := st.ToFoton()
 			if err != nil {
 				continue

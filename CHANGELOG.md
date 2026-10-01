@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — local branch `cockpit-kernel-proposals` (not submitted)
+
+### Added
+
+**`foton/v1`, the canonical form (K5, K7).** The same work recorded by two producers is now the same
+record with both signatures. In v0 that failed silently whenever the producers differed in input order
+or carried a locator: the payloads differed, the registry kept the first and answered "already there".
+v1 orders inputs and outputs by path, carries no `uri` and no `specVersion` in the signed bytes, and
+includes its version in the id, so it never contends with a v0 twin. Registries refuse non-canonical
+v1 statements. `foton.Spec.Statement = "v1"`, `plankton author --statement v1`. SPEC §6.3, §6.6.1, §16.
+
+**Locators as material: `kton-locator/v1`** (SPEC §8.1). Each producer signs where its copies of a
+record's files live, as verification material bound to the foton id; `foton.SignLocators`,
+`foton.ReadLocators`. `plankton author --statement v1 --located P=URI --add` attaches them.
+
 ## 0.2.1 — released 2026-09-17
 
 ### Fixed

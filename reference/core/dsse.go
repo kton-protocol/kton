@@ -40,6 +40,18 @@ const PayloadType = "application/vnd.in-toto+json"
 // docs/decisions.md §1-§5 (the reproducible/attestable cut).
 const PredicateFoton = "https://kton.dev/foton/v0"
 
+// PredicateFotonV1 is the CANONICAL form of the same record (SPEC §6.6.1, proposals K5/K7). Its
+// identity rule is unchanged - FotonID over the covered projection - but its wire form leaves the
+// producer nothing to vary: inputs and subjects are ordered by path, and nothing carried (uri,
+// specVersion) is in the signed bytes. Its id is computed over the inputs and outputs in path order
+// and includes the version, so v0 and v1 records of the same work never share an id. The same work
+// therefore yields the same id AND the same payload, whoever records it, so a second producer's signature unions onto the first. Locators
+// travel beside the record as signed material (scheme LocatorScheme, package foton).
+const PredicateFotonV1 = "https://kton.dev/foton/v1"
+
+// IsFotonPredicate reports whether a predicateType is one of the foton statement versions.
+func IsFotonPredicate(pt string) bool { return pt == PredicateFoton || pt == PredicateFotonV1 }
+
 // SpecVersion is the exact spec revision an authoring tool stamps into a foton's predicate
 // (`predicate.specVersion`). It is CARRIED, not covered: the foton id projects only
 // inputs/outputs/protocol (see foton.go FotonID), so this field is signed and attested but never
@@ -163,7 +175,7 @@ type fotonPredicate struct {
 
 // ToFoton extracts a Foton from a foton/v0 Statement (subject=outputs, predicate.inputs).
 func (st *Statement) ToFoton() (*Foton, error) {
-	if st.PredicateType != PredicateFoton {
+	if !IsFotonPredicate(st.PredicateType) {
 		return nil, fmt.Errorf("not a foton statement: %s", st.PredicateType)
 	}
 	var p fotonPredicate
@@ -171,6 +183,9 @@ func (st *Statement) ToFoton() (*Foton, error) {
 		return nil, err
 	}
 	f := &Foton{Protocol: p.Protocol}
+	if st.PredicateType == PredicateFotonV1 {
+		f.Statement = "v1"
+	}
 	for _, s := range st.Subject {
 		f.Outputs = append(f.Outputs, subjectToRef(s))
 	}

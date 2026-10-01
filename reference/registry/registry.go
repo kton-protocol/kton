@@ -783,8 +783,13 @@ func parseEnv(env core.Envelope) (*core.Foton, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if st.PredicateType != core.PredicateFoton {
+	if !core.IsFotonPredicate(st.PredicateType) {
 		return nil, "", nil
+	}
+	// foton/v1 is admitted only in its canonical form (SPEC §6.6.1): a v1 payload that varies what
+	// v1 fixes would split one record into byte-different twins again, which is what v1 exists to end.
+	if err := st.CheckCanonicalForm(); err != nil {
+		return nil, "", err
 	}
 	f, err := st.ToFoton()
 	if err != nil {

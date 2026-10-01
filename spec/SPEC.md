@@ -265,6 +265,9 @@ Protocol := {
       (Without it, an attacker's descriptor-less foton asserting `ref = sha256(canon(victim descriptor))`
       would collide with — and poison the cache of — the victim's verifiable computation.)
 - **foton id** = `sha256(canon(Foton))`. Carried, non-covered FileRef fields (6.1) MUST NOT change it.
+  For a `foton/v1` record (6.6.1) the preimage is `{ statement: "v1", inputs, outputs, protocol }` with
+  `inputs` and `outputs` ordered by `path`, then by `hash`: their order is not part of the work, and the
+  version keeps a v1 record from ever sharing an id with a v0 record of the same work.
 
 ### 6.4 Potentials
 
@@ -309,6 +312,23 @@ A `FileRef`'s `path` travels as `name` and its `hash` as `digest.sha256`. Of the
 (§6.1) only `uri` is on the wire at 0.1, and it is a **list**; it appears on subjects and on inputs
 alike, and being non-covered it changes no identity. `id`, `mediaType` and `meta` are reserved and
 are not emitted. This listing is exhaustive: a field not named here is not part of the 0.1 wire form.
+
+#### 6.6.1 The canonical form - `foton/v1` *(proposal K5/K7)*
+
+A v0 statement lets a producer vary three things its id does not cover: the order of inputs and
+subjects, `uri`, and `specVersion`. Each variation is a different signed payload for the same foton,
+and signatures are never merged across differing payloads (§8, §12), so two producers of the same work
+cannot co-sign it. `predicateType = "https://kton.dev/foton/v1"` fixes all three:
+
+- `subject` and `predicate.inputs` MUST be ordered by `name`, then by `digest.sha256`;
+- no subject or input carries `uri`; locators travel beside the record as verification material,
+  scheme `kton-locator/v1` (8.1), one signed statement per producer;
+- `predicate` holds exactly `inputs` and `protocol` (no `specVersion`: the predicateType is the version).
+
+A registry MUST refuse a v1 statement that breaks any of these rules. The same work therefore yields the
+same foton id **and** the same payload whoever records it, and a second producer's signature unions
+onto the record. A v0 record keeps its form, its id and its meaning; v0 and v1 records of the same work
+are two records (6.3). The action key does not depend on the statement version.
 
 The kernel records exactly **one** plankton predicate type - the foton. Signed statements *about*
 fotons are nekton claims (Clause 7). The mechanical L0/L1/L2 comparison of two results is itself a
@@ -505,6 +525,13 @@ Initial scheme tokens (the list is open; registration is out of scope for 0.1):
 | `cms-detached` | `application/pkcs7-signature` | who (X.509: organisation PKI, smartcard, detached CAdES) |
 | `jades` | `application/jose+json` | who (the eIDAS JSON signature form) |
 | `pgp-detached` | `application/pgp-signature` | who |
+| `kton-locator/v1` | `application/vnd.dsse.envelope.v1+json` | where (the producer's own locators for a `foton/v1` record, 6.6.1) |
+
+`kton-locator/v1` is a DSSE envelope over an in-toto Statement with `predicateType =
+"https://kton.dev/locator/v1"`, `predicate = { foton: <foton id> }` and one subject per located file
+(`name` = path, `digest`, `uri`), ordered by path. A reader MUST accept a locator only for a file the
+foton actually has at that path with that hash, and only under a key it trusts; the kernel stores and
+federates it like any material and does not read it.
 
 **Document-rendered signature forms (e.g. PAdES / signed PDFs) are OUT of scope.** They sign a
 *rendered* representation of a record, and the relationship between that rendering and the canonical
@@ -759,7 +786,9 @@ publication round-trip) are maintained as the conformance scenario suite.
 
 - Predicate types are versioned in their URI (`/v0`, `/v1`, …) - the breaking-change **contract**
   marker (it moves only on a breaking change, so all of `0.x` is `/v0`).
-- A foton's predicate MAY additionally carry **`specVersion`** - the exact spec revision it was authored
+- `foton/v1` (6.6.1) is the canonical form of the same record type, not a new meaning: it differs from
+  `foton/v0` only in what a producer may vary on the wire, and therefore in its id. Both are admitted.
+- A `foton/v0` predicate MAY additionally carry **`specVersion`** - the exact spec revision it was authored
   under (e.g. `"0.1"`) - as a **CARRIED, non-covered** field: it is signed and attested but excluded
   from the foton id and action key (which project only inputs/outputs/protocol), so stamping it changes
   no identity. This gives per-record traceability to the exact revision while the spec is pre-1.0.
