@@ -11,6 +11,16 @@ v1 orders inputs and outputs by path, carries no `uri` and no `specVersion` in t
 includes its version in the id, so it never contends with a v0 twin. Registries refuse non-canonical
 v1 statements. `foton.Spec.Statement = "v1"`, `plankton author --statement v1`. SPEC §6.3, §6.6.1, §16.
 
+**RDF projections as library packages (K8).** `kton.dev/plankton/rdf` (`Turtle`, the lineage as
+PROV) and `kton.dev/nekton/nanopub` (`NewContext`, `RenderTrig`, `Registry` for a whole registry as
+one TriG document) — before, both lived in `package main` of the CLIs, so a linking caller could not
+project a registry for a triple store without a second mapping. The CLIs call the packages.
+
+**Structured claim values reach the RDF.** A claim object field holding an object or a list was
+projected with Go's `%v` — `{"role": "step"}` became the literal `"map[role:step]"`, signed but
+unreachable by any query. Both projections (published TriG and signed nanopub quads) now unfold it
+the same way into named nodes `sub:o.<field>`; a crafted key is replaced by a digest.
+
 **Locators as material: `kton-locator/v1`** (SPEC §8.1). Each producer signs where its copies of a
 record's files live, as verification material bound to the foton id; `foton.SignLocators`,
 `foton.ReadLocators`. `plankton author --statement v1 --located P=URI --add` attaches them.
