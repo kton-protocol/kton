@@ -15,6 +15,13 @@ was projected with Go's `%v`: `{"role": "step"}` became the literal `"map[role:s
 unreachable by any query. Both projections (published TriG and signed nanopub quads) now unfold it
 the same way into named nodes `sub:o.<field>`.
 
+**`plankton export --rdf` attributes a co-signed foton to every signer it can verify**
+([#205](https://github.com/kton-protocol/kton/issues/205)). A foton done twice with byte-identical
+outputs is one record with two signatures, which is the evidence of the reproduction. The projection
+wrote `prov:wasAttributedTo` for the first trusted key only, so a query for "who ran this" saw one
+producer. Now there is one per trusted key that verifies the envelope, each once. An empty keyid on the
+first signature no longer suppresses the attribution.
+
 ### Changed
 
 **Numbers in claim values are written without an exponent** (#204): `1000000`, where `%v` wrote
