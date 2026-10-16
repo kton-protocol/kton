@@ -223,8 +223,11 @@ refused: reaching one is a transport, and this repository carries no transport. 
 .B plankton records --json --since
 for the Clause 12 sync answer a cockpit reads.
 .TP
-.B plankton export [--title \fIT\fR] [\fIout\fR]
-Serialize the horizon graph as JSON (headless query projection).
+.B plankton export [--title \fIT\fR] [--trust-keys \fIdir\fR] [\fIout\fR]
+Serialize the horizon graph as JSON (headless query projection), one row per foton with its
+own input/output refs, descriptor and self-declared \fBkeyids\fR. With \fB--trust-keys\fR each
+foton carries \fBsignerVerified\fR (\fBverified\fR or \fBfailed\fR) and \fBverifiedSigners\fR, every
+trusted key that actually signed; without it every foton is \fBunchecked\fR - never a verdict.
 .TP
 .B plankton export --rdf [--lineage \fIfotonId\fR|\fIoutputHash\fR] [-o \fIout\fR]
 Project the foton lineage as RDF (Turtle, PROV-O): each foton a \fBprov:Activity\fR, inputs
