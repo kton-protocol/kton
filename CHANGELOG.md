@@ -17,9 +17,11 @@ the same way into named nodes `sub:o.<field>`.
 
 ### Changed
 
-**Numbers in claim values are written without an exponent** (#204): `1000000`, where `%v` wrote
-`1e+06`. The projection, and therefore the **Trusty URI**, of a re-rendered claim holding such a
-number changes. No record identity changes.
+**The projection of some claims changes, and with it their Trusty URI** (#204). A re-rendered claim
+whose object holds a number (now `1000000`, where `%v` wrote `1e+06`), a `null` (now `null`, was
+`<nil>`) or a structured value (now unfolded into named nodes, was `"map[...]"`) projects to different
+RDF than before, so its Trusty URI changes. No record identity changes: claim ids and foton ids are
+computed from the signed statement, not from the projection.
 
 ## 0.2.2 — unreleased
 
