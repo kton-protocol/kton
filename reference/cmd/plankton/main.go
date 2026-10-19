@@ -80,7 +80,8 @@ usage:
                                                       is the spectrum FULFILLED? (reproducible compare, runs nothing).
                                                       exit 0 = all fulfilled, 1 = a candidate FAILED, 2 = INCOMPLETE
                                                       (a member had no candidate). the L0/L1 judgment is a nekton claim on top
-  plankton export [--title T] [out]                   serialize the horizon graph as JSON (headless query)
+  plankton export [--title T] [--trust-keys D] [out]  serialize the horizon graph as JSON (headless query);
+                                                      per foton signerVerified: verified | failed | unchecked
   plankton export --rdf [--lineage <id|hash>] [-o o]  project lineage as RDF/Turtle (PROV; joins nekton RDF)
   plankton pin <file>                                 pin a file's bytes into the OPTIONAL blob store
                                                       (PLANKTON_DIR/blobs) - the registry itself
@@ -443,20 +444,33 @@ func run(cmd string, args []string) error {
 			return exportRDF(dir(), sel, out, trustKeys)
 		}
 		title, out := "plankton horizon", "-"
+		var trustKeys []ed25519.PublicKey
 		for i := 0; i < len(args); i++ {
 			if args[i] == "--title" && i+1 < len(args) {
 				i++
 				title = args[i]
+			} else if args[i] == "--trust-keys" {
+				// Per foton: which of THESE keys actually signed (verified / failed); without the flag
+				// every foton is "unchecked", never a verdict.
+				if i+1 >= len(args) {
+					return fmt.Errorf("--trust-keys expects a directory of *.pub keys")
+				}
+				i++
+				ks, err := loadTrustKeys(args[i])
+				if err != nil {
+					return err
+				}
+				trustKeys = ks
 			} else if strings.HasPrefix(args[i], "-") {
 				// Reject an unknown flag instead of routing it (and its value) into [out]:
 				// `plankton export --source x.json` used to treat x.json as the output path and
 				// silently OVERWRITE it (data loss). Fail loudly.
-				return fmt.Errorf("unknown flag %q for export (usage: plankton export [--title T] [out]; RDF form: export --rdf [--lineage id] [-o out])", args[i])
+				return fmt.Errorf("unknown flag %q for export (usage: plankton export [--title T] [--trust-keys D] [out]; RDF form: export --rdf [--lineage id] [-o out])", args[i])
 			} else {
 				out = args[i]
 			}
 		}
-		return exportJSON(dir(), title, out)
+		return exportJSON(dir(), title, out, trustKeys)
 
 	case "verify":
 		if len(args) != 2 {
