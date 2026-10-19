@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Security
+
+**A seed's scope name could open graphs of its own in `nekton export --nanopub`** ([#200](https://github.com/kton-protocol/kton/issues/200)). The scope name
+is signed record data, but the export wrote it unescaped into `<urn:nekton:scope:...>`, the one
+record-derived IRI the earlier injection fix had not routed through escaping. A name containing `>`
+and a newline closed the IRI and the assertion graph, and could add, for example, a provenance graph
+with an attribution no trusted key established. The scope subject now goes through the same escaping
+as every other IRI. `nekton nanopublish` was not affected. PoC: `security/attacks/seed-scope-trig.sh`
+(gated).
+
 ### Added
 
 **`plankton export --trust-keys <dir>`: the JSON export says who signed, the way `nekton export`
@@ -21,6 +31,14 @@ whose signature was unioned from a second producer could be exported twice, and 
 the two rows would carry contradictory verdicts - the defect `nekton export` fixed for claims in
 0.2.0. It now iterates the indexed fotons (`FotonIDs`), as `export --rdf` already did. Consumers
 that relied on arrival order get id order.
+
+### Fixed
+
+**One claim no longer makes an export unparseable** ([#201](https://github.com/kton-protocol/kton/issues/201)). String literals escaped only `\ " \n \t`; a raw
+carriage return in a claim value is not allowed in a Turtle string, so the whole document failed to
+parse. Every control character is now escaped. This changes the text of the export, not any literal's
+value. A local name starting with `-` or `.`, or ending with `.`, is no longer emitted as a prefixed
+name (Turtle refuses it) but as a full, escaped IRI.
 
 ## 0.2.1 — released 2026-09-17
 
