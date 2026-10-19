@@ -341,6 +341,9 @@ which means in particular:
   scheme `kton-locator/v1` (8.1), one signed statement per producer;
 - `predicate` holds exactly `inputs` and `protocol` (no `specVersion`: the predicateType is the version);
 - a protocol without a descriptor **leaves the member out**; `"descriptor": null` is a different payload;
+- `protocol.ref` is `sha256:` followed by 64 **lowercase** hex digits. Without a descriptor it cannot be
+  recomputed, so its spelling would otherwise decide the id and the action key;
+- each path occurs **once** among the outputs, as among the inputs (6.3);
 - nothing else: no second digest algorithm, and no member the shape above does not name. A member a kernel does not know is therefore refused, never dropped and merged into a record
   that does not carry it.
 

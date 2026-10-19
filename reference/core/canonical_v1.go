@@ -34,6 +34,20 @@ func (st *Statement) CheckCanonicalForm() error {
 				"(anything else would differ between producers of the same work)", k)
 		}
 	}
+	// The ref is part of the action key and the id, so it has exactly one spelling: sha256: and 64
+	// lowercase hex. A bare ref (no descriptor to recompute it from) was taken as written, so
+	// "sha256:aaa…" and "sha256:AAA…" were two computations, and "not-a-hash" was admitted.
+	var proto struct {
+		Ref string `json:"ref"`
+	}
+	if raw, ok := p["protocol"]; ok {
+		if err := json.Unmarshal(raw, &proto); err != nil {
+			return fmt.Errorf("foton/v1 protocol: %w", err)
+		}
+	}
+	if norm, ok := NormalizeContentHash(proto.Ref); !ok || norm != proto.Ref {
+		return fmt.Errorf("foton/v1 protocol.ref %q is not sha256: followed by 64 lowercase hex", proto.Ref)
+	}
 	var ins []Subject
 	if raw, ok := p["inputs"]; ok {
 		if err := json.Unmarshal(raw, &ins); err != nil {
@@ -48,6 +62,11 @@ func canonicalSubjects(kind string, subs []Subject) error {
 		if len(s.URI) > 0 {
 			return fmt.Errorf("foton/v1 %s %q carries uri; v1 locators travel as material (scheme %s), not in the signed record",
 				kind, s.Name, "kton-locator/v1")
+		}
+		// One file per path. Inputs already refuse a second hash under one path (the action key);
+		// outputs did not, so one record could claim two different files at the same place.
+		if i > 0 && subs[i-1].Name == s.Name {
+			return fmt.Errorf("foton/v1 lists %s path %q twice; each path names one file", kind, s.Name)
 		}
 		if i > 0 && !subjectLess(subs[i-1], s) {
 			return fmt.Errorf("foton/v1 %ss are not in canonical order (by path, then digest): %q before %q",

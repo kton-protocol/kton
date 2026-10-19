@@ -380,3 +380,50 @@ func TestV1_NoDescriptorMeansNoMember(t *testing.T) {
 		t.Errorf("the canonical form without a descriptor was refused: %v", err)
 	}
 }
+
+// The protocol ref of a v1 record has one spelling, and each path names one file. Without a
+// descriptor the ref cannot be recomputed, so its case used to decide the id and the action key.
+func TestV1_RefSpellingAndOnePathPerFile(t *testing.T) {
+	good, err := foton.StatementPayload(work("v1", "b.txt", "c.txt", "zusammen.R"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutate := func(f func(st map[string]any)) []byte {
+		var st map[string]any
+		if err := json.Unmarshal(good, &st); err != nil {
+			t.Fatal(err)
+		}
+		f(st)
+		b, err := core.CanonValue(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	bareRef := func(ref string) func(st map[string]any) {
+		return func(st map[string]any) {
+			p := st["predicate"].(map[string]any)["protocol"].(map[string]any)
+			delete(p, "descriptor")
+			p["ref"] = ref
+		}
+	}
+	for name, payload := range map[string][]byte{
+		"uppercase bare ref": mutate(bareRef("sha256:" + strings.Repeat("A", 64))),
+		"not a hash":         mutate(bareRef("not-a-hash")),
+		"output path twice": mutate(func(st map[string]any) {
+			subs := st["subject"].([]any)
+			twin := map[string]any{"name": "ergebnis.txt", "digest": map[string]any{"sha256": strings.Repeat("f", 64)}}
+			st["subject"] = append(subs, twin)
+		}),
+	} {
+		reg, _ := registry.Open(t.TempDir())
+		if _, _, err := reg.Add(signRaw(key("x"), payload)); err == nil {
+			t.Errorf("%s: admitted", name)
+		}
+	}
+	// The lowercase bare ref is the one admitted spelling.
+	reg, _ := registry.Open(t.TempDir())
+	if _, _, err := reg.Add(signRaw(key("x"), mutate(bareRef("sha256:"+strings.Repeat("a", 64))))); err != nil {
+		t.Errorf("a canonical bare ref was refused: %v", err)
+	}
+}
