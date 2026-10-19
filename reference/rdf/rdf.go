@@ -11,6 +11,7 @@ package rdf
 import (
 	"crypto/ed25519"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -76,16 +77,40 @@ func Turtle(r *registry.Registry, sel string, trustKeys []ed25519.PublicKey) (st
 				fmt.Fprintf(&b, " ;\n    nk:environment %s", en)
 			}
 		}
-		if env, ok := r.Envelope(id); ok && len(env.Signatures) > 0 && env.Signatures[0].KeyID != "" {
+		if env, ok := r.Envelope(id); ok && len(env.Signatures) > 0 {
 			// Attribute to the VERIFIED signer (the trusted key that actually signed this foton), never the
 			// self-declared keyid. If no trusted key verifies it, do NOT assert prov:wasAttributedTo -
 			// carry the claimed signer as unverified so a consumer/gate never reads a forged attribution
 			// as established (systemic cold-session finding: the kernel knows, the readers did not ask).
-			if vk := core.VerifiedSignerKeyID(env, trustKeys); vk != "" {
-				if a := agentNode(vk); a != "" {
-					fmt.Fprintf(&b, " ;\n    prov:wasAttributedTo %s ;\n    nk:signerVerified true", a)
+			// A co-signed foton (the same work done again, L0: a reproduction) carries one signature
+			// per producer; each trusted one is an attribution of its own (#205).
+			//
+			// Verification comes first and does not depend on the declared keyids: an empty keyid on the
+			// first signature used to suppress every attribution, verified ones included. A key listed
+			// twice among the trusted keys is one attribution.
+			var verified []string
+			for _, pub := range trustKeys {
+				if ok, err := env.Verify(pub); ok && err == nil {
+					verified = append(verified, core.KeyIDHex(pub))
 				}
-			} else if a := agentNode(env.Signatures[0].KeyID); a != "" {
+			}
+			sort.Strings(verified)
+			verified = slices.Compact(verified)
+			claimed := ""
+			for _, sig := range env.Signatures {
+				if sig.KeyID != "" {
+					claimed = sig.KeyID
+					break
+				}
+			}
+			if len(verified) > 0 {
+				for _, vk := range verified {
+					if a := agentNode(vk); a != "" {
+						fmt.Fprintf(&b, " ;\n    prov:wasAttributedTo %s", a)
+					}
+				}
+				fmt.Fprintf(&b, " ;\n    nk:signerVerified true")
+			} else if a := agentNode(claimed); a != "" {
 				fmt.Fprintf(&b, " ;\n    nk:claimedSigner %s ;\n    nk:signerVerified false", a)
 			}
 		}
