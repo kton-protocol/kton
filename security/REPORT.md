@@ -12,18 +12,18 @@ which made 70 dead permalinks look like evidence a reader could follow. They are
 hashes so the trail survives for anyone holding the archive, and so nothing here claims to be
 checkable that is not.*
 
-## Posture: **27 closed · 3 open · 2 accepted boundary**, of 32 recorded attacks → NOT SECURE
+## Posture: **28 closed · 3 open · 2 accepted boundary**, of 33 recorded attacks → NOT SECURE
 
 *These numbers are derived from what is in this directory, not carried forward by hand. `ls
-attacks/*.sh` is 32; `check.sh` prints its own coverage line every run. The previous posture said
+attacks/*.sh` is 33; `check.sh` prints its own coverage line every run. The previous posture said
 "27/29 spectrum members fulfilled · 27 closed · 2 open" over a Closed table with 24 rows, and
 "10 of the 28 PoCs are executable" when 17 are and `check.sh` runs 16 - a report overclaiming its
 own coverage, which is the finding this suite keeps making about everything else.*
 
-**17 of the 32 PoCs are executable**; `check.sh` runs **16** of them here (the 17th,
+**18 of the 33 PoCs are executable**; `check.sh` runs **17** of them here (the 18th,
 `screenshot-viewer-labels`, needs a kton-examples checkout passed as `$1`). The remaining 15 carry no
 verdict: they are records of a finding, reproduced in prose below, and they run nowhere. A green gate
-means those 16 held - not that the suite is complete.
+means those 17 held - not that the suite is complete.
 
 Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
 vulnerable/fixed commits as signed `nekton` claims. Those claims and the `keys/` directory are not in this
@@ -33,7 +33,7 @@ repository, so `nekton verify` cannot be run against them from here - `redteam.p
 | class | count |
 |---|---|
 | `viewer-trusts-declared-id` | 3 |
-| `render-face-doesnt-escape` | 3 |
+| `render-face-doesnt-escape` | 4 |
 | `export-trusts-claimed-keyid` | 2 |
 | `backstop-looks-up-not-reexecute` | 2 |
 | `gate-trusts-mutable-graph-edge` | 2 |
@@ -79,6 +79,7 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 | `read-path-ungated` | RED | `ingest-gate-not-on-the-read-path` | - | #91 |
 | `scope-path-traversal` | RED | `path-from-unvalidated-input` | - | #87 |
 | `scope-truncation` | ORANGE | `freshness-monotone-boundary` | `a687723` | `8bbdf54` |
+| `seed-scope-trig` | RED | `render-face-doesnt-escape` | `864385f` (v0.2.1) | 0.2.2 |
 | `screenshot-viewer-labels` | RED | `viewer-trusts-declared-id` | [`46ed3fa`](https://github.com/gitmick/kton-examples/commit/46ed3fa) | [`b2616d7`](https://github.com/gitmick/kton-examples/commit/b2616d7) |
 | `silent-source-drop` | ORANGE | `read-face-silent-partial` | `ed7a008` | `056b87a` |
 | `spectrum-existence` | ORANGE | `spectrum-no-existence-check` | `7df1e70` | `05a94d8` |
@@ -330,6 +331,13 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **vulnerable at:** pk `a687723`
 - **fixed at (reproduction now fails):** pk `8bbdf54`
 - **PoC:** [`attacks/scope-truncation.sh`](attacks/scope-truncation.sh)
+
+### `seed-scope-trig` — RED · ✅ closed
+- **class:** `render-face-doesnt-escape`
+- **theory:** export --nanopub wrote a seed's signed scope NAME unescaped into `<urn:nekton:scope:...>`. A name with `>` and a newline closed the IRI and the assertion graph and opened graphs of its own, e.g. a provenance graph with an attribution no trusted key established. The one sibling the rdf-injection fix did not route through `iriEsc`. Fixed by rendering it through `curie`; `quote()` now escapes every control character (a raw CR made a whole export unparseable) and `safePNLocal` refuses what PN_LOCAL refuses.
+- **vulnerable at:** `864385f` (v0.2.1)
+- **fixed at (reproduction now fails):** 0.2.2
+- **PoC:** [`attacks/seed-scope-trig.sh`](attacks/seed-scope-trig.sh)
 
 ### `screenshot-viewer-labels` — RED · ✅ closed
 - **class:** `viewer-trusts-declared-id`
