@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"kton.dev/nekton/claim"
+	"kton.dev/nekton/nanopub"
 	"kton.dev/nekton/registry"
 	"kton.dev/plankton/core"
 )
@@ -126,8 +127,8 @@ func showClaim(args []string) error {
 	if len(st.Subject) > 0 {
 		fmt.Printf("subject:   %s\n", st.Subject[0].Key())
 	}
-	fmt.Printf("predicate: %s\n", uriOf(body, "predicate"))
-	if ctx := uriOf(body, "context"); ctx != "" {
+	fmt.Printf("predicate: %s\n", nanopub.URIOf(body, "predicate"))
+	if ctx := nanopub.URIOf(body, "context"); ctx != "" {
 		fmt.Printf("context:   %s\n", ctx)
 	}
 	if obj, ok := body["object"].(map[string]any); ok {
