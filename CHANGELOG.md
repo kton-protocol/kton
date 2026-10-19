@@ -20,6 +20,32 @@ honest producers. `foton.Spec.Statement = "v1"`, `plankton author --statement v1
 record's files live, as verification material bound to the foton id; `foton.SignLocators`,
 `foton.ReadLocators`. `plankton author --statement v1 --located P=URI --add` attaches them.
 
+**RDF projections as library packages** ([#204](https://github.com/kton-protocol/kton/issues/204)).
+`kton.dev/plankton/rdf` (`Turtle`, the lineage as PROV) and `kton.dev/nekton/nanopub` (`NewContext`,
+`RenderTrig`, `Registry` for a whole registry as one TriG document). Before, both lived in
+`package main` of the CLIs, so a linking caller could not project a registry for a triple store without
+a second mapping. The CLIs call the packages.
+
+**Structured claim values reach the RDF** (#204). A claim object field holding an object or a list
+was projected with Go's `%v`: `{"role": "step"}` became the literal `"map[role:step]"`, signed but
+unreachable by any query. Both projections (published TriG and signed nanopub quads) now unfold it
+the same way into named nodes `sub:o.<field>`.
+
+**`plankton export --rdf` attributes a co-signed foton to every signer it can verify**
+([#205](https://github.com/kton-protocol/kton/issues/205)). A foton done twice with byte-identical
+outputs is one record with two signatures, which is the evidence of the reproduction. The projection
+wrote `prov:wasAttributedTo` for the first trusted key only, so a query for "who ran this" saw one
+producer. Now there is one per trusted key that verifies the envelope, each once. An empty keyid on the
+first signature no longer suppresses the attribution.
+
+### Changed
+
+**The projection of some claims changes, and with it their Trusty URI** (#204). A re-rendered claim
+whose object holds a number (now `1000000`, where `%v` wrote `1e+06`), a `null` (now `null`, was
+`<nil>`) or a structured value (now unfolded into named nodes, was `"map[...]"`) projects to different
+RDF than before, so its Trusty URI changes. No record identity changes: claim ids and foton ids are
+computed from the signed statement, not from the projection.
+
 ## 0.2.2 — unreleased
 
 ### Security
@@ -31,6 +57,26 @@ and a newline closed the IRI and the assertion graph, and could add, for example
 with an attribution no trusted key established. The scope subject now goes through the same escaping
 as every other IRI. `nekton nanopublish` was not affected. PoC: `security/attacks/seed-scope-trig.sh`
 (gated).
+
+### Added
+
+**`plankton export --trust-keys <dir>`: the JSON export says who signed, the way `nekton export`
+does.** A consumer that needed to know which fotons a trusted key signed had to open every envelope
+and verify DSSE itself - a second implementation of the signature check outside the kernel. Each
+foton now carries `keyids` (self-declared, unverified), `verifiedSigner` / `verifiedSigners` (every
+trusted key that actually signed, so co-signing producers are all reported) and `signerVerified`:
+`verified`, `failed`, or `unchecked` without `--trust-keys` - the same three words as `nekton
+export`. `inputRefs` / `outputRefs` (hash and path as this foton recorded them) and `descriptor`
+are added so a consumer never has to read the envelope for them; `files[].paths` is a union over
+all fotons and cannot say which name a hash had in one of them.
+
+### Changed
+
+**`plankton export` emits one row per foton, sorted by id.** It iterated the arrival feed, so a foton
+whose signature was unioned from a second producer could be exported twice, and with one key trusted
+the two rows would carry contradictory verdicts - the defect `nekton export` fixed for claims in
+0.2.0. It now iterates the indexed fotons (`FotonIDs`), as `export --rdf` already did. Consumers
+that relied on arrival order get id order.
 
 ### Fixed
 

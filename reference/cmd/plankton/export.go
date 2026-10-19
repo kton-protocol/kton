@@ -7,6 +7,7 @@ package main
 // cockpit joins the two by subject hash (the two-layer Navigator).
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,6 +32,20 @@ type exportFoton struct {
 	Ref     string   `json:"ref"`
 	Inputs  []string `json:"inputs"`
 	Outputs []string `json:"outputs"`
+	// The record's own refs (hash + relative path), so a consumer reading this export never has to
+	// open an envelope to learn which name a hash had IN THIS foton. Files[].Paths is the union over
+	// all fotons and cannot answer that.
+	InputRefs  []core.FileRef `json:"inputRefs"`
+	OutputRefs []core.FileRef `json:"outputRefs"`
+	Descriptor map[string]any `json:"descriptor,omitempty"`
+	KeyIDs     []string       `json:"keyids"` // the SELF-DECLARED keyids on the envelope (unverified)
+	// Every trusted key that actually signed, as in `nekton export`: a foton's signatures are unioned
+	// onto one record, so several independent producers are several verified signers.
+	VerifiedSigner  string   `json:"verifiedSigner,omitempty"`
+	VerifiedSigners []string `json:"verifiedSigners,omitempty"`
+	// "verified" | "failed" | "unchecked" - the same three words as `nekton export`. Without
+	// --trust-keys nothing was checked, and that must not read as a verdict.
+	SignerVerified string `json:"signerVerified"`
 }
 
 type exportGraph struct {
@@ -39,7 +54,7 @@ type exportGraph struct {
 	Fotons []exportFoton `json:"fotons"`
 }
 
-func buildGraph(dir, title string) (*exportGraph, error) {
+func buildGraph(dir, title string, trustKeys []ed25519.PublicKey) (*exportGraph, error) {
 	r, err := registry.Open(dir)
 	if err != nil {
 		return nil, err
@@ -66,32 +81,50 @@ func buildGraph(dir, title string) (*exportGraph, error) {
 	}
 
 	g := &exportGraph{Title: title}
-	for _, rec := range r.Records(0) {
-		st, err := rec.Envelope.Statement()
-		if err != nil {
+	// The UNIQUE indexed fotons, not the arrival feed: a second producer's signature is unioned onto
+	// the existing record, and iterating the feed would emit that foton twice with (given one trusted
+	// key) contradictory verdicts - the defect `nekton export` fixed for claims.
+	for _, id := range r.FotonIDs() {
+		f, ok := r.Foton(id)
+		if !ok {
 			continue
 		}
-		if core.IsFotonPredicate(st.PredicateType) {
-			f, err := st.ToFoton()
-			if err != nil {
-				continue
-			}
-			id, _ := f.FotonID()
-			ef := exportFoton{ID: id, Kind: f.Protocol.Kind, Ref: f.Protocol.Ref}
-			for _, in := range f.Inputs {
-				touch(in).IsInput = true
-				ef.Inputs = append(ef.Inputs, in.Hash)
-			}
-			for _, out := range f.Outputs {
-				of := touch(out)
-				of.IsOutput = true
-				of.ProducedBy = id
-				ef.Outputs = append(ef.Outputs, out.Hash)
-			}
-			g.Fotons = append(g.Fotons, ef)
+		env, _ := r.Envelope(id)
+		ef := exportFoton{ID: id, Kind: f.Protocol.Kind, Ref: f.Protocol.Ref, Descriptor: f.Protocol.Descriptor,
+			InputRefs: []core.FileRef{}, OutputRefs: []core.FileRef{}, KeyIDs: []string{}}
+		for _, in := range f.Inputs {
+			touch(in).IsInput = true
+			ef.Inputs = append(ef.Inputs, in.Hash)
+			ef.InputRefs = append(ef.InputRefs, in)
 		}
-		// Non-foton statements are not plankton's concern (they live in nekton); skip.
+		for _, out := range f.Outputs {
+			of := touch(out)
+			of.IsOutput = true
+			of.ProducedBy = id
+			ef.Outputs = append(ef.Outputs, out.Hash)
+			ef.OutputRefs = append(ef.OutputRefs, out)
+		}
+		for _, sig := range env.Signatures {
+			ef.KeyIDs = append(ef.KeyIDs, sig.KeyID)
+		}
+		for _, pub := range trustKeys {
+			if ok, err := env.Verify(pub); ok && err == nil {
+				ef.VerifiedSigners = append(ef.VerifiedSigners, core.KeyIDHex(pub))
+			}
+		}
+		switch {
+		case len(trustKeys) == 0:
+			ef.SignerVerified = "unchecked"
+		case len(ef.VerifiedSigners) > 0:
+			ef.VerifiedSigner = ef.VerifiedSigners[0]
+			ef.SignerVerified = "verified"
+		default:
+			ef.SignerVerified = "failed"
+		}
+		g.Fotons = append(g.Fotons, ef)
 	}
+	// Non-foton statements are not plankton's concern (they live in nekton); they are not indexed
+	// as fotons and so never reach this loop.
 
 	for _, f := range files {
 		f.Leaf = f.IsOutput && !f.IsInput
@@ -102,8 +135,8 @@ func buildGraph(dir, title string) (*exportGraph, error) {
 }
 
 // exportJSON writes the graph JSON for the registry to out (or stdout if "-").
-func exportJSON(dir, title, out string) error {
-	g, err := buildGraph(dir, title)
+func exportJSON(dir, title, out string, trustKeys []ed25519.PublicKey) error {
+	g, err := buildGraph(dir, title, trustKeys)
 	if err != nil {
 		return err
 	}
