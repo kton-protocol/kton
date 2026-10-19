@@ -13,7 +13,20 @@ W=$(mktemp -d) || { echo "VERDICT: N-A"; exit 0; }
 cd "$W" || { echo "VERDICT: N-A"; exit 0; }
 export NEKTON_DIR="$W/nd"
 nekton keygen k >/dev/null 2>&1
-graphs() { grep -cE '^[^[:space:]][^{]*\{$' "$1"; }
+# Count the non-empty graphs by PARSING when rdflib is there (a graph opened mid-line, or a document
+# that no longer parses, cannot hide from a parser), else by the line shape the exporter writes.
+# A document that does not parse counts as 0 graphs, which fails both checks below.
+graphs() {
+  if python3 -c 'import rdflib' 2>/dev/null; then
+    python3 - "$1" <<'PY' 2>/dev/null || echo 0
+import sys, rdflib
+d = rdflib.Dataset(); d.parse(sys.argv[1], format="trig")
+print(sum(1 for g in d.graphs() if len(g)))
+PY
+  else
+    grep -cE '^[^[:space:]][^{]*\{$' "$1"
+  fi
+}
 
 # POSITIVE CONTROL
 nekton seed lab/benign --sign k.key --when 2026-07-16T00:00:00Z -o ok.dsse >/dev/null 2>&1
