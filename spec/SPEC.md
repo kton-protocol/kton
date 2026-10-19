@@ -313,22 +313,41 @@ A `FileRef`'s `path` travels as `name` and its `hash` as `digest.sha256`. Of the
 alike, and being non-covered it changes no identity. `id`, `mediaType` and `meta` are reserved and
 are not emitted. This listing is exhaustive: a field not named here is not part of the 0.1 wire form.
 
-#### 6.6.1 The canonical form - `foton/v1` *(proposal K5/K7)*
+#### 6.6.1 The canonical form - `foton/v1`
 
-A v0 statement lets a producer vary three things its id does not cover: the order of inputs and
-subjects, `uri`, and `specVersion`. Each variation is a different signed payload for the same foton,
-and signatures are never merged across differing payloads (§8, §12), so two producers of the same work
-cannot co-sign it. `predicateType = "https://kton.dev/foton/v1"` fixes all three:
+A v0 statement lets a producer vary what its id does not cover: the order of inputs and subjects,
+`uri`, `specVersion`, and the serialisation itself. Each variation is a different signed payload for
+the same foton, and signatures are never merged across differing payloads (§8, §12), so two producers
+of the same work cannot co-sign it. `predicateType = "https://kton.dev/foton/v1"` leaves a producer
+nothing to vary:
 
-- `subject` and `predicate.inputs` MUST be ordered by `name`, then by `digest.sha256`;
+**A v1 payload MUST be byte-identical to the canonical statement of the record it carries**, and a
+registry MUST refuse one that is not. The canonical statement is `canon(v)` (Clause 5) of
+
+```
+{ "_type": "https://in-toto.io/Statement/v1",
+  "subject": [ { "name": path, "digest": { "sha256": lowercase hex } } ... ],   # the outputs
+  "predicateType": "https://kton.dev/foton/v1",
+  "predicate": { "inputs": [ same shape ... ],
+                 "protocol": { "kind", "ref", "descriptor"? } } }
+```
+
+which means in particular:
+
+- `subject` and `predicate.inputs` are ordered by `name`, then by `digest.sha256`, comparing the
+  **bytes of the UTF-8 encoding** (not UTF-16 code units, as §5 orders object keys: the two differ for
+  names outside the Basic Multilingual Plane);
 - no subject or input carries `uri`; locators travel beside the record as verification material,
   scheme `kton-locator/v1` (8.1), one signed statement per producer;
-- `predicate` holds exactly `inputs` and `protocol` (no `specVersion`: the predicateType is the version).
+- `predicate` holds exactly `inputs` and `protocol` (no `specVersion`: the predicateType is the version);
+- a protocol without a descriptor **leaves the member out**; `"descriptor": null` is a different payload;
+- nothing else: no second digest algorithm, and no member the shape above does not name. A member a kernel does not know is therefore refused, never dropped and merged into a record
+  that does not carry it.
 
-A registry MUST refuse a v1 statement that breaks any of these rules. The same work therefore yields the
-same foton id **and** the same payload whoever records it, and a second producer's signature unions
-onto the record. A v0 record keeps its form, its id and its meaning; v0 and v1 records of the same work
-are two records (6.3). The action key does not depend on the statement version.
+The same work therefore yields the same foton id **and** the same payload whoever records it, with any
+tool, and a second producer's signature unions onto the record. A v0 record keeps its form, its id and
+its meaning; v0 and v1 records of the same work are two records (6.3). The action key does not depend on
+the statement version.
 
 The kernel records exactly **one** plankton predicate type - the foton. Signed statements *about*
 fotons are nekton claims (Clause 7). The mechanical L0/L1/L2 comparison of two results is itself a

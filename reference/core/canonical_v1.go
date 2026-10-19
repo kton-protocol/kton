@@ -1,9 +1,11 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // CheckCanonicalForm enforces the foton/v1 wire rules (SPEC §6.6.1) on a statement. A v0 statement
@@ -55,6 +57,9 @@ func canonicalSubjects(kind string, subs []Subject) error {
 	return nil
 }
 
+// subjectLess orders by name, then by digest, comparing the BYTES of the UTF-8 encoding (Go's string
+// <). Not UTF-16 code units as JCS orders object keys (§5): the two disagree for names outside the
+// BMP, and SPEC §6.6.1 names the byte order.
 func subjectLess(a, b Subject) bool {
 	if a.Name != b.Name {
 		return a.Name < b.Name
@@ -71,4 +76,60 @@ func SortRefs(refs []FileRef) {
 		}
 		return refs[i].Hash < refs[j].Hash
 	})
+}
+
+// CanonicalV1Payload is THE foton/v1 statement of a record: the one byte string a v1 payload for this
+// foton may be. Authoring signs exactly these bytes (foton.StatementPayload), and ingest admits a v1
+// payload only if it equals them (CheckV1Payload).
+//
+// The listed rules (order, no uri, no specVersion) are not enough on their own. Anything else a
+// producer's tool may vary - whitespace, key order, hex case, a second digest algorithm, an extra
+// member in a subject, the protocol or the statement - also yields a different payload for the same
+// id, signatures never union across payloads, and the first one ingested would keep every honest
+// co-signer out. A member this kernel does not know is refused the same way, so a later field can
+// never be dropped silently and merged into a record that does not carry it.
+//
+// The protocol carries its descriptor only when there is one (never `"descriptor": null`), and its
+// ref as stated: when a descriptor is present, the record's own ref check (FotonID) already ties
+// the two together.
+func CanonicalV1Payload(f *Foton) ([]byte, error) {
+	subjects := func(refs []FileRef) []any {
+		sorted := append([]FileRef(nil), refs...)
+		SortRefs(sorted)
+		out := make([]any, 0, len(sorted))
+		for _, r := range sorted {
+			out = append(out, map[string]any{
+				"name":   r.Path,
+				"digest": map[string]any{"sha256": strings.TrimPrefix(r.Hash, "sha256:")},
+			})
+		}
+		return out
+	}
+	protocol := map[string]any{"kind": f.Protocol.Kind, "ref": f.Protocol.Ref}
+	if f.Protocol.Descriptor != nil {
+		protocol["descriptor"] = f.Protocol.Descriptor
+	}
+	return CanonValue(map[string]any{
+		"_type":         "https://in-toto.io/Statement/v1",
+		"subject":       subjects(f.Outputs),
+		"predicateType": PredicateFotonV1,
+		"predicate": map[string]any{
+			"inputs":   subjects(f.Inputs),
+			"protocol": protocol,
+		},
+	})
+}
+
+// CheckV1Payload refuses a foton/v1 payload that is not byte-identical to the canonical statement of
+// the record it carries (SPEC §6.6.1). f is the record parsed from payload.
+func CheckV1Payload(payload []byte, f *Foton) error {
+	want, err := CanonicalV1Payload(f)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(payload, want) {
+		return fmt.Errorf("foton/v1 payload is not the canonical statement of its record; a v1 payload " +
+			"MUST be byte-identical to it (SPEC §6.6.1), or two producers of the same work could not co-sign")
+	}
+	return nil
 }

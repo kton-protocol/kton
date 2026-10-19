@@ -245,21 +245,16 @@ func StatementPayload(spec Spec) ([]byte, error) {
 		return nil, cerr
 	}
 	if spec.Statement == "v1" {
-		return core.CanonValue(map[string]any{
-			"_type":         "https://in-toto.io/Statement/v1",
-			"subject":       SubjectsOf(spec.Outputs),
-			"predicateType": core.PredicateFotonV1,
-			"predicate": map[string]any{
-				"inputs": SubjectsOf(spec.Inputs),
-				"protocol": map[string]any{
-					"kind":       spec.Protocol.Kind,
-					"ref":        ref,
-					"descriptor": spec.Protocol.Descriptor,
-				},
-				// No specVersion: it is carried, and a carried field in the signed bytes would make two
-				// producers' payloads differ for the same work. predicateType is the version.
-			},
-		})
+		// The ONE v1 form, shared with ingest: a registry admits a v1 payload only if it is these
+		// bytes (core.CheckV1Payload), so authoring must not build its own.
+		f := core.Foton{Protocol: core.Protocol{Kind: spec.Protocol.Kind, Ref: ref, Descriptor: spec.Protocol.Descriptor}}
+		for _, in := range spec.Inputs {
+			f.Inputs = append(f.Inputs, core.FileRef{Path: in.Path, Hash: in.Hash})
+		}
+		for _, out := range spec.Outputs {
+			f.Outputs = append(f.Outputs, core.FileRef{Path: out.Path, Hash: out.Hash})
+		}
+		return core.CanonicalV1Payload(&f)
 	}
 	st := map[string]any{
 		"_type":         "https://in-toto.io/Statement/v1",

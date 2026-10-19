@@ -1,10 +1,12 @@
 package foton_test
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"sort"
 	"strings"
 	"testing"
 
@@ -46,13 +48,13 @@ func work(stmt string, order ...string) foton.Spec {
 		Protocol: &foton.ProtocolSpec{Kind: "script", Descriptor: map[string]any{"cmd": "Rscript zusammen.R"}}}
 }
 
-// K7. Inputs are keyed by path (SPEC §6.2), so their order is not part of the work. In v0 it is
+// Inputs are keyed by path (SPEC §6.2), so their order is not part of the work. In v0 it is
 // part of the id; in v1 it is not.
 func TestV1_InputOrderDoesNotChangeTheId(t *testing.T) {
 	a, _ := foton.FotonID(work("v0", "zusammen.R", "b.txt", "c.txt"))
 	b, _ := foton.FotonID(work("v0", "b.txt", "c.txt", "zusammen.R"))
 	if a == b {
-		t.Fatal("precondition: v0 ids are order-sensitive (if this changed, K7 is moot)")
+		t.Fatal("precondition: v0 ids are order-sensitive (if this changed, the v1 order rule is moot)")
 	}
 	c, _ := foton.FotonID(work("v1", "zusammen.R", "b.txt", "c.txt"))
 	d, _ := foton.FotonID(work("v1", "b.txt", "c.txt", "zusammen.R"))
@@ -77,7 +79,7 @@ func TestV1_IsNeverTheSameRecordAsV0(t *testing.T) {
 	}
 }
 
-// K5. Two producers of the same work, each wanting to say where THEIR copies live. In v0 the uri is
+// Two producers of the same work, each wanting to say where THEIR copies live. In v0 the uri is
 // in the signed bytes, so the registry keeps the first record and drops the second signature. In v1
 // both sign the same bytes; the signatures union; the locators travel as material, one per producer.
 func TestV1_TwoProducersCoSignAndKeepTheirOwnLocators(t *testing.T) {
@@ -230,5 +232,151 @@ func TestLocators_OnlyThisRecordsFilesAndOnlyGivenKeys(t *testing.T) {
 	}
 	if ls, err := foton.ReadLocators("rekor", ok.Material, f, nil); ls != nil || err != nil {
 		t.Error("material of another scheme is simply not a locator")
+	}
+}
+
+// reversedJSON writes v with every object's keys in REVERSE order: valid JSON for the same
+// statement, but not its canonical bytes.
+func reversedJSON(v any) string {
+	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Sort(sort.Reverse(sort.StringSlice(keys)))
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			kb, _ := json.Marshal(k)
+			parts = append(parts, string(kb)+":"+reversedJSON(x[k]))
+		}
+		return "{" + strings.Join(parts, ",") + "}"
+	case []any:
+		parts := make([]string, 0, len(x))
+		for _, e := range x {
+			parts = append(parts, reversedJSON(e))
+		}
+		return "[" + strings.Join(parts, ",") + "]"
+	default:
+		b, _ := json.Marshal(x)
+		return string(b)
+	}
+}
+
+func signRaw(k ed25519.PrivateKey, payload []byte) core.Envelope {
+	env := core.Envelope{PayloadType: core.PayloadType, Payload: base64.StdEncoding.EncodeToString(payload)}
+	env.Signatures = append(env.Signatures, struct {
+		KeyID string `json:"keyid"`
+		Sig   string `json:"sig"`
+	}{core.KeyIDHex(pub(k)), base64.StdEncoding.EncodeToString(ed25519.Sign(k, core.PAE(core.PayloadType, payload)))})
+	return env
+}
+
+// A v1 payload is admitted only as the canonical statement of its record, byte for byte. Every
+// variant below describes the same foton id. Admitting any of them first would keep both honest
+// producers' signatures out ("already present"), because signatures never union across payloads:
+// the first ingested wins. So each is refused, and afterwards the two honest producers co-sign.
+func TestV1_OnlyTheCanonicalBytesAreAdmitted(t *testing.T) {
+	a, c, m := key("producer-a"), key("producer-c"), key("other-tool")
+	good, err := foton.StatementPayload(work("v1", "b.txt", "c.txt", "zusammen.R"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parse := func() map[string]any {
+		var st map[string]any
+		if err := json.Unmarshal(good, &st); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	canon := func(st map[string]any) []byte {
+		b, err := core.CanonValue(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	pred := func(st map[string]any) map[string]any { return st["predicate"].(map[string]any) }
+	firstSubject := func(st map[string]any) map[string]any { return st["subject"].([]any)[0].(map[string]any) }
+
+	variants := map[string]func() []byte{
+		"whitespace": func() []byte { b, _ := json.MarshalIndent(parse(), "", " "); return b },
+		"key order":  func() []byte { return []byte(reversedJSON(parse())) },
+		"unknown protocol member": func() []byte {
+			st := parse()
+			pred(st)["protocol"].(map[string]any)["conditions"] = []any{map[string]any{"kind": "database"}}
+			return canon(st)
+		},
+		"unknown subject member": func() []byte {
+			st := parse()
+			firstSubject(st)["annotations"] = map[string]any{"x": "y"}
+			return canon(st)
+		},
+		"unknown top-level member": func() []byte { st := parse(); st["extra"] = "x"; return canon(st) },
+		"second digest algorithm": func() []byte {
+			st := parse()
+			firstSubject(st)["digest"].(map[string]any)["sha512"] = strings.Repeat("ab", 64)
+			return canon(st)
+		},
+		"uppercase hex": func() []byte {
+			st := parse()
+			d := firstSubject(st)["digest"].(map[string]any)
+			d["sha256"] = strings.ToUpper(d["sha256"].(string))
+			return canon(st)
+		},
+		"foreign _type": func() []byte { st := parse(); st["_type"] = "https://example.org/Statement"; return canon(st) },
+	}
+	for name, variant := range variants {
+		t.Run(name, func(t *testing.T) {
+			payload := variant()
+			if bytes.Equal(payload, good) {
+				t.Fatal("test setup: the variant equals the canonical payload")
+			}
+			reg, err := registry.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := reg.Add(signRaw(m, payload)); err == nil {
+				t.Error("a non-canonical v1 payload was admitted")
+			}
+			ea, id, err := foton.SignWith(work("v1", "b.txt", "c.txt", "zusammen.R"), a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ec, _, _ := foton.SignWith(work("v1", "zusammen.R", "c.txt", "b.txt"), c)
+			mustAdd(t, reg, ea)
+			mustAdd(t, reg, ec)
+			env, _ := reg.Envelope(id)
+			for who, k := range map[string]ed25519.PrivateKey{"a": a, "c": c} {
+				if core.VerifiedSignerKeyID(env, []ed25519.PublicKey{pub(k)}) == "" {
+					t.Errorf("producer %s's signature is not on the record", who)
+				}
+			}
+		})
+	}
+}
+
+// A v1 protocol without a descriptor leaves the member out. `"descriptor": null` is a different
+// payload for the same record, and is refused like any other.
+func TestV1_NoDescriptorMeansNoMember(t *testing.T) {
+	s := work("v1", "b.txt")
+	s.Protocol.Descriptor = nil
+	p, err := foton.StatementPayload(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(p, []byte(`"descriptor"`)) {
+		t.Fatalf("a v1 payload without a descriptor carries the member: %s", p)
+	}
+	var st map[string]any
+	_ = json.Unmarshal(p, &st)
+	st["predicate"].(map[string]any)["protocol"].(map[string]any)["descriptor"] = nil
+	withNull, _ := core.CanonValue(st)
+	reg, _ := registry.Open(t.TempDir())
+	if _, _, err := reg.Add(signRaw(key("x"), withNull)); err == nil {
+		t.Error(`a v1 payload with "descriptor": null was admitted`)
+	}
+	if _, _, err := reg.Add(signRaw(key("x"), p)); err != nil {
+		t.Errorf("the canonical form without a descriptor was refused: %v", err)
 	}
 }

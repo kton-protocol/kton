@@ -71,7 +71,7 @@ func coveredRefs(refs []FileRef) []any {
 // on its input/output hashes+paths and its protocol - not on where the files happen to be located.
 func (f Foton) FotonID() (string, error) {
 	if f.Statement == "v1" {
-		// K7: inputs and outputs are keyed by path, so their order is not part of the work.
+		// inputs and outputs are keyed by path, so their order is not part of the work.
 		ins, outs := append([]FileRef{}, f.Inputs...), append([]FileRef{}, f.Outputs...)
 		SortRefs(ins)
 		SortRefs(outs)

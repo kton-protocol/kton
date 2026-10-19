@@ -70,6 +70,8 @@ func main() {
 	confirmer := keyFromLabel("kton.dev/testvector/verdict-confirmer/v1")
 	fp := regen(d+"foton.statement.json", d+"foton.dsse.json", d+"author.pub", author)
 	regen(d+"verdict.statement.json", d+"verdict.dsse.json", d+"confirmer.pub", confirmer)
+	// foton/v1 (SPEC §6.6.1), file names outside the BMP: their UTF-8 byte order differs from UTF-16.
+	regen(d+"foton-v1.statement.json", d+"foton-v1.dsse.json", d+"author.pub", author)
 
 	var st core.Statement
 	if err := json.Unmarshal(fp, &st); err != nil {

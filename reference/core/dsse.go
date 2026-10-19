@@ -40,7 +40,7 @@ const PayloadType = "application/vnd.in-toto+json"
 // docs/decisions.md §1-§5 (the reproducible/attestable cut).
 const PredicateFoton = "https://kton.dev/foton/v0"
 
-// PredicateFotonV1 is the CANONICAL form of the same record (SPEC §6.6.1, proposals K5/K7). Its
+// PredicateFotonV1 is the CANONICAL form of the same record (SPEC §6.6.1, #208). Its
 // identity rule is unchanged - FotonID over the covered projection - but its wire form leaves the
 // producer nothing to vary: inputs and subjects are ordered by path, and nothing carried (uri,
 // specVersion) is in the signed bytes. Its id is computed over the inputs and outputs in path order

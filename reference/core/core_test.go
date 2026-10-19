@@ -318,3 +318,44 @@ func TestCarriedFieldsNotCovered(t *testing.T) {
 		t.Fatal("a different relative path (covered) MUST change the foton id")
 	}
 }
+
+// The foton/v1 vector (SPEC §6.6.1). Its file names lie outside the BMP, where the UTF-8 byte order
+// the spec requires and the UTF-16 order JCS uses for object keys disagree. A second implementation
+// must reproduce these bytes, this id and this action key; the reversed (UTF-16) order is refused.
+func TestGoldenV1Vector(t *testing.T) {
+	env := readEnv(t, "../testdata/foton-v1.dsse.json")
+	if ok, err := env.Verify(pubKey(t, "../testdata/author.pub")); err != nil || !ok {
+		t.Fatalf("author should verify the v1 vector (ok=%v err=%v)", ok, err)
+	}
+	payload, err := env.PayloadBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := env.Statement()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CheckCanonicalForm(); err != nil {
+		t.Fatalf("the v1 vector is not in canonical form: %v", err)
+	}
+	f, err := st.ToFoton()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckV1Payload(payload, f); err != nil {
+		t.Fatalf("the v1 vector is not the canonical statement of its record: %v", err)
+	}
+	id, _ := f.FotonID()
+	ak, _ := f.ActionKey()
+	const wantID = "sha256:0befea605cef3a5e0a456e97d989309ca3db8ba5d2c15199af79256e5e245b91"
+	const wantAK = "sha256:fdb49f43424d6f741d069b468c3113ea3795d35033b476bf6cf3388ca2f8b1ba"
+	if id != wantID || ak != wantAK {
+		t.Fatalf("v1 vector drift:\n id %s\nwant %s\n ak %s\nwant %s", id, wantID, ak, wantAK)
+	}
+
+	// The UTF-16 order (U+1F600 before U+FF61) is a different payload, and is not canonical.
+	st.Subject[0], st.Subject[1] = st.Subject[1], st.Subject[0]
+	if err := st.CheckCanonicalForm(); err == nil {
+		t.Error("subjects in UTF-16 order passed as canonical")
+	}
+}

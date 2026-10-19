@@ -795,6 +795,12 @@ func parseEnv(env core.Envelope) (*core.Foton, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	if f.Statement == "v1" {
+		pb, _ := env.PayloadBytes() // decoded above
+		if err := core.CheckV1Payload(pb, f); err != nil {
+			return nil, "", err
+		}
+	}
 	id, err := f.FotonID()
 	if err != nil {
 		return nil, "", err
