@@ -112,7 +112,8 @@ func iriEsc(s string) string {
 // conservative PN_LOCAL subset. Anything else falls back to an escaped full IRI, so a crafted value
 // can never break out of the term.
 func safePNLocal(local string) bool {
-	if local == "" {
+	// PN_LOCAL may not start with '-' or '.', nor end with '.'. The character loop below allows both.
+	if local == "" || local[0] == '-' || local[0] == '.' || local[len(local)-1] == '.' {
 		return false
 	}
 	for i := 0; i < len(local); i++ {
@@ -161,9 +162,34 @@ func (c *trigCtx) hashRef(v string) string {
 	return quote(v)
 }
 
+// quote renders s as a Turtle string literal. Every control character is escaped, not only the ones
+// the grammar forbids raw (LF, CR): a raw CR made the whole document unparseable, and one such claim
+// broke an export of every claim with it. Escaping changes the text, never the literal's value.
 func quote(s string) string {
-	r := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\n", "\\n", "\t", "\\t")
-	return "\"" + r.Replace(s) + "\""
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04X`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 func agentIRI(c *trigCtx, by string) string {
@@ -306,7 +332,10 @@ func renderTrig(c *trigCtx, st *claim.Statement, body map[string]any, env core.E
 	if st.PredicateType == claim.ScopePredicateType {
 		// a seed: the scope comes into being
 		scope := str(body, "scope")
-		fmt.Fprintf(&b, "  <urn:nekton:scope:%s> a nk:Scope ;\n    rdfs:label %s .\n", scope, quote(scope))
+		// The scope NAME comes from the signed seed, so it is record data like any object value and
+		// goes through curie (an escaped IRI), never straight into <...>: a name containing `>` or a
+		// newline closed the IRI and could open graphs of its own in the export (B1, 0.2.2).
+		fmt.Fprintf(&b, "  %s a nk:Scope ;\n    rdfs:label %s .\n", c.curie("urn:nekton:scope:"+scope), quote(scope))
 	} else {
 		subj := "<urn:nekton:claim>"
 		if len(st.Subject) > 0 {
