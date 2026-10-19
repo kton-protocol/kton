@@ -427,3 +427,33 @@ func TestV1_RefSpellingAndOnePathPerFile(t *testing.T) {
 		t.Errorf("a canonical bare ref was refused: %v", err)
 	}
 }
+
+// Potentials exist on v1. An unbound slot (§6.4) is a subject without a digest, and that is its one
+// form: an empty digest map or an empty sha256 is a different payload for the same record.
+func TestV1_PotentialSlotsCarryNoDigest(t *testing.T) {
+	s := foton.Spec{Statement: "v1",
+		Inputs:   []foton.FileSpec{{Path: "daten.csv"}, {Path: "zusammen.R", Hash: h("script")}},
+		Outputs:  []foton.FileSpec{{Path: "bericht.pdf"}},
+		Protocol: &foton.ProtocolSpec{Kind: "script", Descriptor: map[string]any{"cmd": "Rscript zusammen.R"}}}
+	p, err := foton.StatementPayload(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(p, []byte(`"sha256":""`)) {
+		t.Fatalf("an unbound slot carries an empty digest: %s", p)
+	}
+	reg, _ := registry.Open(t.TempDir())
+	if _, _, err := reg.Add(signRaw(key("x"), p)); err != nil {
+		t.Fatalf("a v1 potential was refused: %v", err)
+	}
+	for name, digest := range map[string]any{"empty map": map[string]any{}, "empty sha256": map[string]any{"sha256": ""}} {
+		var st map[string]any
+		_ = json.Unmarshal(p, &st)
+		st["subject"].([]any)[0].(map[string]any)["digest"] = digest
+		b, _ := core.CanonValue(st)
+		reg, _ := registry.Open(t.TempDir())
+		if _, _, err := reg.Add(signRaw(key("x"), b)); err == nil {
+			t.Errorf("%s on an unbound slot was admitted", name)
+		}
+	}
+}

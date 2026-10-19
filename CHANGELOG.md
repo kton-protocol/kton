@@ -9,7 +9,8 @@ work recorded by two producers is now the same record with both signatures. In v
 whenever the producers differed in input order or carried a locator: the payloads differed, the registry
 kept the first and answered "already there". v1 orders inputs and outputs by path (UTF-8 bytes), carries
 no `uri` and no `specVersion` in the signed bytes, leaves out an absent descriptor, and includes its
-version in the id, so it never contends with a v0 twin. **A registry admits a v1 payload only if it is
+version in the id, so it never contends with a v0 twin. Potentials work on v1: an unbound slot is a subject
+without a `digest`. **A registry admits a v1 payload only if it is
 byte-identical to the canonical statement derived from its record**, so two tools that serialise the
 same statement differently, or a field this kernel does not know, cannot take the record from the
 honest producers. `foton.Spec.Statement = "v1"`, `plankton author --statement v1`. SPEC §6.3, §6.6.1,

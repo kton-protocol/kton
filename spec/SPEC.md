@@ -326,7 +326,7 @@ registry MUST refuse one that is not. The canonical statement is `canon(v)` (Cla
 
 ```
 { "_type": "https://in-toto.io/Statement/v1",
-  "subject": [ { "name": path, "digest": { "sha256": lowercase hex } } ... ],   # the outputs
+  "subject": [ { "name": path, "digest"?: { "sha256": lowercase hex } } ... ],  # the outputs
   "predicateType": "https://kton.dev/foton/v1",
   "predicate": { "inputs": [ same shape ... ],
                  "protocol": { "kind", "ref", "descriptor"? } } }
@@ -344,6 +344,8 @@ which means in particular:
 - `protocol.ref` is `sha256:` followed by 64 **lowercase** hex digits. Without a descriptor it cannot be
   recomputed, so its spelling would otherwise decide the id and the action key;
 - each path occurs **once** among the outputs, as among the inputs (6.3);
+- `digest` is present **if and only if** the file is bound. An unbound slot of a potential (6.4) is
+  `{ "name": path }`; `"digest": {}` and `"digest": { "sha256": "" }` are different payloads;
 - nothing else: no second digest algorithm, and no member the shape above does not name. A member a kernel does not know is therefore refused, never dropped and merged into a record
   that does not carry it.
 

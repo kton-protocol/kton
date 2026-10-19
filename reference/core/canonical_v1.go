@@ -117,10 +117,13 @@ func CanonicalV1Payload(f *Foton) ([]byte, error) {
 		SortRefs(sorted)
 		out := make([]any, 0, len(sorted))
 		for _, r := range sorted {
-			out = append(out, map[string]any{
-				"name":   r.Path,
-				"digest": map[string]any{"sha256": strings.TrimPrefix(r.Hash, "sha256:")},
-			})
+			s := map[string]any{"name": r.Path}
+			// An unbound slot of a potential (§6.4) has no hash, and its subject no digest: not an
+			// empty one, which would read as a content address that is not there.
+			if r.Hash != "" {
+				s["digest"] = map[string]any{"sha256": strings.TrimPrefix(r.Hash, "sha256:")}
+			}
+			out = append(out, s)
 		}
 		return out
 	}
