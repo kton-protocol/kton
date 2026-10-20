@@ -585,7 +585,10 @@ func (r *Registry) NormalizedOutput(hash, potential string) string {
 	}
 	for _, id := range r.byInput[hash] {
 		f := r.foton[id]
-		if f == nil || len(f.Outputs) == 0 {
+		// A conditional normalization is no normalization: its re-run need not give the same bytes,
+		// so it cannot be L0-qualified, and an L1 match through it would rest on what a database or
+		// the network said once (SPEC §9).
+		if f == nil || len(f.Outputs) == 0 || f.Conditional() {
 			continue
 		}
 		if ref, err := f.Protocol.EffectiveRef(); err == nil && ref == want {
@@ -593,6 +596,29 @@ func (r *Registry) NormalizedOutput(hash, potential string) string {
 		}
 	}
 	return ""
+}
+
+// ConditionalIn returns the conditional fotons among ids, in order. Every face that makes a
+// reproducibility statement over a lineage shows them: downstream fotons are ordinary (their inputs
+// are pinned by hash), but what they rest on was reproducible only under conditions (SPEC §11).
+func (r *Registry) ConditionalIn(ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		if f, ok := r.foton[id]; ok && f.Conditional() {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// HasUnconditionalProducer reports whether some foton that is not conditional produced hash.
+func (r *Registry) HasUnconditionalProducer(hash string) bool {
+	for _, id := range r.byOutput[hash] {
+		if f, ok := r.foton[id]; ok && !f.Conditional() {
+			return true
+		}
+	}
+	return false
 }
 
 // Lineage walks producers of hash backwards, returning visited foton ids (spec §11).

@@ -35,6 +35,7 @@ and versioned:
 | qualifies-as | `nk:qualifies-as` | binds a concrete env/tool to an env/tool spectrum (Clause 6.5/10) |
 | env-spectrum | (a `SpectrumId`) | an environment qualification class (Clause 6.5) |
 | action_key | (computed) | the identity of a computation, inputs+protocol (Clause 6.3) |
+| conditional foton | `protocol.conditions` | a foton reproducible only under conditions (Clause 6.2). Conventional `kind`s: `database`, `network`, `clock`, `random`, `license` - the kernel acts on presence, not on the value |
 | confirmed | `nk:confirmed` | a lightweight general confirmation (no regulatory weight) |
 
 ## 3. Application / example vocabulary (NOT the protocol)

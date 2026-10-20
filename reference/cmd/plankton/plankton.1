@@ -115,6 +115,13 @@ so it is COVERED - part of \fBprotocol.ref\fR and the action key: a foton produc
 qualified-X environment" is a distinct computation. It is executor-agnostic (names a qualification, not
 a docker image). Concrete environment data (an OCI digest, a lockfile hash) is instead CARRIED, opaque
 to the kernel, and never changes the foton id.
+.br
+\fB--condition\fR \fIKIND\fR[=\fIREF\fR] (repeatable, needs \fB--statement v1\fR) marks a
+CONDITIONAL foton: a step that read state no input pins (\fBdatabase\fR, \fBnetwork\fR,
+\fBclock\fR, ...). The conditions are COVERED, so it never shares an action key with the
+unconditional computation; it does not count toward \fBreproductions\fR, a normalizer that is
+conditional is not followed, and a \fBspectrum check\fR fulfilment cannot rest on it. \fBshow\fR,
+\fBreuse\fR and \fBlineage\fR mark it. If you can hash it, it is an input, not a condition.
 .RS
 .nf
 

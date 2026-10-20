@@ -53,6 +53,18 @@ spectrum check` calls the package; its output and exit codes are unchanged. `pla
 --json` prints the same answer as JSON (the statuses per member and the outcome), with the same exit
 code.
 
+**Conditional fotons** ([#212](https://github.com/kton-protocol/kton/issues/212), SPEC §6.2). A step that
+read state no input pins (a database, the network, the clock) can now be recorded and marked
+`protocol.conditions: [{kind, ref?}]`, `foton/v1` only. The mark is covered: a conditional foton never
+shares an action key with the unconditional computation, nor with the same step against another
+database. It never counts toward `reproductions` (↻N), a conditional normalizer is not followed to an L1
+match, and a `spectrum check` fulfilment cannot rest on one (new statuses `reference-conditional`,
+`candidate-conditional`). `reuse` marks the hit (`conditions` in `--json`), `show` lists the conditions,
+and `lineage` says when it rests on one (`dependsOnConditional`). `plankton author --statement v1
+--condition KIND[=REF]`; `core.Condition`, `Foton.Conditional()`, `Registry.ConditionalIn`. A `foton/v0`
+statement carrying `protocol.conditions` is refused. PoC: `security/attacks/conditional-merge.sh`
+(gated).
+
 ### Changed
 
 **The projection of some claims changes, and with it their Trusty URI** (#204). A re-rendered claim

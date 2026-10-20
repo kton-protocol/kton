@@ -46,6 +46,10 @@ const (
 	NoCandidate          Status = "no-candidate"           // the member was not checked
 	ReferenceNotRecorded Status = "reference-not-recorded" // no foton in the registry produced the reference
 	CandidateNotRecorded Status = "candidate-not-recorded" // no foton in the registry produced the candidate
+	// A fulfilment MUST NOT rest on a conditional foton (SPEC §10): one whose re-run need not give the
+	// same bytes. These say every recorded producer of that output is conditional.
+	ReferenceConditional Status = "reference-conditional"
+	CandidateConditional Status = "candidate-conditional"
 	NotFulfilled         Status = "not-fulfilled"          // both recorded, and they do not reproduce
 )
 
@@ -100,7 +104,9 @@ func IsContentHash(s string) bool {
 
 // Check compares candidate outputs (member name -> output hash) against the spectrum's reference
 // members in reg. Both the reference and the candidate must be the output of a foton recorded in reg;
-// otherwise invented hashes would score as identical. The comparison is Registry.Reproduces with the
+// otherwise invented hashes would score as identical. Each must also have a producer that is not
+// conditional (SPEC §10), and a normalizer that is conditional is not followed (Registry.
+// NormalizedOutput). The comparison is Registry.Reproduces with the
 // spectrum's normalizer, the same rule `plankton reproduces` applies.
 //
 // Check refuses a spectrum without members (a tool defined by zero reference fotons qualifies
@@ -141,6 +147,10 @@ func Check(reg *registry.Registry, s Spectrum, candidates map[string]string) (Re
 			mr.Candidate, mr.Status = c, ReferenceNotRecorded
 		case len(reg.Producer(c)) == 0:
 			mr.Candidate, mr.Status = c, CandidateNotRecorded
+		case !reg.HasUnconditionalProducer(m.Output):
+			mr.Candidate, mr.Status = c, ReferenceConditional
+		case !reg.HasUnconditionalProducer(c):
+			mr.Candidate, mr.Status = c, CandidateConditional
 		default:
 			mr.Candidate, mr.Status = c, NotFulfilled
 			rep, err := reg.Reproduces(m.Output, c, s.Normalizer)

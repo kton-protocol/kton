@@ -252,6 +252,10 @@ func spectrumCheck(args []string) error {
 			fmt.Printf("  %-24s not fulfilled (reference is not a recorded foton output - fabricated member)\n", m.Name)
 		case spectrum.CandidateNotRecorded:
 			fmt.Printf("  %-24s not fulfilled (candidate is not a recorded foton output - nothing was run)\n", m.Name)
+		case spectrum.ReferenceConditional:
+			fmt.Printf("  %-24s not fulfilled (every producer of the reference is a conditional foton - a fulfilment cannot rest on one)\n", m.Name)
+		case spectrum.CandidateConditional:
+			fmt.Printf("  %-24s not fulfilled (every producer of the candidate is a conditional foton - a fulfilment cannot rest on one)\n", m.Name)
 		case spectrum.Identical:
 			fmt.Printf("  %-24s fulfilled (identical)\n", m.Name)
 		case spectrum.Via:

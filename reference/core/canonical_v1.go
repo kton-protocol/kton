@@ -131,6 +131,9 @@ func CanonicalV1Payload(f *Foton) ([]byte, error) {
 	if f.Protocol.Descriptor != nil {
 		protocol["descriptor"] = f.Protocol.Descriptor
 	}
+	if c := f.Protocol.coveredConditions(); c != nil {
+		protocol["conditions"] = c
+	}
 	return CanonValue(map[string]any{
 		"_type":         "https://in-toto.io/Statement/v1",
 		"subject":       subjects(f.Outputs),

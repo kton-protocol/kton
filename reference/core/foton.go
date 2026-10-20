@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -33,6 +34,57 @@ type Protocol struct {
 	Kind       string         `json:"kind"`
 	Ref        string         `json:"ref"`
 	Descriptor map[string]any `json:"descriptor,omitempty"`
+	// Conditions marks a CONDITIONAL foton (SPEC §6.2): a step that read state the record cannot pin
+	// (a database, the network, the clock), so re-running it with the same inputs and protocol need
+	// not reproduce its outputs. COVERED, outside the opaque descriptor so the kernel can see it, and
+	// foton/v1 only. Nil means unconditional; an empty list is refused, because the kernel acts on
+	// presence and `[]` would give an unconditional computation a second action key.
+	Conditions []Condition `json:"conditions,omitempty"`
+}
+
+// Condition is one thing a conditional foton depended on. Kind is opaque to the kernel (`network`,
+// `database`, `clock`, `random`, ... - a convention, spec/vocabulary.md); Ref optionally names what
+// (an endpoint, a database, a query id) and is covered: the same query against prod and against a
+// replica are two computations.
+type Condition struct {
+	Kind string `json:"kind"`
+	Ref  string `json:"ref,omitempty"`
+}
+
+// Conditional reports whether the foton is reproducible only under conditions (SPEC §6.2). A
+// conditional foton is verifiable by hash, but a re-run is no evidence: no reproduction, normalizer
+// or spectrum fulfilment may rest on one (SPEC §9, §10).
+func (f Foton) Conditional() bool { return len(f.Protocol.Conditions) > 0 }
+
+// coveredConditions is the conditions as identity and the action key see them, or nil when there
+// are none, so an unconditional foton's bytes are exactly what they were before conditions existed.
+func (p Protocol) coveredConditions() []any {
+	if len(p.Conditions) == 0 {
+		return nil
+	}
+	out := make([]any, 0, len(p.Conditions))
+	for _, c := range p.Conditions {
+		m := map[string]any{"kind": c.Kind}
+		if c.Ref != "" {
+			m["ref"] = c.Ref
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// conditionLess is the canonical order of conditions: by kind, then by ref, an entry without a ref
+// first (the empty string sorts first), comparing UTF-8 bytes like every v1 order.
+func conditionLess(a, b Condition) bool {
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	return a.Ref < b.Ref
+}
+
+// SortConditions orders conditions canonically, as foton/v1 lists them.
+func SortConditions(cs []Condition) {
+	sort.SliceStable(cs, func(i, j int) bool { return conditionLess(cs[i], cs[j]) })
 }
 
 // Foton is a transformation edge: an input tree -> protocol -> an output tree (spec §6.2).
@@ -118,6 +170,9 @@ func (f Foton) coveredProtocol() map[string]any {
 	if f.Protocol.Descriptor != nil {
 		p["descriptor"] = f.Protocol.Descriptor
 	}
+	if c := f.Protocol.coveredConditions(); c != nil {
+		p["conditions"] = c
+	}
 	return p
 }
 
@@ -138,7 +193,42 @@ func (f Foton) ValidateStructure() error {
 	if err := validateRefStructure("input", f.Inputs, true); err != nil {
 		return err
 	}
-	return validateRefStructure("output", f.Outputs, false)
+	if err := validateRefStructure("output", f.Outputs, false); err != nil {
+		return err
+	}
+	return f.validateConditions()
+}
+
+// validateConditions enforces SPEC §6.2's rules for protocol.conditions.
+//
+// foton/v1 only. The deployed v0 kernels decode protocol with a plain json.Unmarshal and drop an
+// unknown member without an error: a v0 statement carrying conditions was ingested as the SAME foton
+// id and action key as its unconditional twin, so `reuse` handed a stale database result out as a
+// cache hit. A v1 kernel refuses what it does not know (CheckV1Payload), and a kernel older than v1
+// refuses foton/v1 altogether, so on v1 the mark cannot be lost on the way.
+func (f Foton) validateConditions() error {
+	cs := f.Protocol.Conditions
+	if cs == nil {
+		return nil
+	}
+	if f.Statement != "v1" {
+		return fmt.Errorf("protocol.conditions is admissible only on foton/v1 (SPEC §6.2); a foton/v0 " +
+			"kernel drops it silently and would merge the record into its unconditional twin")
+	}
+	if len(cs) == 0 {
+		return fmt.Errorf("protocol.conditions is empty; omit it for an unconditional foton - the kernel " +
+			"acts on presence, and `[]` would give an unconditional computation a second action key (SPEC §6.2)")
+	}
+	for i, c := range cs {
+		if c.Kind == "" {
+			return fmt.Errorf("protocol.conditions[%d] has no kind (SPEC §6.2)", i)
+		}
+		if i > 0 && !conditionLess(cs[i-1], c) {
+			return fmt.Errorf("protocol.conditions are not in canonical order without duplicates (by kind, "+
+				"then ref, no ref first): %+v before %+v (SPEC §6.2)", cs[i-1], c)
+		}
+	}
+	return nil
 }
 
 // validateRefStructure checks one slot list. dedupePaths is true for inputs only: the §6.3 action key
@@ -248,6 +338,11 @@ func (f Foton) ActionKey() (string, error) {
 		// descriptor-less foton asserts ref = sha256(canon(victim's descriptor)) and poisons the
 		// victim's cache. A descriptor-ful action key is unchanged (this branch does not run).
 		proto["refUnverified"] = true
+	}
+	// Conditions are part of P: a conditional foton never shares an action key with an unconditional
+	// one, so a reuse planner never hands a database snapshot out as the result of a pure function.
+	if c := f.Protocol.coveredConditions(); c != nil {
+		proto["conditions"] = c
 	}
 	m := map[string]any{"inputs": tree, "protocol": proto}
 	b, err := CanonValue(m)

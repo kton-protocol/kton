@@ -41,6 +41,9 @@ usage:
           independent producers with 'plankton reproductions --trust-keys' (verified), or attest a reproduction
           with a nekton 'reproduces' claim — do NOT tweak --cmd to force a new id.
         --add ingests it directly (one step, no file); --registry D picks the store.
+        --statement v1 --condition KIND[=REF] (repeatable) marks a step that read what no input pins - a
+          database, the network, the clock - as a CONDITIONAL foton: its own action key, never counted as a
+          reproduction, never a spectrum fulfilment (SPEC §6.2). If you can hash it, make it an --in instead.
   plankton author <spec.json> <key.hex> <out.dsse>    author + sign a foton from a spec file
   plankton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>  verify a DSSE signature AND the
                                                       structure ingest requires (envelope FILE or a
@@ -372,6 +375,9 @@ func run(cmd string, args []string) error {
 			if excluded > 0 {
 				out["excludedUntrusted"] = excluded
 			}
+			if rep.ExcludedConditional > 0 {
+				out["excludedConditional"] = rep.ExcludedConditional
+			}
 			if err := printJSON(out); err != nil {
 				return err
 			}
@@ -386,6 +392,9 @@ func run(cmd string, args []string) error {
 			fmt.Fprintln(os.Stderr, "warning: this ↻N is over SELF-DECLARED keyids and is FORGEABLE (a relabeled keyid inflates it and mis-attributes); pass --trust-keys <dir> to count only authenticated signers")
 		} else if excluded > 0 {
 			fmt.Fprintf(os.Stderr, "note: %d producer foton(s) were signed by no trusted key and were EXCLUDED from ↻N\n", excluded)
+		}
+		if rep.ExcludedConditional > 0 {
+			fmt.Fprintf(os.Stderr, "note: %d producer foton(s) are CONDITIONAL and were EXCLUDED from ↻N - capturing the same answer from a database or the network is not reproducing a computation (SPEC §9)\n", rep.ExcludedConditional)
 		}
 		return nil
 
@@ -834,14 +843,23 @@ func run(cmd string, args []string) error {
 			summary := map[string]any{}
 			for _, id := range ids {
 				f, _ := r.Foton(id)
-				summary[id] = map[string]any{
+				sm := map[string]any{
 					"kind": f.Protocol.Kind, "inputs": len(f.Inputs), "outputs": len(f.Outputs),
 				}
+				if f.Conditional() {
+					sm["conditions"] = f.Protocol.Conditions
+				}
+				summary[id] = sm
 				if env, ok := r.Envelope(id); ok {
 					recs = append(recs, env)
 				}
 			}
 			out := map[string]any{"relation": cmd, "query": q, "records": recs, "summary": summary}
+			// A lineage that rests on a conditional foton says so on the answer, not only per record:
+			// everything downstream is reproducible only as far as those conditions held (SPEC §11).
+			if c := r.ConditionalIn(ids); cmd == "lineage" && len(c) > 0 {
+				out["dependsOnConditional"] = c
+			}
 			if len(sources) > 0 {
 				out["sources"] = sources
 			}
@@ -863,7 +881,14 @@ func run(cmd string, args []string) error {
 		}
 		for _, id := range ids {
 			f, _ := r.Foton(id)
-			fmt.Printf("%s  kind=%s  in=%d out=%d\n", id, f.Protocol.Kind, len(f.Inputs), len(f.Outputs))
+			mark := ""
+			if f.Conditional() {
+				mark = "  CONDITIONAL(" + conditionKinds(f.Protocol.Conditions) + ")"
+			}
+			fmt.Printf("%s  kind=%s  in=%d out=%d%s\n", id, f.Protocol.Kind, len(f.Inputs), len(f.Outputs), mark)
+		}
+		if c := r.ConditionalIn(ids); cmd == "lineage" && len(c) > 0 {
+			fmt.Printf("note: this lineage depends on %d conditional foton(s) - reproducible only as far as their conditions held (SPEC §11)\n", len(c))
 		}
 		return nil
 
@@ -942,7 +967,11 @@ func run(cmd string, args []string) error {
 				if signer == "" {
 					signer = "(unsigned)"
 				}
-				fmt.Printf("  %s  declared-signer=%s (unverified)  output=%s\n", h.FotonID, signer, strings.Join(h.Outputs, ", "))
+				mark := ""
+				if len(h.Conditions) > 0 {
+					mark = "  CONDITIONAL(" + conditionKinds(h.Conditions) + ")"
+				}
+				fmt.Printf("  %s  declared-signer=%s (unverified)  output=%s%s\n", h.FotonID, signer, strings.Join(h.Outputs, ", "), mark)
 			}
 			fmt.Fprintln(os.Stderr, "note: these are COMPETING cache-key matches, not a trusted result - anyone can author a foton with these inputs, and their OUTPUTS may differ. Pick a hit whose SIGNER you trust and `plankton verify` it.")
 		}

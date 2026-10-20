@@ -304,7 +304,7 @@ func TestV1_OnlyTheCanonicalBytesAreAdmitted(t *testing.T) {
 		"key order":  func() []byte { return []byte(reversedJSON(parse())) },
 		"unknown protocol member": func() []byte {
 			st := parse()
-			pred(st)["protocol"].(map[string]any)["conditions"] = []any{map[string]any{"kind": "database"}}
+			pred(st)["protocol"].(map[string]any)["timeout"] = "1h"
 			return canon(st)
 		},
 		"unknown subject member": func() []byte {
