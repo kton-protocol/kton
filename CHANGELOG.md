@@ -38,6 +38,12 @@ wrote `prov:wasAttributedTo` for the first trusted key only, so a query for "who
 producer. Now there is one per trusted key that verifies the envelope, each once. An empty keyid on the
 first signature no longer suppresses the attribution.
 
+**Reuse hits assembled in the library** ([#218](https://github.com/kton-protocol/kton/issues/218)).
+`Registry.ReuseHits(actionKey)` returns one `ReuseHit` per competing match: foton id, declared signer
+(the envelope's keyid hint), outputs, and `verification: "unchecked"`. Before, `plankton reuse` built
+these rows itself and a linking caller had to rebuild them. `plankton reuse` prints the library's rows;
+its output, prose and `--json`, is byte-for-byte unchanged.
+
 **Spectrum fulfilment as a library** ([#216](https://github.com/kton-protocol/kton/issues/216)).
 `kton.dev/plankton/spectrum`: `Spectrum`/`Member` (the manifest), `Check(registry, spectrum,
 candidates)` with a status per member and `Result.Outcome()` (fulfilled, incomplete, failed). Before, it
@@ -54,6 +60,14 @@ whose object holds a number (now `1000000`, where `%v` wrote `1e+06`), a `null` 
 `<nil>`) or a structured value (now unfolded into named nodes, was `"map[...]"`) projects to different
 RDF than before, so its Trusty URI changes. No record identity changes: claim ids and foton ids are
 computed from the signed statement, not from the projection.
+
+### Fixed
+
+**The nanopub export is byte-stable when two prefixes share a namespace**
+([#214](https://github.com/kton-protocol/kton/issues/214)). An alias set that declared a second prefix
+for a namespace the projection already knows (`dcterms` beside `dct`) let map order pick which prefix an
+IRI got, so the same claims exported to different TriG bytes from run to run. Ties are now broken by
+prefix name.
 
 ## 0.2.2 — unreleased
 
