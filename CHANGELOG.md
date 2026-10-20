@@ -55,6 +55,16 @@ code.
 
 ### Changed
 
+**`plankton author --env-ref` is carried when a class is declared on `foton/v1`**
+([#211](https://github.com/kton-protocol/kton/issues/211), SPEC §6.5, §8.1). With `--environment` and
+`--statement v1`, the concrete environment no longer goes into the descriptor: it travels beside the
+record as signed `kton-env/v1` material (`foton.SignEnv`, `foton.ReadEnv`), and needs `--add`. Two runs of
+the same computation in two images of one class now have one action key and one record, which both
+producers co-sign. Without `--environment`, and on `foton/v0`, `--env-ref` stays covered as before.
+Existing records keep their ids. For new v1 records written with a class, the foton id and the action
+key differ from a record of the same work written before this change: the two never hit each other in
+the cache.
+
 **The projection of some claims changes, and with it their Trusty URI** (#204). A re-rendered claim
 whose object holds a number (now `1000000`, where `%v` wrote `1e+06`), a `null` (now `null`, was
 `<nil>`) or a structured value (now unfolded into named nodes, was `"map[...]"`) projects to different
