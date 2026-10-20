@@ -46,6 +46,14 @@ whose object holds a number (now `1000000`, where `%v` wrote `1e+06`), a `null` 
 RDF than before, so its Trusty URI changes. No record identity changes: claim ids and foton ids are
 computed from the signed statement, not from the projection.
 
+### Fixed
+
+**The nanopub export is byte-stable when two prefixes share a namespace**
+([#214](https://github.com/kton-protocol/kton/issues/214)). An alias set that declared a second prefix
+for a namespace the projection already knows (`dcterms` beside `dct`) let map order pick which prefix an
+IRI got, so the same claims exported to different TriG bytes from run to run. Ties are now broken by
+prefix name.
+
 ## 0.2.2 — unreleased
 
 ### Security
