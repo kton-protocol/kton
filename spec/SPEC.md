@@ -304,12 +304,16 @@ How a foton was produced MAY be recorded, executor-agnostically, in two independ
 A concrete environment is bound to an env-spectrum by a nekton `qualifies-as` claim (7.2): mechanically
 the environment *fulfils* the spectrum (Clause 10); acceptance as qualified is a signed claim on top.
 
+- **A reader MUST ignore `kton-env/v1` material on a record that declares no environment class or is not
+  `foton/v1`.** There the concrete environment is covered, in the signed record, and a carried account of
+  it would contradict it. A reader MUST take a `kton-env/v1` statement only under a key that also signed
+  the foton: it is that producer's account of its own run.
 - **A class is only a label until it is qualified.** Anyone can name class X and run in an image that
-  never fulfilled it. A consumer that reuses a result across concrete environments of class X MUST take
-  the producer's `kton-env/v1` statement under the key whose foton signature it trusts, and SHOULD
-  require that this concrete environment carries a `qualifies-as` X claim under a key it trusts; without
-  that, reuse across environments reopens the collision the covered pin closes. This is a consumer
-  policy (8); the kernel returns every candidate.
+  never fulfilled it. A consumer MUST NOT treat a result from another concrete environment of class X as
+  equivalent unless that environment carries a `qualifies-as` X claim under a key the consumer trusts;
+  otherwise it MUST treat the result as unqualified. Without this, reuse across environments reopens the
+  collision the covered pin closes. Like the L1 obligation in Clause 9, this binds the consumer, and the
+  kernel cannot check it: it returns every candidate.
 
 ### 6.6 Wire form - foton as an in-toto Statement
 
@@ -575,7 +579,8 @@ federates it like any material and does not read it.
 
 `kton-env/v1` has the same envelope, `predicateType = "https://kton.dev/env/v1"`, `predicate = { foton:
 <foton id>, envRef: string }` and one subject, the record itself (`name` = foton id, `digest` = its
-hash). A reader MUST accept it only about that foton and only under a key it trusts.
+hash). A reader MUST accept it only about that foton, only under a key it trusts that also signed the
+foton, and only on a `foton/v1` record that declares an environment class (6.5).
 
 **Document-rendered signature forms (e.g. PAdES / signed PDFs) are OUT of scope.** They sign a
 *rendered* representation of a record, and the relationship between that rendering and the canonical

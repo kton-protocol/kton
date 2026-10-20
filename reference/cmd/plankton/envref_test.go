@@ -76,6 +76,15 @@ func TestEnvRefCoveredUnlessAClassIsDeclared(t *testing.T) {
 			t.Errorf("%s without a class: two envRefs share an action key", stmt)
 		}
 	}
+	// A class must be a whole content hash: `sha256:` alone named none and moved the image out of the record.
+	if err := run("author", []string{"--statement", "v1", "--environment", "sha256:", "--env-ref", imgA, "--cmd", "Rscript fit.R",
+		"--in", in, "--out", out, "--sign", filepath.Join(dir, "a.key"), "--add", "--registry", filepath.Join(dir, "m")}); err == nil {
+		t.Error("--environment sha256: (no hex) was accepted as a class")
+	}
+	if err := run("author", []string{"--statement", "v1", "--environment", class, "--env-ref", "   ", "--cmd", "Rscript fit.R",
+		"--in", in, "--out", out, "--sign", filepath.Join(dir, "a.key"), "--add", "--registry", filepath.Join(dir, "m")}); err == nil {
+		t.Error("a blank --env-ref was accepted")
+	}
 	_, a0 := author("y", "a", imgA, "--environment", class)
 	_, b0 := author("y", "a", imgB, "--environment", class)
 	if a0 == b0 {
@@ -111,9 +120,10 @@ func TestEnvRefCoveredUnlessAClassIsDeclared(t *testing.T) {
 		return ed25519.PublicKey(raw)
 	}
 	got := map[string]string{}
+	rec, _ := r.Envelope(id)
 	for _, m := range r.Material(id) {
 		for _, k := range []string{"a", "c"} {
-			if ran, err := foton.ReadEnv(m.Scheme, m.Material, *f, []ed25519.PublicKey{pubOf(k)}); err == nil && ran != nil {
+			if ran, err := foton.ReadEnv(m.Scheme, m.Material, rec, []ed25519.PublicKey{pubOf(k)}); err == nil && ran != nil {
 				got[k] = ran.EnvRef
 			}
 		}

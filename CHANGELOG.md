@@ -61,6 +61,9 @@ code.
 record as signed `kton-env/v1` material (`foton.SignEnv`, `foton.ReadEnv`), and needs `--add`. Two runs of
 the same computation in two images of one class now have one action key and one record, which both
 producers co-sign. Without `--environment`, and on `foton/v0`, `--env-ref` stays covered as before.
+`foton.ReadEnv` reads the material only on a `foton/v1` record with a class and only from a key that
+also signed the record. `--environment` must now be a whole content hash (`sha256:` alone was accepted).
+PoC: `security/attacks/envref-collision.sh` (gated).
 Existing records keep their ids. For new v1 records written with a class, the foton id and the action
 key differ from a record of the same work written before this change: the two never hit each other in
 the cache.

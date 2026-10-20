@@ -369,8 +369,13 @@ func authorConvenience(args []string) error {
 	spec := authorSpec{Predicate: "foton", Statement: statement, Inputs: inFs, Outputs: outFs}
 	desc := map[string]any{"cmd": cmd}
 	if env != "" {
+		// A whole content hash, not just its prefix: `sha256:` alone named no class at all, yet on v1 it
+		// moved --env-ref out of the record, and two images then collided on one record with no class.
 		if !strings.HasPrefix(env, "sha256:") {
 			return fmt.Errorf("--environment must be an env-spectrum id (sha256:…), got %q", env)
+		}
+		if _, ok := core.NormalizeContentHash(env); !ok {
+			return fmt.Errorf("--environment %q is not a sha256 content hash (sha256: and 64 hex)", env)
 		}
 		desc["environment"] = env // covered: rides in descriptor -> protocol.ref -> action_key (SPEC §3)
 	}
@@ -389,6 +394,9 @@ func authorConvenience(args []string) error {
 	// so producers in different images of the class co-sign one record. Without a class the pin stays
 	// covered: it is then the only statement of what ran. foton/v0 has no place for carried material
 	// and keeps covering it.
+	if envRef != "" && strings.TrimSpace(envRef) == "" {
+		return fmt.Errorf("--env-ref is blank")
+	}
 	carriedEnvRef := envRef != "" && env != "" && statement == "v1"
 	if carriedEnvRef && !addFlag {
 		return fmt.Errorf("--env-ref with --environment on --statement v1 is carried as material attached to the " +

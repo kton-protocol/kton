@@ -12,18 +12,18 @@ which made 70 dead permalinks look like evidence a reader could follow. They are
 hashes so the trail survives for anyone holding the archive, and so nothing here claims to be
 checkable that is not.*
 
-## Posture: **29 closed · 3 open · 2 accepted boundary**, of 34 recorded attacks → NOT SECURE
+## Posture: **30 closed · 3 open · 2 accepted boundary**, of 35 recorded attacks → NOT SECURE
 
 *These numbers are derived from what is in this directory, not carried forward by hand. `ls
-attacks/*.sh` is 34; `check.sh` prints its own coverage line every run. The previous posture said
+attacks/*.sh` is 35; `check.sh` prints its own coverage line every run. The previous posture said
 "27/29 spectrum members fulfilled · 27 closed · 2 open" over a Closed table with 24 rows, and
 "10 of the 28 PoCs are executable" when 17 are and `check.sh` runs 16 - a report overclaiming its
 own coverage, which is the finding this suite keeps making about everything else.*
 
-**19 of the 34 PoCs are executable**; `check.sh` runs **18** of them here (the 19th,
+**20 of the 35 PoCs are executable**; `check.sh` runs **19** of them here (the 20th,
 `screenshot-viewer-labels`, needs a kton-examples checkout passed as `$1`). The remaining 15 carry no
 verdict: they are records of a finding, reproduced in prose below, and they run nowhere. A green gate
-means those 18 held - not that the suite is complete.
+means those 19 held - not that the suite is complete.
 
 Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
 vulnerable/fixed commits as signed `nekton` claims. Those claims and the `keys/` directory are not in this
@@ -56,6 +56,7 @@ repository, so `nekton verify` cannot be run against them from here - `redteam.p
 | `ingest-gate-not-on-the-read-path` | 1 |
 | `path-from-unvalidated-input` | 1 |
 | `signature-attached-to-bytes-it-did-not-sign` | 1 |
+| `identity-pin-dropped-on-a-weak-condition` | 1 |
 
 The recurring class: **a face or backstop trusts recorded/declared data instead of re-verifying the signed bytes / re-executing in a trusted executor.**
 
@@ -66,6 +67,7 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 | `anchor-checkpoint` | ORANGE | `witness-not-fully-verified` | `9ea6938` | `9cb7090` |
 | `attribution-siblings` | RED | `export-trusts-claimed-keyid` | `24dfc6b` | `fc77c28` |
 | `canon-bigint` | RED | `canonicalization` | `24dfc6b` | `1e667f3` |
+| `envref-collision` | ORANGE | `identity-pin-dropped-on-a-weak-condition` | `4985b23` (#223 before review) | #211 |
 | `co-signer-drop` | ORANGE | `federation-not-order-independent` | `0aa44b8` | `b625b1f` |
 | `concurrency-races` | ORANGE | `concurrency-nonatomic` | `a687723` | `af3cefa` |
 | `corrupt-poisons-read` | ORANGE | `read-face-brittle` | `ed7a008` | `056b87a` |
@@ -339,6 +341,13 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **vulnerable at:** `864385f` (v0.2.1)
 - **fixed at (reproduction now fails):** 0.2.2
 - **PoC:** [`attacks/seed-scope-trig.sh`](attacks/seed-scope-trig.sh)
+
+### `envref-collision` — ORANGE · ✅ closed
+- **class:** `identity-pin-dropped-on-a-weak-condition`
+- **theory:** `--env-ref` is covered because without the pin two computations in two environments collide on one action key. #211 carries it instead when an environment class is declared on `foton/v1`. The class was checked only for its `sha256:` prefix, so `--environment sha256:` (no hex) opened the carried path, and two images collided on one record that names no class. Found in review before merge. Fixed: a class must be a whole content hash. The PoC also guards the unchanged half: without a class, two envRefs never share an action key.
+- **vulnerable at:** `4985b23` (#223 before review, never on main)
+- **fixed at (reproduction now fails):** #211
+- **PoC:** [`attacks/envref-collision.sh`](attacks/envref-collision.sh)
 
 ### `v1-payload-variant` — RED · ✅ closed
 - **class:** `federation-not-order-independent`

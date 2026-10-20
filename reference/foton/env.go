@@ -79,17 +79,33 @@ type RanIn struct {
 	Signer string `json:"signer"` // keyid of the key that verified
 }
 
-// ReadEnv reads concrete-environment material about foton f against a set of keys. It returns only
-// what a key in keys signed, and only about f. Material of another scheme is not an error - it is
-// simply not env material (nil, nil).
+// ReadEnv reads concrete-environment material about a record against a set of keys. It returns only
+// what a key in keys signed, only when that same key also signed the record (the envRef is a
+// producer's account of ITS OWN run), and only about that record. Material of another scheme is not an
+// error - it is simply not env material (nil, nil).
 //
-// A consumer takes the statement signed by the SAME key whose foton signature it trusts: the envRef
-// is that producer's account of its own run. Reuse across environments is sound only when the
-// envRef is qualified for the record's class by a `qualifies-as` claim under a key the consumer
-// trusts (SPEC §6.5); a class nobody qualified is only a label.
-func ReadEnv(scheme, material string, f core.Foton, keys []ed25519.PublicKey) (*RanIn, error) {
+// It refuses env material on a record that declares no environment class or is not foton/v1: there
+// the concrete environment is covered, in the record itself, and a second, carried account of it would
+// contradict the signed one (SPEC §6.5).
+//
+// Reuse across environments is sound only when the envRef is qualified for the record's class by a
+// `qualifies-as` claim under a key the consumer trusts (SPEC §6.5); a class nobody qualified is only a
+// label.
+func ReadEnv(scheme, material string, record core.Envelope, keys []ed25519.PublicKey) (*RanIn, error) {
 	if scheme != EnvScheme {
 		return nil, nil
+	}
+	rst, err := record.Statement()
+	if err != nil {
+		return nil, err
+	}
+	f, err := rst.ToFoton()
+	if err != nil {
+		return nil, err
+	}
+	if class, _ := f.Protocol.Descriptor["environment"].(string); f.Statement != "v1" || class == "" {
+		return nil, fmt.Errorf("env material on a record that is not foton/v1 with an environment class; " +
+			"its concrete environment is covered in the record, and readers MUST ignore a carried one (SPEC §6.5)")
 	}
 	raw, err := base64.StdEncoding.DecodeString(material)
 	if err != nil {
@@ -99,16 +115,24 @@ func ReadEnv(scheme, material string, f core.Foton, keys []ed25519.PublicKey) (*
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return nil, fmt.Errorf("env material: %w", err)
 	}
-	signer := core.VerifiedSignerKeyID(env, keys)
-	if signer == "" {
-		return nil, fmt.Errorf("env material is not signed by any of the given keys")
+	var signer ed25519.PublicKey
+	for _, k := range keys {
+		if ok, err := env.Verify(k); ok && err == nil {
+			if ok, err := record.Verify(k); ok && err == nil {
+				signer = k
+				break
+			}
+		}
+	}
+	if signer == nil {
+		return nil, fmt.Errorf("env material is not signed by a given key that also signed the record")
 	}
 	st, err := env.Statement()
 	if err != nil {
 		return nil, err
 	}
-	if st.PredicateType != PredicateEnv {
-		return nil, fmt.Errorf("env material holds a %s statement", st.PredicateType)
+	if st.Type != "https://in-toto.io/Statement/v1" || st.PredicateType != PredicateEnv {
+		return nil, fmt.Errorf("env material holds a %s / %s statement", st.Type, st.PredicateType)
 	}
 	var p struct {
 		Foton  string `json:"foton"`
@@ -121,11 +145,12 @@ func ReadEnv(scheme, material string, f core.Foton, keys []ed25519.PublicKey) (*
 	if err != nil {
 		return nil, err
 	}
-	if p.Foton != id {
-		return nil, fmt.Errorf("env material is about %s, not %s", p.Foton, id)
+	if p.Foton != id || len(st.Subject) != 1 || st.Subject[0].Name != id ||
+		"sha256:"+st.Subject[0].Digest["sha256"] != id {
+		return nil, fmt.Errorf("env material is not about %s", id)
 	}
-	if p.EnvRef == "" {
+	if strings.TrimSpace(p.EnvRef) == "" {
 		return nil, fmt.Errorf("env material names no envRef")
 	}
-	return &RanIn{EnvRef: p.EnvRef, Signer: signer}, nil
+	return &RanIn{EnvRef: p.EnvRef, Signer: core.KeyIDHex(signer)}, nil
 }
