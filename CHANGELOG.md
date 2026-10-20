@@ -44,6 +44,15 @@ first signature no longer suppresses the attribution.
 these rows itself and a linking caller had to rebuild them. `plankton reuse` prints the library's rows;
 its output, prose and `--json`, is byte-for-byte unchanged.
 
+**Spectrum fulfilment as a library** ([#216](https://github.com/kton-protocol/kton/issues/216)).
+`kton.dev/plankton/spectrum`: `Spectrum`/`Member` (the manifest), `Check(registry, spectrum,
+candidates)` with a status per member and `Result.Outcome()` (fulfilled, incomplete, failed). Before, it
+lived only in `package main` of the CLI, so a linking caller had to shell out or reimplement it. The
+per-member comparison is `Registry.Reproduces`, the rule `plankton reproduces` applies. `plankton
+spectrum check` calls the package; its output and exit codes are unchanged. `plankton spectrum check
+--json` prints the same answer as JSON (the statuses per member and the outcome), with the same exit
+code.
+
 ### Changed
 
 **The projection of some claims changes, and with it their Trusty URI** (#204). A re-rendered claim

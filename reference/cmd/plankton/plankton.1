@@ -198,9 +198,11 @@ file: \fIid\fR.spectrum.json. Each \fB--member\fR (and \fB--candidate\fR, below)
 .B plankton spectrum show \fIspectrum.json\fR
 Show a spectrum's normaliser and reference members.
 .TP
-.B plankton spectrum check \fIspectrum.json\fR --candidate \fIname\fR=sha256:...
+.B plankton spectrum check \fIspectrum.json\fR --candidate \fIname\fR=sha256:... [--json]
 Report whether the candidate FULFILS the spectrum (per member: identical, via the potential, or
-not). Compares fotons that already exist; runs nothing. Record the "validated at L0/L1" judgment
+not). Compares fotons that already exist; runs nothing. Exit 0 = every member fulfilled, 1 = a
+candidate failed, 2 = incomplete (a member had no candidate). With --json, the per-member statuses
+and the outcome as JSON, with the same exit code. Record the "validated at L0/L1" judgment
 as a
 .BR nekton (1)
 attestation.

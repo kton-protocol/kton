@@ -76,7 +76,7 @@ usage:
                                                       writes the spectrum to <id>.spectrum.json (or stdout with -o - ;
                                                       the status line goes to stderr, so a > redirect never eats it)
   plankton spectrum show  <spectrum.json>             a spectrum defines a TOOL: its reference fotons
-  plankton spectrum check <spectrum.json> --candidate n=sha256:..
+  plankton spectrum check <spectrum.json> --candidate n=sha256:.. [--json]
                                                       is the spectrum FULFILLED? (reproducible compare, runs nothing).
                                                       exit 0 = all fulfilled, 1 = a candidate FAILED, 2 = INCOMPLETE
                                                       (a member had no candidate). the L0/L1 judgment is a nekton claim on top
@@ -1014,7 +1014,7 @@ func run(cmd string, args []string) error {
 		return show(args)
 
 	case "spectrum":
-		return spectrum(args)
+		return spectrumCmd(args)
 
 	case "mirror":
 		// Pure federation: overlay a peer registry that lives on the local filesystem by hash.

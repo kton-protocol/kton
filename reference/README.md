@@ -20,6 +20,8 @@ anchoring) lives in the separate **kton cockpit** module (`../kton/`), which imp
 - `registry/` - the metadata plane: an **append-only log** of signed fotons, indexed by
   output/input/action hash; producers (lineage), discovery (uses), reuse (action key), and a
   `sync` feed by sequence cursor.
+- `spectrum/` - spectrum fulfilment (spec §10): `Check` compares candidate outputs with a
+  spectrum's reference fotons in a registry; `plankton spectrum check` is a caller.
 - `blobstore/` - an **optional** content-addressed byte store used only for pinning. The
   kernel/registry stores no bytes; this is a separate, opt-in backend (spec §6.1/§10). Pure
   filesystem, no network.
