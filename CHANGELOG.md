@@ -82,6 +82,10 @@ Existing records keep their ids. For new v1 records written with a class, the fo
 key differ from a record of the same work written before this change: the two never hit each other in
 the cache.
 
+**Builds from `main` say `0.3.0-dev`** ([#227](https://github.com/kton-protocol/kton/issues/227)). `kton`,
+`nekton` and `plankton version` printed `0.2.1` from three literals. They now print one constant,
+`core.Version`.
+
 **The projection of some claims changes, and with it their Trusty URI** (#204). A re-rendered claim
 whose object holds a number (now `1000000`, where `%v` wrote `1e+06`), a `null` (now `null`, was
 `<nil>`) or a structured value (now unfolded into named nodes, was `"map[...]"`) projects to different

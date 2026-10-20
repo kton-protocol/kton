@@ -61,6 +61,11 @@ func IsFotonPredicate(pt string) bool { return pt == PredicateFoton || pt == Pre
 // are versioned by their `claim/v0` predicateType.)
 const SpecVersion = "0.1"
 
+// Version is the reference implementation's version, printed by `plankton`, `nekton` and `kton
+// version`: one constant, so the three binaries of one build cannot claim different releases. A build
+// from main between releases says -dev; it must not claim to be the last tag.
+const Version = "0.3.0-dev"
+
 // Subject is an in-toto subject: a named artifact identified by digest.
 type Subject struct {
 	Name   string            `json:"name"`
