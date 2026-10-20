@@ -50,7 +50,7 @@ const (
 	// same bytes. These say every recorded producer of that output is conditional.
 	ReferenceConditional Status = "reference-conditional"
 	CandidateConditional Status = "candidate-conditional"
-	NotFulfilled         Status = "not-fulfilled"          // both recorded, and they do not reproduce
+	NotFulfilled         Status = "not-fulfilled" // both recorded, and they do not reproduce
 )
 
 // Fulfilled reports whether the status counts toward fulfilment.
