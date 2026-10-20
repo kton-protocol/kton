@@ -642,7 +642,9 @@ and its acceptance as a nekton claim.
 - **Conditional fotons (6.2) are no evidence of reproduction.** Their conditions cannot be pinned, so
   "they held" can only be asserted, never verified. A conditional normalizer is not a normalizer: a
   conforming kernel MUST NOT follow one to an L1 match - whether the application foton carries the mark
-  or the potential it is named by does - and it can never be L0-qualified. A producer
+  or the potential it is named by does, whether it is named by foton id or by its `protocol.ref` (a ref
+  whose recorded potentials are all conditional names a conditional potential) - and it can never be
+  L0-qualified. A producer
   foton that is conditional MUST NOT count toward the number of independent producers of an output
   (↻N): capturing the same answer from a database is not reproducing a computation. A reproduction *of*
   a conditional foton may be recorded, but never counts toward qualification.
