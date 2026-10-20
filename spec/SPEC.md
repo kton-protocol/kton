@@ -289,12 +289,31 @@ How a foton was produced MAY be recorded, executor-agnostically, in two independ
   `oci`/`nix`/`renv`) records the exact stack for reconstruction. It MUST NOT affect any identity.
 
   **RESERVED at 0.1**, like `meta` in §6.1: the shape is defined for forward compatibility but is NOT
-  emitted or parsed, and a conforming implementation MAY ignore it. The reference records a concrete
-  environment's bytes through a `FileRef`'s carried `uri` locators instead. Because env-data is
-  non-covered, adding it later will not move any identity.
+  emitted or parsed, and a conforming implementation MAY ignore it. Because env-data is non-covered,
+  adding it later will not move any identity.
+- **The concrete environment of one producer's run** (an OCI digest, a nix path, a run-server id) is
+  that producer's fact, not the record's. For a `foton/v1` record **that declares an environment class**
+  it travels beside the record as verification material, scheme `kton-env/v1` (8.1), one signed
+  statement per producer: two runs of the same computation in two images of one class are then the same
+  computation, with one action key, and their producers co-sign one record. **Without a declared class**
+  a concrete environment is the only statement of what ran; an authoring tool that records one SHOULD
+  keep it covered (the reference puts it in the descriptor as `envRef`), or two computations in
+  different environments collide on one action key. `foton/v0` has no place for carried material, and
+  the reference covers it there.
 
 A concrete environment is bound to an env-spectrum by a nekton `qualifies-as` claim (7.2): mechanically
 the environment *fulfils* the spectrum (Clause 10); acceptance as qualified is a signed claim on top.
+
+- **A reader MUST ignore `kton-env/v1` material on a record that declares no environment class or is not
+  `foton/v1`.** There the concrete environment is covered, in the signed record, and a carried account of
+  it would contradict it. A reader MUST take a `kton-env/v1` statement only under a key that also signed
+  the foton: it is that producer's account of its own run.
+- **A class is only a label until it is qualified.** Anyone can name class X and run in an image that
+  never fulfilled it. A consumer MUST NOT treat a result from another concrete environment of class X as
+  equivalent unless that environment carries a `qualifies-as` X claim under a key the consumer trusts;
+  otherwise it MUST treat the result as unqualified. Without this, reuse across environments reopens the
+  collision the covered pin closes. Like the L1 obligation in Clause 9, this binds the consumer, and the
+  kernel cannot check it: it returns every candidate.
 
 ### 6.6 Wire form - foton as an in-toto Statement
 
@@ -550,12 +569,18 @@ Initial scheme tokens (the list is open; registration is out of scope for 0.1):
 | `jades` | `application/jose+json` | who (the eIDAS JSON signature form) |
 | `pgp-detached` | `application/pgp-signature` | who |
 | `kton-locator/v1` | `application/vnd.dsse.envelope.v1+json` | where (the producer's own locators for a `foton/v1` record, 6.6.1) |
+| `kton-env/v1` | `application/vnd.dsse.envelope.v1+json` | in what (the producer's concrete environment for a `foton/v1` record with a class, 6.5) |
 
 `kton-locator/v1` is a DSSE envelope over an in-toto Statement with `predicateType =
 "https://kton.dev/locator/v1"`, `predicate = { foton: <foton id> }` and one subject per located file
 (`name` = path, `digest`, `uri`), ordered by path. A reader MUST accept a locator only for a file the
 foton actually has at that path with that hash, and only under a key it trusts; the kernel stores and
 federates it like any material and does not read it.
+
+`kton-env/v1` has the same envelope, `predicateType = "https://kton.dev/env/v1"`, `predicate = { foton:
+<foton id>, envRef: string }` and one subject, the record itself (`name` = foton id, `digest` = its
+hash). A reader MUST accept it only about that foton, only under a key it trusts that also signed the
+foton, and only on a `foton/v1` record that declares an environment class (6.5).
 
 **Document-rendered signature forms (e.g. PAdES / signed PDFs) are OUT of scope.** They sign a
 *rendered* representation of a record, and the relationship between that rendering and the canonical
@@ -582,6 +607,10 @@ and its acceptance as a nekton claim.
   qualification, so a conforming consumer MUST establish it (e.g. ≥2 verified producers of the
   normalizer's output, or a spectrum) before relying on an L1 result. The reference `plankton reproduces
   --via` surfaces this obligation on every L1 result.
+- A normalizer that declares an environment class is pinned by that class, and its concrete environment
+  is carried (6.5): a re-run "via" it means in **some** environment of the class, which is sound only as
+  far as the class is qualified. A normalizer without a class keeps its concrete environment covered,
+  and a re-run via it means **this** environment.
 
 ## 10 Tool and environment qualification - Spectrum
 

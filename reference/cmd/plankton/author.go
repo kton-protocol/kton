@@ -304,7 +304,8 @@ func authorConvenience(args []string) error {
 			"  machine paths never leak into the record.\n" +
 			"  more: PATH=F sets the recorded name; --located PATH=URL adds where the bytes live; --strict requires\n" +
 			"        relative paths; also --environment sha256: (qualified env-spectrum), --env-ref STRING (exact\n" +
-			"        execution env: oci://…@sha256: / nix path / server id, COVERED - pins WHICH env ran), --kind K,\n" +
+			"        execution env: oci://…@sha256: / nix path / server id; COVERED without --environment - it pins\n" +
+			"        WHICH env ran - and, with --environment on --statement v1, CARRIED as signed material), --kind K,\n" +
 			"        --registry DIR, -o FILE; --statement v1 records the canonical form (locators as material)")
 	}
 	// resolve each "[PATH=]LOCALFILE": PATH is the logical work-tree path recorded (COVERED); LOCALFILE is
@@ -368,8 +369,13 @@ func authorConvenience(args []string) error {
 	spec := authorSpec{Predicate: "foton", Statement: statement, Inputs: inFs, Outputs: outFs}
 	desc := map[string]any{"cmd": cmd}
 	if env != "" {
+		// A whole content hash, not just its prefix: `sha256:` alone named no class at all, yet on v1 it
+		// moved --env-ref out of the record, and two images then collided on one record with no class.
 		if !strings.HasPrefix(env, "sha256:") {
 			return fmt.Errorf("--environment must be an env-spectrum id (sha256:…), got %q", env)
+		}
+		if _, ok := core.NormalizeContentHash(env); !ok {
+			return fmt.Errorf("--environment %q is not a sha256 content hash (sha256: and 64 hex)", env)
 		}
 		desc["environment"] = env // covered: rides in descriptor -> protocol.ref -> action_key (SPEC §3)
 	}
@@ -380,7 +386,23 @@ func authorConvenience(args []string) error {
 	// a reproduction `--via` this foton commits to re-executing in THIS environment (cold-session
 	// composition-chain: a normalizer/program is only trustworthy if the environment it ran in is pinned,
 	// not a mutable path). The env-spectrum (--environment) qualifies it; --env-ref names the exact image.
-	if envRef != "" {
+	//
+	// With a declared class on foton/v1 it is CARRIED instead (SPEC §6.5, #211): the class is what is
+	// covered, and two runs of the same computation in two images of one qualified class are the same
+	// computation - covering the image would keep them from ever reusing each other's results. The
+	// image is this producer's fact and travels beside the record as signed `kton-env/v1` material,
+	// so producers in different images of the class co-sign one record. Without a class the pin stays
+	// covered: it is then the only statement of what ran. foton/v0 has no place for carried material
+	// and keeps covering it.
+	if envRef != "" && strings.TrimSpace(envRef) == "" {
+		return fmt.Errorf("--env-ref is blank")
+	}
+	carriedEnvRef := envRef != "" && env != "" && statement == "v1"
+	if carriedEnvRef && !addFlag {
+		return fmt.Errorf("--env-ref with --environment on --statement v1 is carried as material attached to the " +
+			"record in a registry; add --add")
+	}
+	if envRef != "" && !carriedEnvRef {
 		desc["envRef"] = envRef
 	}
 	spec.Protocol = &foton.ProtocolSpec{Kind: kind, Descriptor: desc}
@@ -464,6 +486,17 @@ func authorConvenience(args []string) error {
 				return err
 			}
 			msg("attached locators for %d file(s) as material (%s)\n", len(locFs), m.Scheme)
+		}
+		if carriedEnvRef {
+			m, err := foton.SignEnv(id, envRef, priv)
+			if err != nil {
+				return err
+			}
+			if err := r.AttachMaterial(registry.VerificationMaterial{Subject: m.Subject, Scheme: m.Scheme,
+				MediaType: m.MediaType, Material: m.Material}); err != nil {
+				return err
+			}
+			msg("attached envRef as material (%s) - carried: the class %s is what the record covers\n", m.Scheme, env)
 		}
 		if isNew {
 			msg("indexed foton %s  (registry now holds %d fotons)\n", id, r.Len())
