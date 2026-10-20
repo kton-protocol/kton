@@ -921,60 +921,28 @@ func run(cmd string, args []string) error {
 		if err != nil {
 			return err
 		}
-		hits := r.Reuse(ak)
+		hits := r.ReuseHits(ak)
 		if reuseJSON {
 			// The hit COUNT is a decision input - "was this computation asked before?" - and it was
 			// the last number in this repo a consumer had to read out of prose. kton-examples
 			// 16-reuse-cache sed extracts it out of "cache: HIT -> %d prior…", and documents doing so.
-			out := make([]map[string]any, 0, len(hits))
-			for _, id := range hits {
-				signer := ""
-				if env, ok := r.Envelope(id); ok && len(env.Signatures) > 0 {
-					signer = env.Signatures[0].KeyID
-				}
-				var outs []string
-				if f, ok := r.Foton(id); ok {
-					for _, o := range f.Outputs {
-						outs = append(outs, o.Hash)
-					}
-				}
-				// declaredSigner, and verification:"unchecked" - these are COMPETING matches on the
-				// cache key, and the keyid is the envelope's unauthenticated hint. A machine reader
-				// must see that on the record, not only in a stderr note it may never read.
-				//
-				// NOT `"verified": false`. That was a CONSTANT, so it carried no information, and it
-				// is the token a consumer reads as CHECKED AND FAILED rather than NOBODY LOOKED -
-				// the same misreading removed from the material commands this release, with the
-				// reasoning recorded beside them. `reuse` answers "was this computation asked
-				// before?", so its rows are a decision input and the distinction is load-bearing.
-				out = append(out, map[string]any{
-					"fotonId": id, "declaredSigner": signer, "outputs": outs,
-					"verification": "unchecked",
-				})
-			}
-			return printJSON(map[string]any{"actionKey": ak, "hit": len(hits) > 0, "hits": out})
+			// Each row says declaredSigner and verification:"unchecked" (registry.ReuseHit): a machine
+			// reader must see that on the record, not only in a stderr note it may never read.
+			return printJSON(map[string]any{"actionKey": ak, "hit": len(hits) > 0, "hits": hits})
 		}
 		if len(hits) == 0 {
 			fmt.Println("cache: MISS (no prior computation with these inputs+protocol)")
 		} else {
-			// A cache key binds inputs+protocol, NOT outputs or signer (it can't - you look up BY inputs
-			// to FIND the outputs, and binding the signer would break cross-party reuse). So an action
-			// key can have SEVERAL hits by DIFFERENT signers with DIFFERENT outputs - anyone may author a
-			// foton with these inputs. List each hit's declared signer + output so a COMPETING/injected
-			// result is visible, and the consumer picks a signer it trusts and verifies (not a bare HIT).
+			// Several hits by different signers with different outputs are possible (registry.ReuseHit).
+			// List each hit's declared signer + output so a COMPETING/injected result is visible, and the
+			// consumer picks a signer it trusts and verifies (not a bare HIT).
 			fmt.Printf("cache: HIT -> %d prior computation(s) with these inputs+protocol:\n", len(hits))
-			for _, id := range hits {
-				signer := "(unsigned)"
-				if env, ok := r.Envelope(id); ok && len(env.Signatures) > 0 && env.Signatures[0].KeyID != "" {
-					signer = env.Signatures[0].KeyID
+			for _, h := range hits {
+				signer := h.DeclaredSigner
+				if signer == "" {
+					signer = "(unsigned)"
 				}
-				var outs []string
-				if f, ok := r.Foton(id); ok {
-					for _, o := range f.Outputs {
-						outs = append(outs, o.Hash)
-					}
-				}
-				fmt.Printf("  %s  declared-signer=%s (unverified)  output=%s\n", id, signer, strings.Join(outs, ", "))
+				fmt.Printf("  %s  declared-signer=%s (unverified)  output=%s\n", h.FotonID, signer, strings.Join(h.Outputs, ", "))
 			}
 			fmt.Fprintln(os.Stderr, "note: these are COMPETING cache-key matches, not a trusted result - anyone can author a foton with these inputs, and their OUTPUTS may differ. Pick a hit whose SIGNER you trust and `plankton verify` it.")
 		}
