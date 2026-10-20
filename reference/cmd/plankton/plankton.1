@@ -113,8 +113,14 @@ target registry (else \fBPLANKTON_DIR\fR, else ./plankton-data).
 \fBenv\fR spectra) the producing environment claims to fulfil. It rides inside the protocol descriptor,
 so it is COVERED - part of \fBprotocol.ref\fR and the action key: a foton produced "under a
 qualified-X environment" is a distinct computation. It is executor-agnostic (names a qualification, not
-a docker image). Concrete environment data (an OCI digest, a lockfile hash) is instead CARRIED, opaque
-to the kernel, and never changes the foton id.
+a docker image).
+.br
+\fB--env-ref\fR \fISTRING\fR (optional) names the exact environment that ran (an OCI digest, a nix
+path, a run-server id). Without \fB--environment\fR it is COVERED: it is the only statement of what
+ran, so it changes the foton id and the action key. With \fB--environment\fR on \fB--statement v1\fR
+it is CARRIED instead, as signed \fBkton-env/v1\fR material attached with \fB--add\fR: the class is
+what the record covers, so producers in different images of the class record one foton and co-sign it.
+On v0 it stays covered.
 .br
 \fB--condition\fR \fIKIND\fR[=\fIREF\fR] (repeatable, needs \fB--statement v1\fR) marks a
 CONDITIONAL foton: a step that read state no input pins (\fBdatabase\fR, \fBnetwork\fR,

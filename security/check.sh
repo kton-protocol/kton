@@ -18,7 +18,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; KX="${1:-}"
 
-GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated silent-source-drop export-attribution canon-bigint rdf-injection spectrum-existence concurrency-races scope-path-traversal read-path-ungated union-across-payloads cursor-shift fourEyes-graphpoll seed-scope-trig v1-payload-variant conditional-merge"
+GATED="suppress-replay corrupt-poisons-read co-signer-drop when-unvalidated silent-source-drop export-attribution canon-bigint rdf-injection spectrum-existence concurrency-races scope-path-traversal read-path-ungated union-across-payloads cursor-shift fourEyes-graphpoll seed-scope-trig v1-payload-variant envref-collision conditional-merge"
 # envtally-CF2 is here, not in GATED, and deliberately: its path to the shipped release gate was
 # wrong, so it never ran; with that fixed the gate runs but ticks NONE of its seven conditions in
 # this scenario, which makes "env-qualified stayed unticked" meaningless. It now says INCONCLUSIVE
