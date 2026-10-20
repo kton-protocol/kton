@@ -59,7 +59,15 @@ func newTrigCtx(al template.Set) *trigCtx {
 	for k, v := range pfx {
 		c.revExp = append(c.revExp, struct{ pfx, ns string }{k, v})
 	}
-	sort.Slice(c.revExp, func(i, j int) bool { return len(c.revExp[i].ns) > len(c.revExp[j].ns) })
+	// Longest namespace first; two prefixes for one namespace are ordered by name, so the choice does not
+	// depend on map order and the same claims always project to the same bytes.
+	sort.Slice(c.revExp, func(i, j int) bool {
+		a, b := c.revExp[i], c.revExp[j]
+		if len(a.ns) != len(b.ns) {
+			return len(a.ns) > len(b.ns)
+		}
+		return a.pfx < b.pfx
+	})
 	return c
 }
 
