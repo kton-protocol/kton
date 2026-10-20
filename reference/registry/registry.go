@@ -576,7 +576,12 @@ func (r *Registry) Envelope(id string) (core.Envelope, bool) {
 // L1-equivalent when the SAME potential normalizes both to a shared hash. Matching the potential
 // (not merely the protocol KIND) is required by SPEC §9 - two different normalizers of the same kind
 // are different comparisons and must not both satisfy one L1 assertion (cold-session over-claim).
+//
+// Both sides of the comparison are in one spelling: the query and each application's effective ref
+// go through canonRef. Only the query used to, so a v0 normalizer without a descriptor whose ref was
+// upper case or bare (v0 admits it) matched no query at all, while a padded or bare query matched.
 func (r *Registry) NormalizedOutput(hash, potential string) string {
+	hash, potential = canonRef(hash), canonRef(potential)
 	want := potential
 	if f, ok := r.foton[potential]; ok { // a foton id -> resolve to its potential ref
 		// A potential that is itself marked conditional names a normalization that need not give the
@@ -586,7 +591,7 @@ func (r *Registry) NormalizedOutput(hash, potential string) string {
 			return ""
 		}
 		if ref, err := f.Protocol.EffectiveRef(); err == nil {
-			want = ref
+			want = canonRef(ref)
 		}
 	}
 	for _, id := range r.byInput[hash] {
@@ -597,11 +602,20 @@ func (r *Registry) NormalizedOutput(hash, potential string) string {
 		if f == nil || len(f.Outputs) == 0 || f.Conditional() {
 			continue
 		}
-		if ref, err := f.Protocol.EffectiveRef(); err == nil && ref == want {
+		if ref, err := f.Protocol.EffectiveRef(); err == nil && canonRef(ref) == want {
 			return f.Outputs[0].Hash
 		}
 	}
 	return ""
+}
+
+// canonRef is s in canonical content-hash form when it is one (SPEC §5.1), else s unchanged: a
+// potential may also be named by something that is not a hash, which then simply matches nothing.
+func canonRef(s string) string {
+	if n, ok := core.NormalizeContentHash(s); ok {
+		return n
+	}
+	return s
 }
 
 // ConditionalIn returns the conditional fotons among ids, in order. Every face that makes a

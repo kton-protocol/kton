@@ -259,11 +259,11 @@ func spectrumCheck(args []string) error {
 		case spectrum.Identical:
 			fmt.Printf("  %-24s fulfilled (identical)\n", m.Name)
 		case spectrum.Via:
-			fmt.Printf("  %-24s fulfilled (via potential %s in the ray)\n", m.Name, s.Normalizer)
+			fmt.Printf("  %-24s fulfilled (via potential %s in the ray)\n", m.Name, res.Normalizer)
 		default:
 			note := ""
 			if s.Normalizer != "" {
-				note = fmt.Sprintf("  (to converge via %s, an executor must apply it to both and `plankton add` the ray)", s.Normalizer)
+				note = fmt.Sprintf("  (to converge via %s, an executor must apply it to both and `plankton add` the ray)", res.Normalizer)
 			}
 			fmt.Printf("  %-24s not fulfilled%s\n", m.Name, note)
 		}
