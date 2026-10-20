@@ -200,15 +200,18 @@ func spectrumShow(args []string) error {
 // tool validation is a nekton attestation on top.
 func spectrumCheck(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: plankton spectrum check <spectrum.json> --candidate name=sha256:outputHash ...")
+		return fmt.Errorf("usage: plankton spectrum check <spectrum.json> --candidate name=sha256:outputHash ... [--json]")
 	}
 	s, err := loadSpectrum(args[0])
 	if err != nil {
 		return err
 	}
 	cand := map[string]string{}
+	asJSON := false
 	for i := 1; i < len(args); i++ {
-		if args[i] == "--candidate" {
+		if args[i] == "--json" {
+			asJSON = true
+		} else if args[i] == "--candidate" {
 			i++
 			kv := arg(args, i)
 			eq := strings.IndexByte(kv, '=')
@@ -230,6 +233,16 @@ func spectrumCheck(args []string) error {
 	res, err := spectrum.Check(r, s, cand)
 	if err != nil {
 		return err
+	}
+	if asJSON {
+		// The same answer as the prose, per member and as an outcome; the exit code does not change.
+		if err := printJSON(struct {
+			spectrum.Result
+			Outcome spectrum.Outcome `json:"outcome"`
+		}{res, res.Outcome()}); err != nil {
+			return err
+		}
+		return exitFor(res.Outcome())
 	}
 	for _, m := range res.Members {
 		switch m.Status {
@@ -261,7 +274,11 @@ func spectrumCheck(args []string) error {
 	//   0 = every member fulfilled; 1 = genuine FAILURE (a candidate was given but did not reproduce);
 	//   2 = INCOMPLETE (a member had no candidate, so it was never checked). A failure outranks an
 	// incompleteness, so exit 1 wins when both occur.
-	switch res.Outcome() {
+	return exitFor(res.Outcome())
+}
+
+func exitFor(o spectrum.Outcome) error {
+	switch o {
 	case spectrum.OutcomeFulfilled:
 		return nil
 	case spectrum.OutcomeIncomplete:
