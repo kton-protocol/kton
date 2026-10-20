@@ -38,6 +38,13 @@ wrote `prov:wasAttributedTo` for the first trusted key only, so a query for "who
 producer. Now there is one per trusted key that verifies the envelope, each once. An empty keyid on the
 first signature no longer suppresses the attribution.
 
+**Spectrum fulfilment as a library** ([#216](https://github.com/kton-protocol/kton/issues/216)).
+`kton.dev/plankton/spectrum`: `Spectrum`/`Member` (the manifest), `Check(registry, spectrum,
+candidates)` with a status per member and `Result.Outcome()` (fulfilled, incomplete, failed). Before, it
+lived only in `package main` of the CLI, so a linking caller had to shell out or reimplement it. The
+per-member comparison is `Registry.Reproduces`, the rule `plankton reproduces` applies. `plankton
+spectrum check` calls the package; its output and exit codes are unchanged.
+
 ### Changed
 
 **The projection of some claims changes, and with it their Trusty URI** (#204). A re-rendered claim

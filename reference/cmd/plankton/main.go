@@ -1046,7 +1046,7 @@ func run(cmd string, args []string) error {
 		return show(args)
 
 	case "spectrum":
-		return spectrum(args)
+		return spectrumCmd(args)
 
 	case "mirror":
 		// Pure federation: overlay a peer registry that lives on the local filesystem by hash.

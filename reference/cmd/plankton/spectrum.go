@@ -25,26 +25,17 @@ import (
 	"strings"
 
 	"kton.dev/plankton/registry"
+	"kton.dev/plankton/spectrum"
 )
 
-type spectrumMember struct {
-	Name   string `json:"name"`
-	Output string `json:"output"`          // reference output hash (sha256:...) - the gold result
-	Model  string `json:"model,omitempty"` // optional provenance: the model input (hash or uri)
-	Data   string `json:"data,omitempty"`  // optional provenance: the dataset input (hash or uri)
-}
+// The manifest types and fulfilment live in kton.dev/plankton/spectrum, so a linking caller checks a
+// spectrum with the same code this CLI runs.
+type (
+	spectrumMember = spectrum.Member
+	spectrumDef    = spectrum.Spectrum
+)
 
-// spectrumDef is the on-disk manifest. Content-addressable like any file (`plankton hash`), so a
-// spectrum can itself be pinned, mirrored, or registered as a foton later - it is just data that
-// names other data by hash.
-type spectrumDef struct {
-	Spectrum   string           `json:"spectrum"`             // the tool identity, e.g. "nonmem"
-	Of         string           `json:"of,omitempty"`         // human label, e.g. "the NONMEM 7.5 estimation tool"
-	Normalizer string           `json:"normalizer,omitempty"` // the potential whose ray defines fulfilment (opaque id)
-	Members    []spectrumMember `json:"members,omitempty"`    // the reference fotons (by output hash)
-}
-
-func spectrum(args []string) error {
+func spectrumCmd(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: plankton spectrum <define|show|check> ...")
 	}
@@ -77,21 +68,7 @@ func writeSpectrum(path string, s spectrumDef) error {
 	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
-// isContentHash reports whether s is a well-formed "sha256:<64 lowercase hex>" content hash. A member
-// or candidate output that is empty/junk would otherwise be accepted, and `check`'s pure string
-// equality would report a spectrum of empty members as "fulfilled" with nothing ever run.
-func isContentHash(s string) bool {
-	const p = "sha256:"
-	if !strings.HasPrefix(s, p) || len(s) != len(p)+64 {
-		return false
-	}
-	for _, c := range s[len(p):] {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			return false
-		}
-	}
-	return true
-}
+func isContentHash(s string) bool { return spectrum.IsContentHash(s) }
 
 // spectrumDefine creates or extends a spectrum. It never executes; it only records references.
 func spectrumDefine(args []string) error {
@@ -246,56 +223,26 @@ func spectrumCheck(args []string) error {
 			return fmt.Errorf("unknown arg %q", args[i])
 		}
 	}
-	// A memberless spectrum is vacuously fulfilled by anything (0/0), so `check` would exit 0 for any
-	// or no candidate - a CI-gate footgun (cold-session finding). Refuse it: a tool defined by zero
-	// reference fotons qualifies nothing.
-	if len(s.Members) == 0 {
-		return fmt.Errorf("spectrum %q defines no members; add reference fotons before checking (a memberless spectrum qualifies nothing, SPEC §10)", s.Spectrum)
-	}
-	// A --candidate naming something that is not a member is a typo the operator will misread as
-	// coverage ("3/3") over a set they never actually checked. Refuse it rather than silently drop it.
-	member := map[string]bool{}
-	names := make([]string, len(s.Members))
-	for i, m := range s.Members {
-		member[m.Name] = true
-		names[i] = m.Name
-	}
-	for name := range cand {
-		if !member[name] {
-			return fmt.Errorf("--candidate %q names no member of spectrum %q; members are: %s", name, s.Spectrum, strings.Join(names, ", "))
-		}
-	}
 	r, err := registry.Open(dir())
 	if err != nil {
 		return err
 	}
-	fulfilled, missing := 0, 0
-	for _, m := range s.Members {
-		c, ok := cand[m.Name]
-		if !ok {
+	res, err := spectrum.Check(r, s, cand)
+	if err != nil {
+		return err
+	}
+	for _, m := range res.Members {
+		switch m.Status {
+		case spectrum.NoCandidate:
 			fmt.Printf("  %-24s no candidate given\n", m.Name)
-			missing++
-			continue
-		}
-		// The reference gold and the candidate must each be an OUTPUT of a real foton in this registry -
-		// otherwise `fulfils`'s string-equality would score INVENTED hashes as "identical", so a
-		// fabricated spectrum of hashes that back no computation "passes" against an empty store (while
-		// `plankton show <hash>` correctly errors "no foton"). Not fulfilled if either does not resolve.
-		if len(r.Producer(m.Output)) == 0 {
+		case spectrum.ReferenceNotRecorded:
 			fmt.Printf("  %-24s not fulfilled (reference is not a recorded foton output - fabricated member)\n", m.Name)
-			continue
-		}
-		if len(r.Producer(c)) == 0 {
+		case spectrum.CandidateNotRecorded:
 			fmt.Printf("  %-24s not fulfilled (candidate is not a recorded foton output - nothing was run)\n", m.Name)
-			continue
-		}
-		switch fulfils(r, m.Output, c, s.Normalizer) {
-		case "identical":
+		case spectrum.Identical:
 			fmt.Printf("  %-24s fulfilled (identical)\n", m.Name)
-			fulfilled++
-		case "via":
+		case spectrum.Via:
 			fmt.Printf("  %-24s fulfilled (via potential %s in the ray)\n", m.Name, s.Normalizer)
-			fulfilled++
 		default:
 			note := ""
 			if s.Normalizer != "" {
@@ -304,7 +251,7 @@ func spectrumCheck(args []string) error {
 			fmt.Printf("  %-24s not fulfilled%s\n", m.Name, note)
 		}
 	}
-	fmt.Printf("spectrum %q: %d/%d member(s) fulfilled (reproducible fact).\n", s.Spectrum, fulfilled, len(s.Members))
+	fmt.Printf("spectrum %q: %d/%d member(s) fulfilled (reproducible fact).\n", s.Spectrum, res.Fulfilled, len(s.Members))
 	// Names no template. Which term carries that judgment is APPLICATION vocabulary (SPEC §7.1: the
 	// kernel treats every predicate as an opaque IRI), it lives in whatever alias set the reader
 	// uses, and it is not the kernel's to pick - naming one here made a plankton command depend on
@@ -314,31 +261,15 @@ func spectrumCheck(args []string) error {
 	//   0 = every member fulfilled; 1 = genuine FAILURE (a candidate was given but did not reproduce);
 	//   2 = INCOMPLETE (a member had no candidate, so it was never checked). A failure outranks an
 	// incompleteness, so exit 1 wins when both occur.
-	switch {
-	case fulfilled == len(s.Members):
+	switch res.Outcome() {
+	case spectrum.OutcomeFulfilled:
 		return nil
-	case fulfilled+missing == len(s.Members): // no genuine failures, only unchecked members
+	case spectrum.OutcomeIncomplete:
 		os.Exit(2)
 	default:
 		os.Exit(1)
 	}
 	return nil
-}
-
-// fulfils is plankton's reproducible ray comparison: "identical" if the raw terminals are equal,
-// else "via" if they meet after following the same potential in the ray (both already produced by
-// an executor and indexed), else "" (not fulfilled). Same rule as `plankton reproduces`; no L-level
-// label and no verdict - those are semantics / an attestation, not the kernel's.
-func fulfils(r *registry.Registry, ref, cand, potential string) string {
-	if ref == cand {
-		return "identical"
-	}
-	if potential != "" {
-		if n := r.NormalizedOutput(ref, potential); n != "" && n == r.NormalizedOutput(cand, potential) {
-			return "via"
-		}
-	}
-	return ""
 }
 
 func orNone(s string) string {
