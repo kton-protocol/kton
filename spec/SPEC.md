@@ -92,6 +92,9 @@ provider, and MUST NOT execute the protocols, normalizers, or tools that records
 - **foton** - a transformation edge: input tree → protocol → output tree (Clause 6.2).
 - **action key** - the identity of a *computation* (inputs + protocol), independent of outputs (6.3).
 - **potential** - a foton with unbound slots; a template/normalizer definition (Clause 6.4).
+- **conditional foton** - a foton whose step read state the record cannot pin (a database, the
+  network, the clock), marked by `protocol.conditions`: verifiable by hash, but reproducible only when
+  its conditions hold (Clause 6.2).
 - **claim** - a signed subject–predicate–object attestation (Clause 7.2).
 - **scope / seed** - the structural chain grammar for accountable claim ordering (Clause 7.4).
 - **spectrum** - the object that defines a tool or environment by a reference foton set (Clause 10).
@@ -240,12 +243,33 @@ Foton := { inputs: [FileRef], outputs: [FileRef], protocol: Protocol }
 Protocol := {
   kind:        string,       # e.g. "nonmem","r","normalize","compare"
   ref:         ContentHash,  # = sha256(canon(descriptor)) when descriptor present
-  descriptor?: object        # opaque to the kernel; interpreted only by external executors
+  descriptor?: object,       # opaque to the kernel; interpreted only by external executors
+  conditions?: [ { kind: string, ref?: string } ]   # COVERED; foton/v1 only (below)
 }
 ```
 
 - `protocol.ref` MUST equal `sha256(canon(descriptor))` when `descriptor` is present.
 - The descriptor is **opaque**: a conforming kernel MUST NOT interpret it.
+- **Conditional fotons.** `conditions` marks a step whose output depended on state the record cannot
+  pin: a database query, a network call, the clock, an unseeded random source. The output can be
+  captured and everything downstream is an ordinary foton, but re-running the step with the same inputs
+  and protocol need not reproduce it. *If you can hash it, it is an input, not a condition.*
+  - `conditions` sits **outside** the descriptor, so the kernel sees it while the descriptor stays
+    opaque. `kind` is an opaque string; the kernel acts on the **presence** of `conditions`, never on a
+    kind's value (conventional kinds: `spec/vocabulary.md`). `ref` optionally names what the step
+    depended on (an endpoint, a database, a query id).
+  - `conditions` and every `ref` in it are **covered** (6.3): the same query against a production
+    database and against a replica are two computations.
+  - Canonical form: ordered by `kind`, then by `ref` (an entry without `ref` before one with a `ref` of
+    the same `kind`), comparing UTF-8 bytes; no duplicates; every entry has a non-empty `kind`; an
+    empty `ref` is left out. `conditions: []` MUST be refused: the kernel acts on presence, and an empty
+    list would give an unconditional computation a second action key.
+  - `conditions` is admissible **only on `foton/v1`** (6.6.1). A conforming kernel MUST reject a
+    `foton/v0` statement that carries `protocol.conditions`. (A v0 kernel decodes `protocol` without
+    refusing unknown members, so it would merge a conditional record into its unconditional twin; a v0
+    kernel refuses `foton/v1` altogether.)
+  - The mark protects honest producers from each other. A producer who leaves it out records an
+    ordinary foton; the kernel cannot tell.
 
 ### 6.3 Action key and foton id
 
@@ -264,6 +288,9 @@ Protocol := {
       share an action key with a descriptor-ful foton whose descriptor happens to hash to the same `ref`.
       (Without it, an attacker's descriptor-less foton asserting `ref = sha256(canon(victim descriptor))`
       would collide with — and poison the cache of — the victim's verifiable computation.)
+    - when `conditions` is present (6.2), it is a member of `P` in its canonical form. A conditional
+      foton therefore never shares an action key with an unconditional one, nor with the same step under
+      other conditions.
 - **foton id** = `sha256(canon(Foton))`. Carried, non-covered FileRef fields (6.1) MUST NOT change it.
   For a `foton/v1` record (6.6.1) the preimage is `{ statement: "v1", inputs, outputs, protocol }` with
   `inputs` and `outputs` ordered by `path`, then by `hash`: their order is not part of the work, and the
@@ -348,7 +375,7 @@ registry MUST refuse one that is not. The canonical statement is `canon(v)` (Cla
   "subject": [ { "name": path, "digest"?: { "sha256": lowercase hex } } ... ],  # the outputs
   "predicateType": "https://kton.dev/foton/v1",
   "predicate": { "inputs": [ same shape ... ],
-                 "protocol": { "kind", "ref", "descriptor"? } } }
+                 "protocol": { "kind", "ref", "descriptor"?, "conditions"? } } }
 ```
 
 which means in particular:
@@ -360,6 +387,7 @@ which means in particular:
   scheme `kton-locator/v1` (8.1), one signed statement per producer;
 - `predicate` holds exactly `inputs` and `protocol` (no `specVersion`: the predicateType is the version);
 - a protocol without a descriptor **leaves the member out**; `"descriptor": null` is a different payload;
+- `conditions` (6.2) is present only on a conditional foton, in its canonical form; `[]` is refused;
 - `protocol.ref` is `sha256:` followed by 64 **lowercase** hex digits. Without a descriptor it cannot be
   recomputed, so its spelling would otherwise decide the id and the action key;
 - each path occurs **once** among the outputs, as among the inputs (6.3);
@@ -611,6 +639,13 @@ and its acceptance as a nekton claim.
   is carried (6.5): a re-run "via" it means in **some** environment of the class, which is sound only as
   far as the class is qualified. A normalizer without a class keeps its concrete environment covered,
   and a re-run via it means **this** environment.
+- **Conditional fotons (6.2) are no evidence of reproduction.** Their conditions cannot be pinned, so
+  "they held" can only be asserted, never verified. A conditional normalizer is not a normalizer: a
+  conforming kernel MUST NOT follow one to an L1 match - whether the application foton carries the mark
+  or the potential it is named by does - and it can never be L0-qualified. A producer
+  foton that is conditional MUST NOT count toward the number of independent producers of an output
+  (↻N): capturing the same answer from a database is not reproducing a computation. A reproduction *of*
+  a conditional foton may be recorded, but never counts toward qualification.
 
 ## 10 Tool and environment qualification - Spectrum
 
@@ -625,6 +660,12 @@ Spectrum := { spectrum: string, of?: string, normalizer?: PotentialId,
 - A candidate **fulfils** a spectrum iff it reproduces **every** member of the reference set (raw-equal,
   or equal after following the declared normalizer). **Partial fulfilment is non-fulfilment**: a
   conforming `spectrum check` MUST refuse qualification if any member is not reproduced. *(Scenario 7.)*
+- **A fulfilment MUST NOT rest on a conditional foton (6.2).** A member is fulfilled only if both the
+  reference and the candidate output have a producer that is not conditional, and only through a
+  normalizer that is not conditional (9); a spectrum whose normalizer is a conditional potential MUST be
+  refused. Spectrum members are output hashes, so the rule attaches to the fulfilment, not to the
+  member. (At L0 the candidate hash is the reference hash, so a conditional candidate can only be told
+  apart through a normalizer.)
 - `spectrum check` compares fotons that already exist; the kernel runs neither the tool nor the
   normalizer and renders **no verdict**. Whether fulfilment is *named* (e.g. "validated at L1") and
   whether a human *accepts* it as a qualified tool is a signed nekton claim on top of these facts.
@@ -638,6 +679,11 @@ A registry is a self-hosted scope of records. There is no central registry.
 - **Lineage** of a file hash `H` is the visible foton(s) whose `subject` contains `H`, resolved over the
   **union of accessible registries**. A hash with no visible producer is a lineage root.
 - **Subject resolution** for claims (including claims-about-claims) resolves the same way.
+- **Conditional fotons stay visible as such.** `by-action-key` returns a conditional foton (6.2) like any
+  other, **marked as conditional**; the consumer decides. Downstream fotons are ordinary (their inputs
+  are pinned by hash), but every answer that makes a reproducibility statement over a lineage - lineage,
+  the number of independent producers (9), spectrum fulfilment (10) - MUST show that the lineage depends
+  on a conditional foton.
 - A conforming implementation MUST provide O(1) hash indexes: for plankton `by-output-hash`,
   `by-input-hash`, `by-action-key`, `id → object`; for nekton `by-subject`, `by-predicate`,
   `by-signer(keyid)`, `by-object`, `claim-id → claim`.

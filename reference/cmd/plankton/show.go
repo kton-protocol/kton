@@ -117,6 +117,16 @@ func showHuman(id string, f *core.Foton, env core.Envelope) error {
 	for _, k := range rest {
 		fmt.Printf("%-12s %v\n", k+":", f.Protocol.Descriptor[k])
 	}
+	if f.Conditional() {
+		fmt.Printf("CONDITIONAL - reproducible only under conditions (COVERED; a re-run is no evidence, SPEC §6.2):\n")
+		for _, c := range f.Protocol.Conditions {
+			if c.Ref != "" {
+				fmt.Printf("  %s = %s\n", c.Kind, c.Ref)
+			} else {
+				fmt.Printf("  %s\n", c.Kind)
+			}
+		}
+	}
 	fmt.Printf("inputs:\n")
 	for _, in := range f.Inputs {
 		fmt.Printf("  %-28s %s%s\n", in.Path, in.Hash, locators(in.URI))
@@ -189,4 +199,13 @@ func nullableVia(via string) any {
 		return nil
 	}
 	return via
+}
+
+// conditionKinds lists a conditional foton's condition kinds for a one-line mark.
+func conditionKinds(cs []core.Condition) string {
+	ks := make([]string, 0, len(cs))
+	for _, c := range cs {
+		ks = append(ks, c.Kind)
+	}
+	return strings.Join(ks, ",")
 }

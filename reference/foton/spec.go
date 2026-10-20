@@ -41,6 +41,9 @@ type FileSpec struct {
 type ProtocolSpec struct {
 	Kind       string         `json:"kind"`
 	Descriptor map[string]any `json:"descriptor"`
+	// Conditions marks the foton as reproducible only under conditions (SPEC §6.2), foton/v1 only.
+	// Given in any order; it is signed in the canonical one.
+	Conditions []core.Condition `json:"conditions,omitempty"`
 }
 
 // Spec is the small JSON a cockpit hands to `plankton author`. plankton authors ONLY fotons
@@ -143,6 +146,17 @@ func (spec Spec) Validate() error {
 	default:
 		return fmt.Errorf("unknown statement version %q (v0 or v1)", spec.Statement)
 	}
+	if spec.Protocol.Conditions != nil {
+		// The record-level rule, on the record this spec becomes: v1 only, not empty, every kind
+		// named, no duplicates once ordered.
+		cs := make([]core.Condition, len(spec.Protocol.Conditions)) // non-nil even when empty: `[]` is refused, not dropped
+		copy(cs, spec.Protocol.Conditions)
+		core.SortConditions(cs)
+		f := core.Foton{Statement: spec.Statement, Protocol: core.Protocol{Conditions: cs}}
+		if err := f.ValidateStructure(); err != nil {
+			return err
+		}
+	}
 	if err := validateFiles("input", spec.Inputs, true); err != nil {
 		return err
 	}
@@ -194,6 +208,13 @@ func (spec Spec) normalized() (Spec, error) {
 		// signed bytes and the registry's re-derivation all see one order (SPEC §6.6.1).
 		sortFiles(out.Inputs)
 		sortFiles(out.Outputs)
+		if spec.Protocol.Conditions != nil {
+			p := *spec.Protocol
+			p.Conditions = make([]core.Condition, len(spec.Protocol.Conditions))
+			copy(p.Conditions, spec.Protocol.Conditions)
+			core.SortConditions(p.Conditions)
+			out.Protocol = &p
+		}
 	}
 	return out, nil
 }
@@ -247,7 +268,8 @@ func StatementPayload(spec Spec) ([]byte, error) {
 	if spec.Statement == "v1" {
 		// The ONE v1 form, shared with ingest: a registry admits a v1 payload only if it is these
 		// bytes (core.CheckV1Payload), so authoring must not build its own.
-		f := core.Foton{Protocol: core.Protocol{Kind: spec.Protocol.Kind, Ref: ref, Descriptor: spec.Protocol.Descriptor}}
+		f := core.Foton{Protocol: core.Protocol{Kind: spec.Protocol.Kind, Ref: ref, Descriptor: spec.Protocol.Descriptor,
+			Conditions: spec.Protocol.Conditions}}
 		for _, in := range spec.Inputs {
 			f.Inputs = append(f.Inputs, core.FileRef{Path: in.Path, Hash: in.Hash})
 		}
@@ -282,7 +304,8 @@ func FotonID(spec Spec) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	f := core.Foton{Protocol: core.Protocol{Kind: spec.Protocol.Kind, Descriptor: spec.Protocol.Descriptor}}
+	f := core.Foton{Protocol: core.Protocol{Kind: spec.Protocol.Kind, Descriptor: spec.Protocol.Descriptor,
+		Conditions: spec.Protocol.Conditions}}
 	if spec.Statement == "v1" {
 		f.Statement = "v1"
 	}

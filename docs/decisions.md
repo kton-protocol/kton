@@ -17,8 +17,10 @@ or unreleased work), never that a decision was withdrawn. Numbers are never reus
 
 **[settled]** All data processing decomposes into exactly two things:
 
-- **plankton** = *reproducible results* - a deterministic function of pinned inputs
-  (`inputs → protocol(+environment) → outputs`), verified by re-execution or by hash.
+- **plankton** = *results a machine can verify* - by hash, and by re-execution of a deterministic
+  function of pinned inputs (`inputs → protocol(+environment) → outputs`). A step that read what no
+  input pins (a database, the network, the clock) is a **conditional foton** (SPEC §6.2): verifiable
+  by hash, re-runnable only under conditions, and marked so that nothing treats it as a pure function.
 - **nekton** = *attestable commitments* - signed, attributed statements *about* those results, about
   files, and about other statements.
 

@@ -219,6 +219,7 @@ func authorConvenience(args []string) error {
 	locatedAuto := false             // default a file://<abs> locator for every --in/--out that lacks an explicit --located
 	located := map[string][]string{} // logical path -> fetch URIs (CARRIED)
 	statement := ""                  // "" / v0 (default) or v1 (canonical form, SPEC §6.6.1)
+	var conditions []core.Condition  // --condition KIND[=REF]: a conditional foton (SPEC §6.2), v1 only
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--add":
@@ -292,6 +293,18 @@ func authorConvenience(args []string) error {
 			if i < len(args) {
 				statement = args[i]
 			}
+		case "--condition":
+			i++
+			if i < len(args) {
+				k, ref, ok := splitKV(args[i])
+				if !ok {
+					k = args[i]
+				}
+				if k == "" {
+					return fmt.Errorf("--condition wants KIND or KIND=REF (e.g. database=prod-db), got %q", args[i])
+				}
+				conditions = append(conditions, core.Condition{Kind: k, Ref: ref})
+			}
 		default:
 			return fmt.Errorf("unknown flag %q", args[i])
 		}
@@ -306,7 +319,9 @@ func authorConvenience(args []string) error {
 			"        relative paths; also --environment sha256: (qualified env-spectrum), --env-ref STRING (exact\n" +
 			"        execution env: oci://…@sha256: / nix path / server id; COVERED without --environment - it pins\n" +
 			"        WHICH env ran - and, with --environment on --statement v1, CARRIED as signed material), --kind K,\n" +
-			"        --registry DIR, -o FILE; --statement v1 records the canonical form (locators as material)")
+			"        --registry DIR, -o FILE; --statement v1 records the canonical form (locators as material);\n" +
+			"        --condition KIND[=REF] (repeatable, v1 only) marks a step that read what no input pins - a\n" +
+			"        database, the network, the clock - as reproducible only under conditions")
 	}
 	// resolve each "[PATH=]LOCALFILE": PATH is the logical work-tree path recorded (COVERED); LOCALFILE is
 	// only read to hash. Absolute local paths are cleaned to their basename so machine paths neither leak
@@ -405,7 +420,11 @@ func authorConvenience(args []string) error {
 	if envRef != "" && !carriedEnvRef {
 		desc["envRef"] = envRef
 	}
-	spec.Protocol = &foton.ProtocolSpec{Kind: kind, Descriptor: desc}
+	if len(conditions) > 0 && statement != "v1" {
+		return fmt.Errorf("--condition needs --statement v1: a foton/v0 kernel drops the mark silently and " +
+			"would merge the record into its unconditional twin (SPEC §6.2)")
+	}
+	spec.Protocol = &foton.ProtocolSpec{Kind: kind, Descriptor: desc, Conditions: conditions}
 	priv, ephemeral, err := signingKey(keyPath)
 	if err != nil {
 		return err
@@ -431,6 +450,9 @@ func authorConvenience(args []string) error {
 	}
 	if env != "" {
 		note += "  env=" + env
+	}
+	if len(conditions) > 0 {
+		note += "  CONDITIONAL"
 	}
 	// With --print-id the ONLY thing on stdout is the bare foton id (so `ID=$(plankton author … --print-id)`
 	// works); every human line is routed to stderr.

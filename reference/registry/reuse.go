@@ -1,5 +1,7 @@
 package registry
 
+import "kton.dev/plankton/core"
+
 // VerificationUnchecked is the only Verification a ReuseHit carries: nobody checked the signature.
 // It is NOT `"verified": false`. A constant false carries no information, and it is the token a
 // consumer reads as CHECKED AND FAILED rather than NOBODY LOOKED.
@@ -16,10 +18,14 @@ const VerificationUnchecked = "unchecked"
 // The fields are in key order, so `plankton reuse --json` prints the bytes it printed when its rows were
 // maps.
 type ReuseHit struct {
-	DeclaredSigner string   `json:"declaredSigner"` // the first signature's keyid, not verified; "" if none
-	FotonID        string   `json:"fotonId"`
-	Outputs        []string `json:"outputs"`
-	Verification   string   `json:"verification"`
+	// Conditions is set when the hit is a CONDITIONAL foton (SPEC §6.2): a step that read state the
+	// record cannot pin. Its action key already keeps it apart from unconditional work; the mark says
+	// that even this hit's own re-run need not reproduce it. The consumer decides (SPEC §11).
+	Conditions     []core.Condition `json:"conditions,omitempty"`
+	DeclaredSigner string           `json:"declaredSigner"` // the first signature's keyid, not verified; "" if none
+	FotonID        string           `json:"fotonId"`
+	Outputs        []string         `json:"outputs"`
+	Verification   string           `json:"verification"`
 }
 
 // ReuseHits returns the hits for an action key in index order, each with its declared signer and
@@ -36,6 +42,7 @@ func (r *Registry) ReuseHits(actionKey string) []ReuseHit {
 			for _, o := range f.Outputs {
 				h.Outputs = append(h.Outputs, o.Hash)
 			}
+			h.Conditions = f.Protocol.Conditions
 		}
 		hits = append(hits, h)
 	}

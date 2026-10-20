@@ -43,7 +43,15 @@ type Reproductions struct {
 	DistinctSigners   int
 	ProducerFotons    int
 	ExcludedUntrusted int // held a signature, but none from a trusted key
-	Verified          bool
+	// ExcludedConditional counts producer fotons that are conditional (SPEC §6.2). They are recorded,
+	// but a party that captured the same database answer did not reproduce a computation, so they do
+	// not count toward ↻N (SPEC §9).
+	ExcludedConditional int
+	// DependsOnConditional lists the conditional fotons in the lineage of Output. The count above is
+	// true - the inputs of every counted producer are pinned by hash - but what they rest on was
+	// reproducible only under conditions, and an answer about reproducibility says so (SPEC §11).
+	DependsOnConditional []string
+	Verified             bool
 }
 
 // Reproductions counts distinct independent producers of outputHash.
@@ -67,6 +75,10 @@ func (r *Registry) Reproductions(outputHash string, trusted []ed25519.PublicKey)
 		if !ok || len(env.Signatures) == 0 {
 			continue
 		}
+		if f, ok := r.Foton(id); ok && f.Conditional() {
+			out.ExcludedConditional++
+			continue
+		}
 		if len(trusted) == 0 {
 			kid := env.Signatures[0].KeyID // self-declared, UNVERIFIED
 			out.Producers = append(out.Producers, Producer{FotonID: id, KeyID: kid})
@@ -87,6 +99,7 @@ func (r *Registry) Reproductions(outputHash string, trusted []ed25519.PublicKey)
 		}
 	}
 	out.DistinctSigners = len(signers)
+	out.DependsOnConditional = r.ConditionalIn(r.Lineage(h))
 	return out
 }
 

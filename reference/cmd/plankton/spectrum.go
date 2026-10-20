@@ -252,6 +252,10 @@ func spectrumCheck(args []string) error {
 			fmt.Printf("  %-24s not fulfilled (reference is not a recorded foton output - fabricated member)\n", m.Name)
 		case spectrum.CandidateNotRecorded:
 			fmt.Printf("  %-24s not fulfilled (candidate is not a recorded foton output - nothing was run)\n", m.Name)
+		case spectrum.ReferenceConditional:
+			fmt.Printf("  %-24s not fulfilled (every producer of the reference is a conditional foton - a fulfilment cannot rest on one)\n", m.Name)
+		case spectrum.CandidateConditional:
+			fmt.Printf("  %-24s not fulfilled (every producer of the candidate is a conditional foton - a fulfilment cannot rest on one)\n", m.Name)
 		case spectrum.Identical:
 			fmt.Printf("  %-24s fulfilled (identical)\n", m.Name)
 		case spectrum.Via:
@@ -265,6 +269,9 @@ func spectrumCheck(args []string) error {
 		}
 	}
 	fmt.Printf("spectrum %q: %d/%d member(s) fulfilled (reproducible fact).\n", s.Spectrum, res.Fulfilled, len(s.Members))
+	if n := len(res.DependsOnConditional); n > 0 {
+		fmt.Printf("note: the compared outputs depend on %d conditional foton(s) upstream - reproducible only as far as their conditions held (SPEC §11)\n", n)
+	}
 	// Names no template. Which term carries that judgment is APPLICATION vocabulary (SPEC §7.1: the
 	// kernel treats every predicate as an opaque IRI), it lives in whatever alias set the reader
 	// uses, and it is not the kernel's to pick - naming one here made a plankton command depend on

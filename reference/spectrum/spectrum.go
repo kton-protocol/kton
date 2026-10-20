@@ -46,7 +46,13 @@ const (
 	NoCandidate          Status = "no-candidate"           // the member was not checked
 	ReferenceNotRecorded Status = "reference-not-recorded" // no foton in the registry produced the reference
 	CandidateNotRecorded Status = "candidate-not-recorded" // no foton in the registry produced the candidate
-	NotFulfilled         Status = "not-fulfilled"          // both recorded, and they do not reproduce
+	// A fulfilment MUST NOT rest on a conditional foton (SPEC §10): one whose re-run need not give the
+	// same bytes. These say every recorded producer of that output is conditional. At L0 the candidate
+	// hash IS the reference hash, so a reference with an unconditional producer covers the candidate
+	// too: candidate-conditional can only arise for a via-normalizer match.
+	ReferenceConditional Status = "reference-conditional"
+	CandidateConditional Status = "candidate-conditional"
+	NotFulfilled         Status = "not-fulfilled" // both recorded, and they do not reproduce
 )
 
 // Fulfilled reports whether the status counts toward fulfilment.
@@ -76,6 +82,10 @@ type Result struct {
 	Members    []MemberResult `json:"members"`
 	Fulfilled  int            `json:"fulfilled"`
 	Missing    int            `json:"missing"` // members with no candidate
+	// DependsOnConditional lists the conditional fotons in the lineage of any reference or candidate
+	// output that was compared. A fulfilment never rests on one directly (the statuses above), but
+	// upstream of a pinned input one may still be, and the answer says so (SPEC §11).
+	DependsOnConditional []string `json:"dependsOnConditional,omitempty"`
 }
 
 // Outcome reports fulfilled, incomplete or failed. A failure outranks an incompleteness.
@@ -100,7 +110,9 @@ func IsContentHash(s string) bool {
 
 // Check compares candidate outputs (member name -> output hash) against the spectrum's reference
 // members in reg. Both the reference and the candidate must be the output of a foton recorded in reg;
-// otherwise invented hashes would score as identical. The comparison is Registry.Reproduces with the
+// otherwise invented hashes would score as identical. Each must also have a producer that is not
+// conditional (SPEC §10), and a normalizer that is conditional is not followed (Registry.
+// NormalizedOutput). The comparison is Registry.Reproduces with the
 // spectrum's normalizer, the same rule `plankton reproduces` applies.
 //
 // Check refuses a spectrum without members (a tool defined by zero reference fotons qualifies
@@ -129,6 +141,13 @@ func Check(reg *registry.Registry, s Spectrum, candidates map[string]string) (Re
 			return Result{}, fmt.Errorf("candidate %q: output must be a sha256:<64hex> content hash, got %q", name, candidates[name])
 		}
 	}
+	if s.Normalizer != "" {
+		if f, ok := reg.Foton(s.Normalizer); ok && f.Conditional() {
+			return Result{}, fmt.Errorf("spectrum %q names a conditional normalizer %s; a normalization that need not "+
+				"give the same bytes twice cannot define fulfilment (SPEC §9, §10)", s.Spectrum, s.Normalizer)
+		}
+	}
+	seen := map[string]bool{}
 	res := Result{Spectrum: s.Spectrum, Normalizer: s.Normalizer, Members: make([]MemberResult, 0, len(s.Members))}
 	for _, m := range s.Members {
 		mr := MemberResult{Name: m.Name, Reference: m.Output}
@@ -141,6 +160,10 @@ func Check(reg *registry.Registry, s Spectrum, candidates map[string]string) (Re
 			mr.Candidate, mr.Status = c, ReferenceNotRecorded
 		case len(reg.Producer(c)) == 0:
 			mr.Candidate, mr.Status = c, CandidateNotRecorded
+		case !reg.HasUnconditionalProducer(m.Output):
+			mr.Candidate, mr.Status = c, ReferenceConditional
+		case !reg.HasUnconditionalProducer(c):
+			mr.Candidate, mr.Status = c, CandidateConditional
 		default:
 			mr.Candidate, mr.Status = c, NotFulfilled
 			rep, err := reg.Reproduces(m.Output, c, s.Normalizer)
@@ -158,6 +181,14 @@ func Check(reg *registry.Registry, s Spectrum, candidates map[string]string) (Re
 			res.Fulfilled++
 		}
 		res.Members = append(res.Members, mr)
+		if ok {
+			for _, id := range reg.ConditionalIn(append(reg.Lineage(m.Output), reg.Lineage(c)...)) {
+				if !seen[id] {
+					seen[id] = true
+					res.DependsOnConditional = append(res.DependsOnConditional, id)
+				}
+			}
+		}
 	}
 	return res, nil
 }
