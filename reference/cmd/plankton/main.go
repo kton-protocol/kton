@@ -378,6 +378,9 @@ func run(cmd string, args []string) error {
 			if rep.ExcludedConditional > 0 {
 				out["excludedConditional"] = rep.ExcludedConditional
 			}
+			if len(rep.DependsOnConditional) > 0 {
+				out["dependsOnConditional"] = rep.DependsOnConditional
+			}
 			if err := printJSON(out); err != nil {
 				return err
 			}
@@ -392,6 +395,9 @@ func run(cmd string, args []string) error {
 			fmt.Fprintln(os.Stderr, "warning: this ↻N is over SELF-DECLARED keyids and is FORGEABLE (a relabeled keyid inflates it and mis-attributes); pass --trust-keys <dir> to count only authenticated signers")
 		} else if excluded > 0 {
 			fmt.Fprintf(os.Stderr, "note: %d producer foton(s) were signed by no trusted key and were EXCLUDED from ↻N\n", excluded)
+		}
+		if n := len(rep.DependsOnConditional); n > 0 {
+			fmt.Fprintf(os.Stderr, "note: the lineage of %s depends on %d conditional foton(s) - these producers reproduce each other only as far as those conditions held (SPEC §11)\n", h, n)
 		}
 		if rep.ExcludedConditional > 0 {
 			fmt.Fprintf(os.Stderr, "note: %d producer foton(s) are CONDITIONAL and were EXCLUDED from ↻N - capturing the same answer from a database or the network is not reproducing a computation (SPEC §9)\n", rep.ExcludedConditional)

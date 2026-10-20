@@ -58,9 +58,11 @@ read state no input pins (a database, the network, the clock) can now be recorde
 `protocol.conditions: [{kind, ref?}]`, `foton/v1` only. The mark is covered: a conditional foton never
 shares an action key with the unconditional computation, nor with the same step against another
 database. It never counts toward `reproductions` (↻N), a conditional normalizer is not followed to an L1
-match, and a `spectrum check` fulfilment cannot rest on one (new statuses `reference-conditional`,
-`candidate-conditional`). `reuse` marks the hit (`conditions` in `--json`), `show` lists the conditions,
-and `lineage` says when it rests on one (`dependsOnConditional`). `plankton author --statement v1
+match - neither when the application foton carries the mark nor when the potential it is named by does -
+and a `spectrum check` fulfilment cannot rest on one (new statuses `reference-conditional`,
+`candidate-conditional`; a spectrum whose normalizer is a conditional potential is refused). `reuse`
+marks the hit (`conditions` in `--json`), `show` lists the conditions, and `lineage`, `reproductions` and
+`spectrum check` say when the answer rests on one upstream (`dependsOnConditional`). `plankton author --statement v1
 --condition KIND[=REF]`; `core.Condition`, `Foton.Conditional()`, `Registry.ConditionalIn`. A `foton/v0`
 statement carrying `protocol.conditions` is refused. PoC: `security/attacks/conditional-merge.sh`
 (gated).

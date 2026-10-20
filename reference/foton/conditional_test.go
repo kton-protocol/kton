@@ -1,6 +1,7 @@
 package foton_test
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -212,4 +213,79 @@ func TestConditional_RegistryFaces(t *testing.T) {
 	if !strings.Contains(string(res.Outcome()), "failed") {
 		t.Errorf("outcome %s; a fulfilment resting on a conditional foton must fail", res.Outcome())
 	}
+}
+
+// Review C1: a potential marked conditional, applied by fotons that carry no mark (a v0 tool cannot),
+// is not followed: the kernel can tell from the potential it is named by.
+func TestConditional_PotentialNamedByIdIsNotFollowed(t *testing.T) {
+	reg, err := registry.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	desc := map[string]any{"cmd": "convert-units --table https://units.example/convert"}
+	pot := foton.Spec{Statement: "v1", Inputs: []foton.FileSpec{{Path: "raw"}}, Outputs: []foton.FileSpec{{Path: "canon"}},
+		Protocol: &foton.ProtocolSpec{Kind: "normalize", Descriptor: desc, Conditions: []core.Condition{{Kind: "network", Ref: "https://units.example/convert"}}}}
+	penv, pid, err := foton.SignWith(pot, key("producer-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustAdd(t, reg, penv)
+	rawA, rawB, canon := h("raw-a"), h("raw-b"), h("canon")
+	for _, raw := range []string{rawA, rawB} {
+		mustAdd(t, reg, mustSign(t, foton.Spec{Statement: "v1", Inputs: []foton.FileSpec{{Path: "raw", Hash: raw}},
+			Outputs: []foton.FileSpec{{Path: "canon", Hash: canon}}, Protocol: &foton.ProtocolSpec{Kind: "normalize", Descriptor: desc}}))
+		mustAdd(t, reg, mustSign(t, foton.Spec{Statement: "v1", Inputs: []foton.FileSpec{{Path: "in", Hash: h("in-" + raw)}},
+			Outputs: []foton.FileSpec{{Path: "out", Hash: raw}}, Protocol: &foton.ProtocolSpec{Kind: "run", Descriptor: map[string]any{"cmd": raw}}}))
+	}
+	if rep, err := reg.Reproduces(rawA, rawB, pid); err != nil || rep.Matches {
+		t.Errorf("reproduces --via a conditional potential: %+v %v; want no match", rep, err)
+	}
+	if _, err := spectrum.Check(reg, spectrum.Spectrum{Spectrum: "tool", Normalizer: pid,
+		Members: []spectrum.Member{{Name: "m", Output: rawA}}}, map[string]string{"m": rawB}); err == nil {
+		t.Error("a spectrum whose normalizer is a conditional potential was checked")
+	}
+}
+
+// Review C2: the count of independent producers and a spectrum fulfilment over a lineage that rests
+// on a conditional step say so, like lineage does.
+func TestConditional_UpstreamIsMarkedOnEveryReproducibilityAnswer(t *testing.T) {
+	reg, err := registry.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := conditional(core.Condition{Kind: "database", Ref: "prod"})
+	snap.Outputs = []foton.FileSpec{{Path: "snap.csv", Hash: h("rows")}}
+	mustAdd(t, reg, mustSign(t, snap))
+	fit := foton.Spec{Statement: "v1", Inputs: []foton.FileSpec{{Path: "snap.csv", Hash: h("rows")}},
+		Outputs: []foton.FileSpec{{Path: "fit.txt", Hash: h("fit")}}, Protocol: &foton.ProtocolSpec{Kind: "run", Descriptor: map[string]any{"cmd": "Rscript fit.R"}}}
+	for _, k := range []string{"producer-a", "producer-c"} {
+		env, _, err := foton.SignWith(fit, key(k))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := reg.Add(env); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rep := reg.Reproductions(h("fit"), []ed25519.PublicKey{pub(key("producer-a")), pub(key("producer-c"))})
+	if rep.DistinctSigners != 2 || len(rep.DependsOnConditional) != 1 {
+		t.Errorf("reproductions: %d signers, %d conditional upstream; want 2 and 1", rep.DistinctSigners, len(rep.DependsOnConditional))
+	}
+	res, err := spectrum.Check(reg, spectrum.Spectrum{Spectrum: "tool", Members: []spectrum.Member{{Name: "m", Output: h("fit")}}},
+		map[string]string{"m": h("fit")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome() != spectrum.OutcomeFulfilled || len(res.DependsOnConditional) != 1 {
+		t.Errorf("spectrum: outcome %s, %d conditional upstream; want fulfilled and 1", res.Outcome(), len(res.DependsOnConditional))
+	}
+}
+
+func mustSign(t *testing.T, spec foton.Spec) core.Envelope {
+	t.Helper()
+	env, _, err := foton.SignWith(spec, key("producer-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env
 }

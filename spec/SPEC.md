@@ -612,7 +612,8 @@ and its acceptance as a nekton claim.
   --via` surfaces this obligation on every L1 result.
 - **Conditional fotons (6.2) are no evidence of reproduction.** Their conditions cannot be pinned, so
   "they held" can only be asserted, never verified. A conditional normalizer is not a normalizer: a
-  conforming kernel MUST NOT follow one to an L1 match, and it can never be L0-qualified. A producer
+  conforming kernel MUST NOT follow one to an L1 match - whether the application foton carries the mark
+  or the potential it is named by does - and it can never be L0-qualified. A producer
   foton that is conditional MUST NOT count toward the number of independent producers of an output
   (↻N): capturing the same answer from a database is not reproducing a computation. A reproduction *of*
   a conditional foton may be recorded, but never counts toward qualification.
@@ -632,8 +633,10 @@ Spectrum := { spectrum: string, of?: string, normalizer?: PotentialId,
   conforming `spectrum check` MUST refuse qualification if any member is not reproduced. *(Scenario 7.)*
 - **A fulfilment MUST NOT rest on a conditional foton (6.2).** A member is fulfilled only if both the
   reference and the candidate output have a producer that is not conditional, and only through a
-  normalizer that is not conditional (9). Spectrum members are output hashes, so the rule attaches to
-  the fulfilment, not to the member.
+  normalizer that is not conditional (9); a spectrum whose normalizer is a conditional potential MUST be
+  refused. Spectrum members are output hashes, so the rule attaches to the fulfilment, not to the
+  member. (At L0 the candidate hash is the reference hash, so a conditional candidate can only be told
+  apart through a normalizer.)
 - `spectrum check` compares fotons that already exist; the kernel runs neither the tool nor the
   normalizer and renders **no verdict**. Whether fulfilment is *named* (e.g. "validated at L1") and
   whether a human *accepts* it as a qualified tool is a signed nekton claim on top of these facts.
@@ -649,8 +652,9 @@ A registry is a self-hosted scope of records. There is no central registry.
 - **Subject resolution** for claims (including claims-about-claims) resolves the same way.
 - **Conditional fotons stay visible as such.** `by-action-key` returns a conditional foton (6.2) like any
   other, **marked as conditional**; the consumer decides. Downstream fotons are ordinary (their inputs
-  are pinned by hash), but every answer that makes a reproducibility statement over a lineage MUST show
-  that the lineage depends on a conditional foton.
+  are pinned by hash), but every answer that makes a reproducibility statement over a lineage - lineage,
+  the number of independent producers (9), spectrum fulfilment (10) - MUST show that the lineage depends
+  on a conditional foton.
 - A conforming implementation MUST provide O(1) hash indexes: for plankton `by-output-hash`,
   `by-input-hash`, `by-action-key`, `id → object`; for nekton `by-subject`, `by-predicate`,
   `by-signer(keyid)`, `by-object`, `claim-id → claim`.

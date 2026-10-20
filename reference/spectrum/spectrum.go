@@ -47,7 +47,9 @@ const (
 	ReferenceNotRecorded Status = "reference-not-recorded" // no foton in the registry produced the reference
 	CandidateNotRecorded Status = "candidate-not-recorded" // no foton in the registry produced the candidate
 	// A fulfilment MUST NOT rest on a conditional foton (SPEC §10): one whose re-run need not give the
-	// same bytes. These say every recorded producer of that output is conditional.
+	// same bytes. These say every recorded producer of that output is conditional. At L0 the candidate
+	// hash IS the reference hash, so a reference with an unconditional producer covers the candidate
+	// too: candidate-conditional can only arise for a via-normalizer match.
 	ReferenceConditional Status = "reference-conditional"
 	CandidateConditional Status = "candidate-conditional"
 	NotFulfilled         Status = "not-fulfilled" // both recorded, and they do not reproduce
@@ -80,6 +82,10 @@ type Result struct {
 	Members    []MemberResult `json:"members"`
 	Fulfilled  int            `json:"fulfilled"`
 	Missing    int            `json:"missing"` // members with no candidate
+	// DependsOnConditional lists the conditional fotons in the lineage of any reference or candidate
+	// output that was compared. A fulfilment never rests on one directly (the statuses above), but
+	// upstream of a pinned input one may still be, and the answer says so (SPEC §11).
+	DependsOnConditional []string `json:"dependsOnConditional,omitempty"`
 }
 
 // Outcome reports fulfilled, incomplete or failed. A failure outranks an incompleteness.
@@ -135,6 +141,13 @@ func Check(reg *registry.Registry, s Spectrum, candidates map[string]string) (Re
 			return Result{}, fmt.Errorf("candidate %q: output must be a sha256:<64hex> content hash, got %q", name, candidates[name])
 		}
 	}
+	if s.Normalizer != "" {
+		if f, ok := reg.Foton(s.Normalizer); ok && f.Conditional() {
+			return Result{}, fmt.Errorf("spectrum %q names a conditional normalizer %s; a normalization that need not "+
+				"give the same bytes twice cannot define fulfilment (SPEC §9, §10)", s.Spectrum, s.Normalizer)
+		}
+	}
+	seen := map[string]bool{}
 	res := Result{Spectrum: s.Spectrum, Normalizer: s.Normalizer, Members: make([]MemberResult, 0, len(s.Members))}
 	for _, m := range s.Members {
 		mr := MemberResult{Name: m.Name, Reference: m.Output}
@@ -168,6 +181,14 @@ func Check(reg *registry.Registry, s Spectrum, candidates map[string]string) (Re
 			res.Fulfilled++
 		}
 		res.Members = append(res.Members, mr)
+		if ok {
+			for _, id := range reg.ConditionalIn(append(reg.Lineage(m.Output), reg.Lineage(c)...)) {
+				if !seen[id] {
+					seen[id] = true
+					res.DependsOnConditional = append(res.DependsOnConditional, id)
+				}
+			}
+		}
 	}
 	return res, nil
 }

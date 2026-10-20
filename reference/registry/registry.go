@@ -579,6 +579,12 @@ func (r *Registry) Envelope(id string) (core.Envelope, bool) {
 func (r *Registry) NormalizedOutput(hash, potential string) string {
 	want := potential
 	if f, ok := r.foton[potential]; ok { // a foton id -> resolve to its potential ref
+		// A potential that is itself marked conditional names a normalization that need not give the
+		// same bytes twice. Its applications may carry no mark (a v0 tool cannot), but the potential
+		// does, so the kernel can tell and MUST NOT follow it (SPEC §9).
+		if f.Conditional() {
+			return ""
+		}
 		if ref, err := f.Protocol.EffectiveRef(); err == nil {
 			want = ref
 		}
