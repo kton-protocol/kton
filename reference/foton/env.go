@@ -103,7 +103,8 @@ func ReadEnv(scheme, material string, record core.Envelope, keys []ed25519.Publi
 	if err != nil {
 		return nil, err
 	}
-	if class, _ := f.Protocol.Descriptor["environment"].(string); f.Statement != "v1" || class == "" {
+	class, _ := f.Protocol.Descriptor["environment"].(string)
+	if _, ok := core.NormalizeContentHash(class); f.Statement != "v1" || !ok {
 		return nil, fmt.Errorf("env material on a record that is not foton/v1 with an environment class; " +
 			"its concrete environment is covered in the record, and readers MUST ignore a carried one (SPEC §6.5)")
 	}

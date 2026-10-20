@@ -389,8 +389,11 @@ func authorConvenience(args []string) error {
 		if !strings.HasPrefix(env, "sha256:") {
 			return fmt.Errorf("--environment must be an env-spectrum id (sha256:…), got %q", env)
 		}
-		if _, ok := core.NormalizeContentHash(env); !ok {
-			return fmt.Errorf("--environment %q is not a sha256 content hash (sha256: and 64 hex)", env)
+		// And in its one spelling: the class is covered, so `sha256:ABAB…` beside `sha256:abab…` made two
+		// classes and two ids for one piece of work. Refused rather than lowercased, which would silently
+		// move the id of a record re-authored from an old script.
+		if n, ok := core.NormalizeContentHash(env); !ok || n != env {
+			return fmt.Errorf("--environment %q is not a sha256 content hash in canonical form (sha256: and 64 lowercase hex)", env)
 		}
 		desc["environment"] = env // covered: rides in descriptor -> protocol.ref -> action_key (SPEC §3)
 	}

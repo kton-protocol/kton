@@ -81,6 +81,10 @@ func TestEnvRefCoveredUnlessAClassIsDeclared(t *testing.T) {
 		"--in", in, "--out", out, "--sign", filepath.Join(dir, "a.key"), "--add", "--registry", filepath.Join(dir, "m")}); err == nil {
 		t.Error("--environment sha256: (no hex) was accepted as a class")
 	}
+	if err := run("author", []string{"--environment", strings.ToUpper(class[:7]) + strings.ToUpper(class[7:]), "--cmd", "Rscript fit.R",
+		"--in", in, "--out", out, "--sign", filepath.Join(dir, "a.key"), "-o", filepath.Join(dir, "upper.json")}); err == nil {
+		t.Error("an upper-case class was accepted; it would be a second class for the same work")
+	}
 	if err := run("author", []string{"--statement", "v1", "--environment", class, "--env-ref", "   ", "--cmd", "Rscript fit.R",
 		"--in", in, "--out", out, "--sign", filepath.Join(dir, "a.key"), "--add", "--registry", filepath.Join(dir, "m")}); err == nil {
 		t.Error("a blank --env-ref was accepted")
