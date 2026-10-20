@@ -38,6 +38,12 @@ wrote `prov:wasAttributedTo` for the first trusted key only, so a query for "who
 producer. Now there is one per trusted key that verifies the envelope, each once. An empty keyid on the
 first signature no longer suppresses the attribution.
 
+**Reuse hits assembled in the library** ([#218](https://github.com/kton-protocol/kton/issues/218)).
+`Registry.ReuseHits(actionKey)` returns one `ReuseHit` per competing match: foton id, declared signer
+(the envelope's keyid hint), outputs, and `verification: "unchecked"`. Before, `plankton reuse` built
+these rows itself and a linking caller had to rebuild them. `plankton reuse` prints the library's rows;
+its output, prose and `--json`, is byte-for-byte unchanged.
+
 ### Changed
 
 **The projection of some claims changes, and with it their Trusty URI** (#204). A re-rendered claim
