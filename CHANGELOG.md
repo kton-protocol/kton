@@ -94,6 +94,16 @@ computed from the signed statement, not from the projection.
 
 ### Fixed
 
+**The normalizer comparison uses one spelling on both sides**
+([#226](https://github.com/kton-protocol/kton/issues/226)). `spectrum check` and `reproduces --via`
+normalised the normalizer they were asked about, but not the indexed `protocol.ref` of a v0 normalizer
+without a descriptor, which v0 keeps as written. Since #217 a padded or bare query fulfilled while an
+upper-case or bare indexed ref no longer did. Both sides are now canonical; `spectrum check` prints the
+canonical spelling. `spectrum.Check` documents that it does not verify signatures (SPEC §8).
+A conditional potential named by its `protocol.ref` instead of its foton id is no longer followed
+either (`Registry.ConditionalPotential`): `reproduces --via <ref>` reached L1 and `spectrum check`
+fulfilled through it.
+
 **The nanopub export is byte-stable when two prefixes share a namespace**
 ([#214](https://github.com/kton-protocol/kton/issues/214)). An alias set that declared a second prefix
 for a namespace the projection already knows (`dcterms` beside `dct`) let map order pick which prefix an

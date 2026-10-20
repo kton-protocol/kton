@@ -115,6 +115,13 @@ func IsContentHash(s string) bool {
 // NormalizedOutput). The comparison is Registry.Reproduces with the
 // spectrum's normalizer, the same rule `plankton reproduces` applies.
 //
+// Check does not verify signatures (SPEC §8): a record counts as recorded because it is in reg, as
+// for every registry query. A caller that must know who produced a reference or a candidate checks
+// the producers' envelopes under keys it trusts, as `reproductions --trust-keys` does.
+//
+// The normalizer is compared in canonical spelling (Result.Normalizer is that spelling), so a padded,
+// bare or upper-case id names the same potential as the canonical one.
+//
 // Check refuses a spectrum without members (a tool defined by zero reference fotons qualifies
 // nothing, and 0/0 would pass any gate), a candidate that names no member (a typo read as coverage),
 // and a candidate output that is not a content hash.
@@ -141,8 +148,11 @@ func Check(reg *registry.Registry, s Spectrum, candidates map[string]string) (Re
 			return Result{}, fmt.Errorf("candidate %q: output must be a sha256:<64hex> content hash, got %q", name, candidates[name])
 		}
 	}
+	if n, ok := core.NormalizeContentHash(s.Normalizer); ok {
+		s.Normalizer = n
+	}
 	if s.Normalizer != "" {
-		if f, ok := reg.Foton(s.Normalizer); ok && f.Conditional() {
+		if f, ok := reg.Foton(s.Normalizer); (ok && f.Conditional()) || (!ok && reg.ConditionalPotential(s.Normalizer)) {
 			return Result{}, fmt.Errorf("spectrum %q names a conditional normalizer %s; a normalization that need not "+
 				"give the same bytes twice cannot define fulfilment (SPEC §9, §10)", s.Spectrum, s.Normalizer)
 		}

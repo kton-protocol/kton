@@ -237,12 +237,28 @@ func TestConditional_PotentialNamedByIdIsNotFollowed(t *testing.T) {
 		mustAdd(t, reg, mustSign(t, foton.Spec{Statement: "v1", Inputs: []foton.FileSpec{{Path: "in", Hash: h("in-" + raw)}},
 			Outputs: []foton.FileSpec{{Path: "out", Hash: raw}}, Protocol: &foton.ProtocolSpec{Kind: "run", Descriptor: map[string]any{"cmd": raw}}}))
 	}
-	if rep, err := reg.Reproduces(rawA, rawB, pid); err != nil || rep.Matches {
-		t.Errorf("reproduces --via a conditional potential: %+v %v; want no match", rep, err)
+	ref, err := core.ComputeProtocolRef(desc)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := spectrum.Check(reg, spectrum.Spectrum{Spectrum: "tool", Normalizer: pid,
-		Members: []spectrum.Member{{Name: "m", Output: rawA}}}, map[string]string{"m": rawB}); err == nil {
-		t.Error("a spectrum whose normalizer is a conditional potential was checked")
+	// By foton id, and by its ref - the potential's primary name, which does not cover the conditions.
+	for _, name := range []string{pid, ref} {
+		if rep, err := reg.Reproduces(rawA, rawB, name); err != nil || rep.Matches {
+			t.Errorf("reproduces --via a conditional potential named %s: %+v %v; want no match", name, rep, err)
+		}
+		if _, err := spectrum.Check(reg, spectrum.Spectrum{Spectrum: "tool", Normalizer: name,
+			Members: []spectrum.Member{{Name: "m", Output: rawA}}}, map[string]string{"m": rawB}); err == nil {
+			t.Errorf("a spectrum whose normalizer is a conditional potential named %s was checked", name)
+		}
+	}
+	// Once the same potential is also recorded without conditions, its ref names an ordinary normalizer.
+	plain := pot
+	pp := *pot.Protocol
+	pp.Conditions = nil
+	plain.Protocol = &pp
+	mustAdd(t, reg, mustSign(t, plain))
+	if rep, err := reg.Reproduces(rawA, rawB, ref); err != nil || !rep.Matches {
+		t.Errorf("the ref of a potential also recorded without conditions: %+v %v; want L1", rep, err)
 	}
 }
 
