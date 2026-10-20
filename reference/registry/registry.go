@@ -593,6 +593,9 @@ func (r *Registry) NormalizedOutput(hash, potential string) string {
 		if ref, err := f.Protocol.EffectiveRef(); err == nil {
 			want = canonRef(ref)
 		}
+	} else if r.ConditionalPotential(want) {
+		// Named by its ref - the potential's primary name - the potential is the same, and so is its mark.
+		return ""
 	}
 	for _, id := range r.byInput[hash] {
 		f := r.foton[id]
@@ -607,6 +610,38 @@ func (r *Registry) NormalizedOutput(hash, potential string) string {
 		}
 	}
 	return ""
+}
+
+// ConditionalPotential reports whether ref names a potential that is recorded only as conditional: some
+// potential (a foton with an unbound slot, SPEC §6.4) with that effective ref carries conditions, and
+// none without them is recorded. A normalizer is named by its ref as often as by a foton id, and the
+// ref does not cover the conditions (they are not part of the descriptor), so the mark has to be looked
+// up on the potentials that share it (SPEC §9).
+func (r *Registry) ConditionalPotential(ref string) bool {
+	ref = canonRef(ref)
+	conditional := false
+	for _, f := range r.foton {
+		if !isPotential(f) {
+			continue
+		}
+		if er, err := f.Protocol.EffectiveRef(); err != nil || canonRef(er) != ref {
+			continue
+		}
+		if !f.Conditional() {
+			return false
+		}
+		conditional = true
+	}
+	return conditional
+}
+
+func isPotential(f *core.Foton) bool {
+	for _, x := range append(append([]core.FileRef{}, f.Inputs...), f.Outputs...) {
+		if x.Hash == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // canonRef is s in canonical content-hash form when it is one (SPEC §5.1), else s unchanged: a

@@ -152,7 +152,7 @@ func Check(reg *registry.Registry, s Spectrum, candidates map[string]string) (Re
 		s.Normalizer = n
 	}
 	if s.Normalizer != "" {
-		if f, ok := reg.Foton(s.Normalizer); ok && f.Conditional() {
+		if f, ok := reg.Foton(s.Normalizer); (ok && f.Conditional()) || (!ok && reg.ConditionalPotential(s.Normalizer)) {
 			return Result{}, fmt.Errorf("spectrum %q names a conditional normalizer %s; a normalization that need not "+
 				"give the same bytes twice cannot define fulfilment (SPEC §9, §10)", s.Spectrum, s.Normalizer)
 		}
