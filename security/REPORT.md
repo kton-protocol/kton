@@ -12,18 +12,18 @@ which made 70 dead permalinks look like evidence a reader could follow. They are
 hashes so the trail survives for anyone holding the archive, and so nothing here claims to be
 checkable that is not.*
 
-## Posture: **28 closed · 3 open · 2 accepted boundary**, of 33 recorded attacks → NOT SECURE
+## Posture: **29 closed · 3 open · 2 accepted boundary**, of 34 recorded attacks → NOT SECURE
 
 *These numbers are derived from what is in this directory, not carried forward by hand. `ls
-attacks/*.sh` is 33; `check.sh` prints its own coverage line every run. The previous posture said
+attacks/*.sh` is 34; `check.sh` prints its own coverage line every run. The previous posture said
 "27/29 spectrum members fulfilled · 27 closed · 2 open" over a Closed table with 24 rows, and
 "10 of the 28 PoCs are executable" when 17 are and `check.sh` runs 16 - a report overclaiming its
 own coverage, which is the finding this suite keeps making about everything else.*
 
-**18 of the 33 PoCs are executable**; `check.sh` runs **17** of them here (the 18th,
+**19 of the 34 PoCs are executable**; `check.sh` runs **18** of them here (the 19th,
 `screenshot-viewer-labels`, needs a kton-examples checkout passed as `$1`). The remaining 15 carry no
 verdict: they are records of a finding, reproduced in prose below, and they run nowhere. A green gate
-means those 17 held - not that the suite is complete.
+means those 18 held - not that the suite is complete.
 
 Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
 vulnerable/fixed commits as signed `nekton` claims. Those claims and the `keys/` directory are not in this
@@ -48,7 +48,7 @@ repository, so `nekton verify` cannot be run against them from here - `redteam.p
 | `closed-world-boundary` | 1 |
 | `unvalidated-timestamp` | 1 |
 | `spectrum-no-existence-check` | 1 |
-| `federation-not-order-independent` | 1 |
+| `federation-not-order-independent` | 2 |
 | `canonicalization` | 1 |
 | `read-face-brittle` | 1 |
 | `witness-not-fully-verified` | 1 |
@@ -86,6 +86,7 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 | `spectrum-launder` | RED | `backstop-looks-up-not-reexecute` | [`24bd5af`](https://github.com/gitmick/kton-examples/commit/24bd5af) | [`46ed3fa`](https://github.com/gitmick/kton-examples/commit/46ed3fa) |
 | `suppress-replay` | RED | `read-face-trusts-declared-id` | `7df1e70` | `d0f7cf9` |
 | `union-across-payloads` | RED | `signature-attached-to-bytes-it-did-not-sign` | - | #93 |
+| `v1-payload-variant` | RED | `federation-not-order-independent` | `3390692` (unmerged `foton/v1` branch) | #208 |
 | `viewer-selfsigned` | RED | `viewer-trusts-declared-id` | [`b8a642a`](https://github.com/gitmick/kton-examples/commit/b8a642a) | [`f5570c0`](https://github.com/gitmick/kton-examples/commit/f5570c0) |
 | `viewer-xss` | RED | `render-face-doesnt-escape` | [`826ea7d`](https://github.com/gitmick/kton-examples/commit/826ea7d) | [`b8a642a`](https://github.com/gitmick/kton-examples/commit/b8a642a) |
 | `wasm-viewer-trust` | RED | `viewer-trusts-declared-id` | `804f052` | `6ff639e` |
@@ -338,6 +339,13 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **vulnerable at:** `864385f` (v0.2.1)
 - **fixed at (reproduction now fails):** 0.2.2
 - **PoC:** [`attacks/seed-scope-trig.sh`](attacks/seed-scope-trig.sh)
+
+### `v1-payload-variant` — RED · ✅ closed
+- **class:** `federation-not-order-independent`
+- **theory:** `foton/v1` promises the same payload for the same work, so co-signatures union. Ingest admitted any payload variant with the same id (whitespace, key order, hex case, extra digest or member, foreign `_type`, unknown protocol field). Signatures only union over identical bytes, so the first variant ingested owned the record and every honest co-signer was refused. Found on the unmerged branch, before release. Fixed: a v1 payload must be byte-identical to the canonical statement derived from its record (SPEC §6.6.1).
+- **vulnerable at:** `3390692` (branch `cockpit-kernel-proposals`, never on main)
+- **fixed at (reproduction now fails):** #208
+- **PoC:** [`attacks/v1-payload-variant.sh`](attacks/v1-payload-variant.sh)
 
 ### `screenshot-viewer-labels` — RED · ✅ closed
 - **class:** `viewer-trusts-declared-id`

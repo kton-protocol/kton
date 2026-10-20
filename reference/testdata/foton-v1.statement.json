@@ -1,0 +1,41 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "out/｡.txt",
+      "digest": {
+        "sha256": "fe423755e52304ce85acf7a2c51a557aa1869d960f8a2081851fa90c2b762e52"
+      }
+    },
+    {
+      "name": "out/😀.txt",
+      "digest": {
+        "sha256": "4030f0c0b99ba5e189b6fe295448a8ca31ca589a55930175de18032545c11501"
+      }
+    }
+  ],
+  "predicateType": "https://kton.dev/foton/v1",
+  "predicate": {
+    "inputs": [
+      {
+        "name": "in/｡.csv",
+        "digest": {
+          "sha256": "32be37b65d285eb540e72d68ae2a24ec8bb843e42dd64fefc9726a07892f1414"
+        }
+      },
+      {
+        "name": "in/😀.csv",
+        "digest": {
+          "sha256": "60dad40b61731091fd97bb7e36bb94f729189a6a6c865826a2703419235588d4"
+        }
+      }
+    ],
+    "protocol": {
+      "kind": "script",
+      "ref": "sha256:8cf254e9a3d88ce6290fab653fa47ae40d8ca239ffba937a3a5228138f1bbc25",
+      "descriptor": {
+        "cmd": "x"
+      }
+    }
+  }
+}

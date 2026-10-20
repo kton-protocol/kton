@@ -218,6 +218,7 @@ func authorConvenience(args []string) error {
 	printID := false                 // print ONLY the bare foton id to stdout (human lines go to stderr) - for scripting
 	locatedAuto := false             // default a file://<abs> locator for every --in/--out that lacks an explicit --located
 	located := map[string][]string{} // logical path -> fetch URIs (CARRIED)
+	statement := ""                  // "" / v0 (default) or v1 (canonical form, SPEC §6.6.1)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--add":
@@ -286,6 +287,11 @@ func authorConvenience(args []string) error {
 			printID = true
 		case "--located-auto":
 			locatedAuto = true
+		case "--statement":
+			i++
+			if i < len(args) {
+				statement = args[i]
+			}
 		default:
 			return fmt.Errorf("unknown flag %q", args[i])
 		}
@@ -299,7 +305,7 @@ func authorConvenience(args []string) error {
 			"  more: PATH=F sets the recorded name; --located PATH=URL adds where the bytes live; --strict requires\n" +
 			"        relative paths; also --environment sha256: (qualified env-spectrum), --env-ref STRING (exact\n" +
 			"        execution env: oci://…@sha256: / nix path / server id, COVERED - pins WHICH env ran), --kind K,\n" +
-			"        --registry DIR, -o FILE")
+			"        --registry DIR, -o FILE; --statement v1 records the canonical form (locators as material)")
 	}
 	// resolve each "[PATH=]LOCALFILE": PATH is the logical work-tree path recorded (COVERED); LOCALFILE is
 	// only read to hash. Absolute local paths are cleaned to their basename so machine paths neither leak
@@ -340,7 +346,26 @@ func authorConvenience(args []string) error {
 	if err != nil {
 		return err
 	}
-	spec := authorSpec{Predicate: "foton", Inputs: inFs, Outputs: outFs}
+	// foton/v1 keeps nothing carried in the signed record: the locators come out of the files here
+	// and are attached beside the record as signed material once it is ingested (SPEC §6.6.1, §8.1).
+	var locFs []fileSpec
+	if statement == "v1" {
+		strip := func(fs []fileSpec) []fileSpec {
+			out := make([]fileSpec, len(fs))
+			for i, f := range fs {
+				if len(f.URI) > 0 {
+					locFs = append(locFs, f)
+				}
+				out[i] = fileSpec{Path: f.Path, Hash: f.Hash}
+			}
+			return out
+		}
+		inFs, outFs = strip(inFs), strip(outFs)
+		if len(locFs) > 0 && !addFlag {
+			return fmt.Errorf("--statement v1 attaches locators to the record in a registry; add --add (or drop --located)")
+		}
+	}
+	spec := authorSpec{Predicate: "foton", Statement: statement, Inputs: inFs, Outputs: outFs}
 	desc := map[string]any{"cmd": cmd}
 	if env != "" {
 		if !strings.HasPrefix(env, "sha256:") {
@@ -429,8 +454,21 @@ func authorConvenience(args []string) error {
 		if id != "" {
 			fid = id
 		}
+		if len(locFs) > 0 {
+			m, err := foton.SignLocators(id, locFs, priv)
+			if err != nil {
+				return err
+			}
+			if err := r.AttachMaterial(registry.VerificationMaterial{Subject: m.Subject, Scheme: m.Scheme,
+				MediaType: m.MediaType, Material: m.Material}); err != nil {
+				return err
+			}
+			msg("attached locators for %d file(s) as material (%s)\n", len(locFs), m.Scheme)
+		}
 		if isNew {
 			msg("indexed foton %s  (registry now holds %d fotons)\n", id, r.Len())
+		} else if statement == "v1" {
+			msg("already present: foton %s - your signature was added to it (foton/v1)\n", id)
 		} else {
 			// A foton is IMMUTABLE and content-addressed: an identical descriptor derives the same id, so a
 			// re-run dedups to the existing object (your signature is NOT merged in — the foton keeps its

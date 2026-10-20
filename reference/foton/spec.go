@@ -48,7 +48,11 @@ type ProtocolSpec struct {
 // reviews, votes - are signed claims in the nekton layer, not here. `predicate` is accepted only as
 // "foton" (or empty) for backward compatibility.
 type Spec struct {
-	Predicate string        `json:"predicate"` // "" | "foton" only
+	Predicate string `json:"predicate"` // "" | "foton" only
+	// Statement selects the wire form: "" or "v0" (the default, unchanged) or "v1", the canonical
+	// form (SPEC §6.6.1): inputs and outputs ordered by path, nothing carried in the signed bytes.
+	// A v1 spec carrying uri is refused - its locators go beside the record (SignLocators).
+	Statement string        `json:"statement,omitempty"`
 	Inputs    []FileSpec    `json:"inputs"`
 	Outputs   []FileSpec    `json:"outputs"`
 	Protocol  *ProtocolSpec `json:"protocol"`
@@ -126,6 +130,19 @@ func (spec Spec) Validate() error {
 	if spec.Protocol == nil {
 		return fmt.Errorf("foton spec needs a protocol")
 	}
+	switch spec.Statement {
+	case "", "v0":
+	case "v1":
+		for _, f := range append(append([]FileSpec{}, spec.Inputs...), spec.Outputs...) {
+			if len(f.URI) > 0 {
+				return fmt.Errorf("foton/v1 carries no uri in the signed record (%s); attach locators as "+
+					"material with SignLocators instead - a uri in the payload is what keeps two producers "+
+					"of the same work from co-signing it", f.Path)
+			}
+		}
+	default:
+		return fmt.Errorf("unknown statement version %q (v0 or v1)", spec.Statement)
+	}
 	if err := validateFiles("input", spec.Inputs, true); err != nil {
 		return err
 	}
@@ -172,12 +189,29 @@ func (spec Spec) normalized() (Spec, error) {
 	out := spec
 	out.Inputs = normalizeFiles(spec.Inputs)
 	out.Outputs = normalizeFiles(spec.Outputs)
+	if spec.Statement == "v1" {
+		// The canonical order is applied BEFORE identity is computed, so the precomputed id, the
+		// signed bytes and the registry's re-derivation all see one order (SPEC §6.6.1).
+		sortFiles(out.Inputs)
+		sortFiles(out.Outputs)
+	}
 	return out, nil
 }
 
 // normalizeFiles copies the slice - a caller's Spec must not be mutated by asking for its id - and
 // canonicalizes every bound hash. An UNBOUND slot (no hash) is left alone: a path-only slot is a
 // legitimate "potential" (SPEC §6.1), not an error.
+func sortFiles(fs []FileSpec) {
+	refs := make([]core.FileRef, len(fs))
+	for i, f := range fs {
+		refs[i] = core.FileRef{Path: f.Path, Hash: f.Hash}
+	}
+	core.SortRefs(refs)
+	for i := range fs {
+		fs[i] = FileSpec{Path: refs[i].Path, Hash: refs[i].Hash}
+	}
+}
+
 func normalizeFiles(fs []FileSpec) []FileSpec {
 	if fs == nil {
 		return nil
@@ -210,6 +244,18 @@ func StatementPayload(spec Spec) ([]byte, error) {
 	if cerr != nil {
 		return nil, cerr
 	}
+	if spec.Statement == "v1" {
+		// The ONE v1 form, shared with ingest: a registry admits a v1 payload only if it is these
+		// bytes (core.CheckV1Payload), so authoring must not build its own.
+		f := core.Foton{Protocol: core.Protocol{Kind: spec.Protocol.Kind, Ref: ref, Descriptor: spec.Protocol.Descriptor}}
+		for _, in := range spec.Inputs {
+			f.Inputs = append(f.Inputs, core.FileRef{Path: in.Path, Hash: in.Hash})
+		}
+		for _, out := range spec.Outputs {
+			f.Outputs = append(f.Outputs, core.FileRef{Path: out.Path, Hash: out.Hash})
+		}
+		return core.CanonicalV1Payload(&f)
+	}
 	st := map[string]any{
 		"_type":         "https://in-toto.io/Statement/v1",
 		"subject":       SubjectsOf(spec.Outputs),
@@ -237,6 +283,9 @@ func FotonID(spec Spec) (string, error) {
 		return "", err
 	}
 	f := core.Foton{Protocol: core.Protocol{Kind: spec.Protocol.Kind, Descriptor: spec.Protocol.Descriptor}}
+	if spec.Statement == "v1" {
+		f.Statement = "v1"
+	}
 	for _, in := range spec.Inputs {
 		f.Inputs = append(f.Inputs, core.FileRef{Hash: in.Hash, Path: in.Path})
 	}
