@@ -86,6 +86,13 @@ on stdout rather than over a transport. \fB--since\fR takes the cursor from the 
 \fBmax\fR. This is the surface a consumer verifies against - a projection like \fBshow\fR does not
 carry the bytes a signature stands over.
 .TP
+.B plankton position [--registry \fID\fR] [--json]
+A cheap change check for an index that follows this store: the numbering's \fBepoch\fR and
+\fBmaxSeq\fR, and \fBobjects\fR, a sha256 over the path, size and modification time of every file
+under objects/. It is read without opening the store. Equal positions mean nothing changed; any
+difference means open it and apply \fBrecords --since\fR, from 0 when \fBepoch\fR differs.
+\fBmaxSeq\fR may lag records that arrived by a git merge; \fBobjects\fR does not.
+.TP
 .B plankton reproductions [--trust-keys \fIdir\fR] [--json] \fIsha256:output-hash\fR
 How many INDEPENDENT signers produced exactly these bytes. With \fB--trust-keys\fR only signers whose
 signature actually verifies are counted; without it the count is self-declared and forgeable, and is

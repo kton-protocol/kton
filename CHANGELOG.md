@@ -67,6 +67,13 @@ marks the hit (`conditions` in `--json`), `show` lists the conditions, and `line
 statement carrying `protocol.conditions` is refused. PoC: `security/attacks/conditional-merge.sh`
 (gated).
 
+**A cheap registry position** ([#233](https://github.com/kton-protocol/kton/issues/233)).
+`registry.ReadPosition(dir)` (plankton and nekton; `core.ReadPosition`) and `plankton position` /
+`nekton position [--json]` give `{epoch, maxSeq, objects}` without opening the store. `objects` is a
+sha256 over the path, size and modification time of every file under `objects/`, so a record that
+arrived by git merge, which has no position until a writer opens the store, still changes it. Equal
+positions mean nothing changed; any difference means open the store and apply `records --since`.
+
 ### Changed
 
 **`plankton author --env-ref` is carried when a class is declared on `foton/v1`**
