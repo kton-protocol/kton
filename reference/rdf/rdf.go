@@ -29,9 +29,10 @@ const (
 
 // Turtle renders the (whole or sel-restricted) lineage to a Turtle string. trustKeys is the
 // verifier's trusted key set: a foton is attributed (prov:wasAttributedTo) only to the key that
-// actually signed it; a record no trusted key verifies is marked nk:signerVerified false and its
-// claimed signer is carried as nk:claimedSigner (NOT prov:wasAttributedTo), so a relabelled or
-// unverifiable attribution is never presented as established identity.
+// actually signed it; a record no trusted key verifies carries its claimed signer as nk:claimedSigner
+// (NOT prov:wasAttributedTo), so a relabelled or unverifiable attribution is never presented as
+// established identity, and is marked nk:signerVerified false when keys were given. For an index that
+// decides trust at query time, see Record and Attribution.
 func Turtle(r *registry.Registry, sel string, trustKeys []ed25519.PublicKey) (string, error) {
 	var ids []string
 	if sel == "" {
@@ -111,7 +112,12 @@ func Turtle(r *registry.Registry, sel string, trustKeys []ed25519.PublicKey) (st
 				}
 				fmt.Fprintf(&b, " ;\n    nk:signerVerified true")
 			} else if a := agentNode(claimed); a != "" {
-				fmt.Fprintf(&b, " ;\n    nk:claimedSigner %s ;\n    nk:signerVerified false", a)
+				fmt.Fprintf(&b, " ;\n    nk:claimedSigner %s", a)
+				// false only when keys were given and none verified, as nekton writes it (#232): with
+				// no keys nobody was asked, and `false` would read as checked and failed.
+				if len(trustKeys) > 0 {
+					fmt.Fprintf(&b, " ;\n    nk:signerVerified false")
+				}
 			}
 		}
 		// prov:used one line per input; remember its path so a lineage-root input still gets a label
