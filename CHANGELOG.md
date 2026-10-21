@@ -94,6 +94,12 @@ computed from the signed statement, not from the projection.
 
 ### Fixed
 
+**A dangling record link no longer fails the whole plankton registry**
+([#236](https://github.com/kton-protocol/kton/issues/236)). A file named like a record that cannot be
+read at all (a dangling symlink a checkout brought, a missing permission) failed `Open`, so every read
+over every good record failed with it. It is now skipped, named on stderr and counted as degraded, like
+a corrupt record, and `--strict` still refuses the read. nekton already skipped it.
+
 **The normalizer comparison uses one spelling on both sides**
 ([#226](https://github.com/kton-protocol/kton/issues/226)). `spectrum check` and `reproduces --via`
 normalised the normalizer they were asked about, but not the indexed `protocol.ref` of a v0 normalizer
