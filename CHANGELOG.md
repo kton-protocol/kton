@@ -74,7 +74,13 @@ machine and for every signature set. `rdf.Attribution` / `nanopub.Attribution(â€
 per key that verifies the record (`https://kton.dev/attribution/<record hex>/<keyid>`: `prov:wasAttributedTo`,
 `nk:signerVerified true`, and for a claim `pav:createdBy` / `dct:creator`). An index stores each record
 once and selects attribution graphs by trusted key at query time; no attribution graph means
-unverified. A conditional foton carries `nk:conditional` and its conditions in its own quads.
+unverified. A conditional foton carries `nk:conditional` and its conditions in its own quads. Every own
+quad of a foton is in its own graph `https://kton.dev/o/<hex>`, and every own quad of a claim in one of
+its four nanopub graphs; none is in the default graph. Batch forms `rdf.Records`, `nanopub.Records`;
+`nanopub.NewRecordContext` builds a context without keys. The nekton record path uses a stricter term
+rule than `nanopublish` (whose quads feed the Trusty URI and are unchanged): a value is an IRI only if
+it is a valid content hash or absolute IRI, control characters are escaped, unsigned envelopes are
+refused.
 
 ### Changed
 

@@ -23,8 +23,10 @@ import (
 //     passes every key it knows, stores every graph it gets back, and includes the graphs of the keys
 //     it trusts in a query.
 //
-// No attribution graph means unverified. Neither nk:signerVerified false nor nk:claimedSigner (the
-// envelope's unauthenticated keyid hint) appears in this form.
+// Contract: every own quad of a foton is in graph RecordGraph(id) - the input and output entities and
+// their labels included - and none is in the default graph, so a view selects a repository's fotons by
+// their graphs. No attribution graph means unverified. Neither nk:signerVerified false nor
+// nk:claimedSigner (the envelope's unauthenticated keyid hint) appears in this form.
 //
 // Output is canonical N-Quads: full IRIs, one quad per line, sorted, no duplicates.
 
@@ -105,6 +107,20 @@ func Record(r *registry.Registry, fotonID string) ([]byte, error) {
 	return q.bytes(), nil
 }
 
+// Records returns the own quads of several fotons as one canonical N-Quads document, for a cold
+// rebuild of an index.
+func Records(r *registry.Registry, fotonIDs []string) ([]byte, error) {
+	var q nquads
+	for _, id := range fotonIDs {
+		b, err := Record(r, id)
+		if err != nil {
+			return nil, err
+		}
+		q.lines = append(q.lines, strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")...)
+	}
+	return q.bytes(), nil
+}
+
 // Attribution returns, for every key in keys that verifies the foton's envelope, that key's
 // attribution as canonical N-Quads in graph AttributionGraph(fotonID, keyid). A co-signed foton has
 // one entry per verifying producer. A key listed twice is one entry.
@@ -170,7 +186,7 @@ func (q *nquads) bytes() []byte {
 	sort.Strings(q.lines)
 	var b strings.Builder
 	for i, l := range q.lines {
-		if i > 0 && l == q.lines[i-1] {
+		if l == "" || (i > 0 && l == q.lines[i-1]) {
 			continue
 		}
 		b.WriteString(l)
@@ -195,7 +211,7 @@ func nqLiteral(s string) string {
 		case '\r':
 			b.WriteString(`\r`)
 		default:
-			if r < 0x20 || r == 0x7f {
+			if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
 				fmt.Fprintf(&b, `\u%04X`, r)
 			} else {
 				b.WriteRune(r)

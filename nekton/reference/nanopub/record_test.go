@@ -3,6 +3,7 @@ package nanopub
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -75,4 +76,51 @@ func keysOf(m map[string][]byte) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// Review of #235: an unsigned envelope is refused (R1). On the record path a value is an IRI only if
+// it is one, a bad content hash is a literal, and no control character reaches a line raw (R2).
+func TestRecordTermRuleIsStrict(t *testing.T) {
+	c := NewRecordContext(template.Set{})
+	if _, err := Record(c, core.Envelope{Payload: "e30="}); err == nil {
+		t.Error("an unsigned envelope was projected")
+	}
+	env, _, err := claim.SignWith(claim.Spec{
+		Subject:   []claim.SubjectSpec{{Hash: "sha256:" + strings.Repeat("a", 64)}},
+		Predicate: "https://kton.dev/v/reviewed", By: "rev\x00iewer\u2028", When: "2026-10-21T00:00:00Z",
+		Object: map[string]any{
+			"note": "see https://x.org for details", "ref": "sha256:zz> <https://evil/x", "ctl": "a\x0bb",
+			"link": "https://example.org/a b\u2028c", "ok": "sha256:" + strings.Repeat("b", 64),
+		},
+	}, seedKey("reviewer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := Record(c, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(own)
+	// Not IRIs, so literals: free text with a URL in it, a bad content hash, a URL with a space.
+	for _, want := range []string{`"see https://x.org for details"`, `"sha256:zz> <https://evil/x"`, `"a\u000Bb"`,
+		"\"https://example.org/a b\u2028c\"", "<https://kton.dev/o/" + strings.Repeat("b", 64) + ">"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("own quads lack %s:\n%s", want, text)
+		}
+	}
+	if strings.ContainsAny(text, "\x00\x0b") {
+		t.Errorf("a raw control character reached the output:\n%s", text)
+	}
+	// No IRI term carries a character a parser rejects, and none was made from the hostile values.
+	for _, l := range strings.Split(strings.TrimSpace(text), "\n") {
+		for _, m := range regexp.MustCompile(`<[^>]*>`).FindAllString(strings.SplitN(l, "\"", 2)[0], -1) {
+			if strings.ContainsAny(m, " \u2028\u2029") || strings.Contains(m, "evil") || strings.HasPrefix(m, "<see") {
+				t.Errorf("bad IRI term %s in %s", m, l)
+			}
+		}
+	}
+	both, err := Records(c, []core.Envelope{env, env})
+	if err != nil || string(both) != text {
+		t.Errorf("Records of one claim twice should be its Record: %v", err)
+	}
 }

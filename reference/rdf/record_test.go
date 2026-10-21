@@ -53,6 +53,10 @@ func TestRecordIsTheRecordAloneAndAttributionIsPerKey(t *testing.T) {
 		}
 	}
 
+	if batch, err := Records(both, []string{id, id}); err != nil || string(batch) != string(b) {
+		t.Errorf("Records of one foton twice should be its Record: %v", err)
+	}
+
 	att, err := Attribution(both, id, []ed25519.PublicKey{pubA, pubB, pubA, pubC})
 	if err != nil {
 		t.Fatal(err)
