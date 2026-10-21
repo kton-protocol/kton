@@ -103,12 +103,12 @@ func TestRecordTermRuleIsStrict(t *testing.T) {
 	text := string(own)
 	// Not IRIs, so literals: free text with a URL in it, a bad content hash, a URL with a space.
 	for _, want := range []string{`"see https://x.org for details"`, `"sha256:zz> <https://evil/x"`, `"a\u000Bb"`,
-		"\"https://example.org/a b\u2028c\"", "<https://kton.dev/o/" + strings.Repeat("b", 64) + ">"} {
+		`"https://example.org/a b\u2028c"`, "<https://kton.dev/o/" + strings.Repeat("b", 64) + ">"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("own quads lack %s:\n%s", want, text)
 		}
 	}
-	if strings.ContainsAny(text, "\x00\x0b") {
+	if strings.ContainsAny(text, "\x00\x0b\u0085\u2028\u2029") || len(strings.Split(strings.TrimSpace(text), "\n")) != strings.Count(text, " .\n") {
 		t.Errorf("a raw control character reached the output:\n%s", text)
 	}
 	// No IRI term carries a character a parser rejects, and none was made from the hostile values.

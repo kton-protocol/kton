@@ -211,7 +211,9 @@ func nqLiteral(s string) string {
 		case '\r':
 			b.WriteString(`\r`)
 		default:
-			if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+			// C1 controls and the Unicode line/paragraph separators too: legal inside a literal, but
+			// a tool that splits on lines (Python's splitlines) would see one quad as two.
+			if r < 0x20 || (r >= 0x7f && r <= 0x9f) || r == 0x2028 || r == 0x2029 {
 				fmt.Fprintf(&b, `\u%04X`, r)
 			} else {
 				b.WriteRune(r)
