@@ -104,6 +104,11 @@ A conditional potential named by its `protocol.ref` instead of its foton id is n
 either (`Registry.ConditionalPotential`): `reproduces --via <ref>` reached L1 and `spectrum check`
 fulfilled through it.
 
+**An environment class has one spelling** ([#230](https://github.com/kton-protocol/kton/issues/230)).
+`plankton author --environment` accepted upper-case hex and covered it as given, so one class was two
+classes and the same work two ids. It now requires `sha256:` and 64 lowercase hex, on v0 too, and refuses
+anything else rather than lowercasing it. `foton.ReadEnv` requires the record's class to be a content hash.
+
 **The nanopub export is byte-stable when two prefixes share a namespace**
 ([#214](https://github.com/kton-protocol/kton/issues/214)). An alias set that declared a second prefix
 for a namespace the projection already knows (`dcterms` beside `dct`) let map order pick which prefix an
