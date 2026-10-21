@@ -39,7 +39,7 @@ func TestReadPositionSeesUnnumberedArrivals(t *testing.T) {
 	}
 
 	// Bookkeeping alone - peers.json, a lock, the format marker - is not a change.
-	for _, f := range []string{"peers.json", ".seq.lock", filepath.Join("objects", ".format")} {
+	for _, f := range []string{"peers.json", ".seq.lock", ".obj-x.lock", filepath.Join("objects", ".format")} {
 		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +64,31 @@ func TestReadPositionSeesUnnumberedArrivals(t *testing.T) {
 	f.Write([]byte("\n"))
 	f.Close()
 	os.Chtimes(merged, later, later)
-	if p, _ := ReadPosition(dir); p.Objects == two.Objects {
+	three, _ := ReadPosition(dir)
+	if three.Objects == two.Objects {
 		t.Error("an appended file was not seen")
+	}
+
+	// Open does not filter by name, so neither does the position: a file under a dot path, and a
+	// symlink (by its target), are changes (review of #234, P1).
+	hidden := filepath.Join(dir, "objects", ".h", "cc.json")
+	os.MkdirAll(filepath.Dir(hidden), 0o755)
+	os.WriteFile(hidden, []byte(`{}`), 0o644)
+	four, _ := ReadPosition(dir)
+	if four.Objects == three.Objects {
+		t.Error("a file under a dot path was not seen")
+	}
+	target := filepath.Join(t.TempDir(), "elsewhere.json")
+	os.WriteFile(target, []byte(`{}`), 0o644)
+	if err := os.Symlink(target, filepath.Join(dir, "objects", "sha256", "dd.json")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	five, _ := ReadPosition(dir)
+	if five.Objects == four.Objects {
+		t.Error("a symlinked file was not seen")
+	}
+	os.WriteFile(target, []byte(`{"more":1}`), 0o644)
+	if p, _ := ReadPosition(dir); p.Objects == five.Objects {
+		t.Error("a change behind a symlink was not seen")
 	}
 }

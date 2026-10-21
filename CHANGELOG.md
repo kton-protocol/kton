@@ -72,7 +72,10 @@ statement carrying `protocol.conditions` is refused. PoC: `security/attacks/cond
 `nekton position [--json]` give `{epoch, maxSeq, objects}` without opening the store. `objects` is a
 sha256 over the path, size and modification time of every file under `objects/`, so a record that
 arrived by git merge, which has no position until a writer opens the store, still changes it. Equal
-positions mean nothing changed; any difference means open the store and apply `records --since`.
+positions mean nothing changed; any difference means open the store and apply `records --since`, from
+0 when `epoch` differs or when `objects` changed while `maxSeq` did not. `objects` covers every file
+`Open` reads, dot paths and symlinks included. `plankton add` of a record already stored, byte for byte,
+no longer rewrites it, so re-adding moves no position.
 
 ### Changed
 

@@ -90,8 +90,9 @@ carry the bytes a signature stands over.
 A cheap change check for an index that follows this store: the numbering's \fBepoch\fR and
 \fBmaxSeq\fR, and \fBobjects\fR, a sha256 over the path, size and modification time of every file
 under objects/. It is read without opening the store. Equal positions mean nothing changed; any
-difference means open it and apply \fBrecords --since\fR, from 0 when \fBepoch\fR differs.
-\fBmaxSeq\fR may lag records that arrived by a git merge; \fBobjects\fR does not.
+difference means open it and apply \fBrecords --since\fR, from 0 when \fBepoch\fR differs, and
+from 0 when \fBobjects\fR changed but \fBmaxSeq\fR did not (records nobody has numbered yet, as after
+a git merge). Read the position \fIbefore\fR the records, so a record arriving in between counts next time.
 .TP
 .B plankton reproductions [--trust-keys \fIdir\fR] [--json] \fIsha256:output-hash\fR
 How many INDEPENDENT signers produced exactly these bytes. With \fB--trust-keys\fR only signers whose

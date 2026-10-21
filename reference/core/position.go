@@ -32,12 +32,20 @@ type Position struct {
 	// records on disk (see above).
 	MaxSeq int `json:"maxSeq"`
 	// Objects is sha256 over the sorted (relative path, size, modification time) of every file under
-	// objects/. Bookkeeping outside it (.seq, peers.json, locks) never changes it, and dotfiles inside
-	// it (.format) are skipped.
+	// objects/ that Open could read: dot names included, a symlink by its target, as Open reads it.
+	// Only the format marker objects/.format is left out; the rest of the bookkeeping (.seq,
+	// peers.json, locks) lives outside objects/ and never changes it.
 	Objects string `json:"objects"`
 }
 
 // ReadPosition reads the position of the store at dir (a plankton or nekton registry directory).
+//
+// A consumer reads the position BEFORE it reads records (Records(since) / `records --since`), so a
+// record that lands in between shows up as a change next time rather than being stamped as seen.
+// Equal positions mean nothing changed. Otherwise: open the store; if Epoch differs, re-read from 0;
+// if Objects changed but MaxSeq did not, re-read from 0 as well - those are records nobody has
+// numbered yet (a git merge into a store no writer has opened since), and the positions a read-only
+// Open gives them exist only in that process's memory, so a cursor cannot be kept against them.
 //
 // Not covered: a file replaced by different bytes of the same size and modification time. Records
 // are content-addressed and append-only, so that is the same content or tampering, and tampering is
@@ -69,24 +77,27 @@ func ReadPosition(dir string) (Position, error) {
 			}
 			return err
 		}
-		if strings.HasPrefix(d.Name(), ".") && path != objects {
-			if d.IsDir() {
-				return fs.SkipDir
-			}
+		if d.IsDir() {
 			return nil
-		}
-		if d.IsDir() || !d.Type().IsRegular() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
 		}
 		rel, err := filepath.Rel(objects, path)
 		if err != nil {
 			return err
 		}
-		lines = append(lines, fmt.Sprintf("%s\x00%d\x00%d", filepath.ToSlash(rel), info.Size(), info.ModTime().UnixNano()))
+		rel = filepath.ToSlash(rel)
+		if rel == ".format" {
+			return nil
+		}
+		// Every other file counts, whatever its name, because Open does not filter by name either: a
+		// record under a dot path or behind a symlink is read, so it has to move the position. A
+		// symlink is taken by its target, as Open reads it (os.Stat follows it); a dangling one is
+		// still a fact about the tree.
+		info, err := os.Stat(path)
+		if err != nil {
+			lines = append(lines, rel+"\x00dangling")
+			return nil
+		}
+		lines = append(lines, fmt.Sprintf("%s\x00%d\x00%d", rel, info.Size(), info.ModTime().UnixNano()))
 		return nil
 	})
 	if err != nil {

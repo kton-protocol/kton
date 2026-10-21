@@ -9,6 +9,7 @@
 package registry
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -128,7 +129,7 @@ func openAt(dir string, create bool) (*Registry, error) {
 		}
 		loaded = append(loaded, of)
 	}
-	// Number the records from objects/.seq, offering the ids in the stable sorted-path order above
+	// Number the records from <dir>/.seq, offering the ids in the stable sorted-path order above
 	// rather than in apply order. The positions come off disk, so one already handed to a peer can
 	// never move - which is what stops a planted record whose hash sorts EARLY from shifting every
 	// later record down and pushing it back under a peer's cursor.
@@ -781,7 +782,9 @@ func (r *Registry) persistRecord(key, fotonID string, env core.Envelope) (core.E
 	merged := env
 	err := r.withLock(".obj-"+strings.NewReplacer("/", "_", ":", "_").Replace(key)+".lock", func() error {
 		p := objectPath(r.objectsDir, key)
+		var existing []byte
 		if b, rerr := os.ReadFile(p); rerr == nil {
+			existing = b
 			var of objectFile
 			if json.Unmarshal(b, &of) == nil && of.Envelope.Payload != "" {
 				// The existing object is preserved only if it IS this record. It used to be merged on
@@ -829,6 +832,12 @@ func (r *Registry) persistRecord(key, fotonID string, env core.Envelope) (core.E
 		b, err := json.MarshalIndent(objectFile{FotonID: fotonID, Envelope: merged}, "", "  ")
 		if err != nil {
 			return err
+		}
+		// Re-adding a record that is already stored, byte for byte, writes nothing. A rewrite of the
+		// same bytes still moved the file's modification time, so an index following the store's
+		// position (#233) saw "changed" on every cycle of a puller that re-adds its whole set.
+		if bytes.Equal(existing, b) {
+			return nil
 		}
 		return atomicWrite(p, b)
 	})

@@ -71,8 +71,9 @@ Every claim together with its signed envelope: the SPEC Clause 12 \fBsync(since)
 A cheap change check for an index that follows this store: the numbering's \fBepoch\fR and
 \fBmaxSeq\fR, and \fBobjects\fR, a sha256 over the path, size and modification time of every file
 under objects/. It is read without opening the store. Equal positions mean nothing changed; any
-difference means open it and apply \fBrecords --since\fR, from 0 when \fBepoch\fR differs.
-\fBmaxSeq\fR may lag records that arrived by a git merge; \fBobjects\fR does not.
+difference means open it and apply \fBrecords --since\fR, from 0 when \fBepoch\fR differs, and
+from 0 when \fBobjects\fR changed but \fBmaxSeq\fR did not (records nobody has numbered yet, as after
+a git merge). Read the position \fIbefore\fR the records, so a record arriving in between counts next time.
 .TP
 .B nekton attach \fIsha256:id\fR --scheme \fIS\fR --file \fIF\fR [--media \fIM\fR]
 Bind external verification material to a claim by its content address (SPEC 8.1): a Sigstore bundle,
