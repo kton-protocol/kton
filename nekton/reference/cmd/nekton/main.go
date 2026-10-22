@@ -54,6 +54,8 @@ usage:
                                                       not arrived (incomplete, not invalid, §11)
   nekton records [--json] [--since N]                  every claim WITH its signed envelope: the
                                                       SPEC §12 sync(since) answer, over stdout
+  nekton position [--registry D] [--json]             did anything change? epoch, maxSeq and a fingerprint
+                                                      of objects/, read WITHOUT opening the store (#233)
   nekton attach <sha256:id> --scheme S --file F [--media M]   bind external evidence to a record (SPEC §8.1):
                                                       a Sigstore bundle, a Rekor entry, an RFC 3161 token, an
                                                       X.509/CAdES or eIDAS signature. Stored, NEVER evaluated.
@@ -383,6 +385,32 @@ func run(cmd string, args []string) error {
 	case "records":
 		// The §12 sync(since) query, over stdout rather than HTTP (#85).
 		return records(args)
+
+	case "position":
+		// A cheap "did anything change?" for an index that follows this store (#233): read without
+		// opening it. Equal positions mean nothing changed; anything else means open it and apply
+		// `records --since`.
+		asJSON, reg := false, ""
+		for i := 0; i < len(args); i++ {
+			switch {
+			case args[i] == "--json":
+				asJSON = true
+			case args[i] == "--registry" && i+1 < len(args):
+				i++
+				reg = args[i]
+			default:
+				return fmt.Errorf("usage: nekton position [--registry D] [--json]")
+			}
+		}
+		p, err := registry.ReadPosition(regOrDefault(reg))
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			return printJSONOut(p)
+		}
+		fmt.Printf("epoch:   %s\nmaxSeq:  %d\nobjects: %s\n", p.Epoch, p.MaxSeq, p.Objects)
+		return nil
 
 	case "attach":
 		// SPEC §8.1: bind external evidence to a record by its CONTENT ADDRESS, never by filename.
