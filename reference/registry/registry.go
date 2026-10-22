@@ -116,7 +116,13 @@ func openAt(dir string, create bool) (*Registry, error) {
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
 		if err != nil {
-			return nil, err
+			// The same rule as a corrupt object, for a file named like a record that cannot be read at
+			// all - a dangling symlink a checkout brought, a permission it lacks (#236). It failed the
+			// whole Open, so one planted link disabled reads over every good record; nekton already
+			// skipped it. Skipped, named and counted: --strict still refuses a degraded read.
+			fmt.Fprintf(os.Stderr, "warning: skipping unreadable record %s: %v\n", p, err)
+			r.degraded++
+			continue
 		}
 		var of objectFile
 		if err := json.Unmarshal(b, &of); err != nil {
