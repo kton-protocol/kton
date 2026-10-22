@@ -59,6 +59,15 @@ func (c *trigCtx) expand(cur string) string {
 // refTerm mirrors hashRef but returns a typed term (for N-Quads): sha256 -> pk: IRI, a URI -> IRI,
 // else a plain-string literal.
 func (c *trigCtx) refTerm(v string) npTerm {
+	if c.strict {
+		if n, ok := core.NormalizeContentHash(v); ok && strings.HasPrefix(v, "sha256:") {
+			return iriT(c.prefixes["pk"] + strings.TrimPrefix(n, "sha256:"))
+		}
+		if strings.Contains(v, "://") && strictIRI(v) {
+			return iriT(v)
+		}
+		return litT(v, "")
+	}
 	if strings.HasPrefix(v, "sha256:") {
 		return iriT(c.prefixes["pk"] + strings.TrimPrefix(v, "sha256:"))
 	}

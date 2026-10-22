@@ -120,7 +120,11 @@ func TestExportRDF_KeyIDInjection(t *testing.T) {
 		t.Fatalf("poison keyid was emitted instead of dropped:\n%s", out)
 	}
 	// the clean hex keyid still renders as a proper agent node
-	if !strings.Contains(out, "nk:claimedSigner agent:0123456789abcdef ;\n    nk:signerVerified false") {
+	if !strings.Contains(out, "nk:claimedSigner agent:0123456789abcdef") {
 		t.Fatalf("clean hex keyid should render as an agent node:\n%s", out)
+	}
+	// No keys were given, so nobody was asked: no verdict, only the claim (#232, as nekton).
+	if strings.Contains(out, "nk:signerVerified false") {
+		t.Fatalf("signerVerified false without any trusted key:\n%s", out)
 	}
 }

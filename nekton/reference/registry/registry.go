@@ -514,7 +514,7 @@ func openAt(dir string, create bool) (*Registry, error) {
 	// could be an orphan. So replay is chain-VALIDATING: index records whose §7.4 chain resolves
 	// against the state so far, settling repeatedly (a child waits for its seed/prev), then DROP
 	// whatever never resolves - a tampered or reordered object cannot be silently trusted on load.
-	// Number the records from objects/.seq BEFORE settling. Two things matter here. First, the
+	// Number the records from <dir>/.seq BEFORE settling. Two things matter here. First, the
 	// numbers come off disk, so a position already handed to a peer can never move. Second, the ids
 	// are offered in readStore's stable store order rather than settle's RESOLUTION order - the
 	// latter depends on what else is present, which is exactly how a planted record used to shift
