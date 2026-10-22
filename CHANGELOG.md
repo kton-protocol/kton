@@ -77,7 +77,26 @@ positions mean nothing changed; any difference means open the store and apply `r
 `Open` reads, dot paths and symlinks included. `plankton add` of a record already stored, byte for byte,
 no longer rewrites it, so re-adding moves no position.
 
+**A per-record RDF projection with attribution apart** ([#232](https://github.com/kton-protocol/kton/issues/232)).
+`rdf.Record(reg, fotonID)` and `nanopub.Record(ctx, envelope)` return one record's own quads as
+canonical N-Quads. They take no keys and include no signature data, so they are the same bytes on every
+machine and for every signature set. `rdf.Attribution` / `nanopub.Attribution(…, keys)` return one graph
+per key that verifies the record (`https://kton.dev/attribution/<record hex>/<keyid>`: `prov:wasAttributedTo`,
+`nk:signerVerified true`, and for a claim `pav:createdBy` / `dct:creator`). An index stores each record
+once and selects attribution graphs by trusted key at query time; no attribution graph means
+unverified. A conditional foton carries `nk:conditional` and its conditions in its own quads. Every own
+quad of a foton is in its own graph `https://kton.dev/o/<hex>`, and every own quad of a claim in one of
+its four nanopub graphs; none is in the default graph. Batch forms `rdf.Records`, `nanopub.Records`;
+`nanopub.NewRecordContext` builds a context without keys. The nekton record path uses a stricter term
+rule than `nanopublish` (whose quads feed the Trusty URI and are unchanged): a value is an IRI only if
+it is a valid content hash or absolute IRI, control characters are escaped, unsigned envelopes are
+refused.
+
 ### Changed
+
+**`plankton export --rdf` writes `nk:signerVerified false` only when keys were given** (#232). Without
+`--trust-keys` nobody was asked, and `false` read as checked and failed; the claimed signer is still
+carried as `nk:claimedSigner`. This is the rule nekton's projection already followed.
 
 **`plankton author --env-ref` is carried when a class is declared on `foton/v1`**
 ([#211](https://github.com/kton-protocol/kton/issues/211), SPEC §6.5, §8.1). With `--environment` and

@@ -42,6 +42,10 @@ type trigCtx struct {
 	fieldNS   string // default namespace for unresolved object-field keys
 	al        template.Set
 	trustKeys []ed25519.PublicKey // verifier's trusted keys; attribution is derived from these, not the claimed keyid
+	// strict is the per-record projection's term rule (#232): a value becomes an IRI only if it is a
+	// valid content hash or a valid absolute IRI, else a literal. The nanopublish path keeps the
+	// historical rule, because its quads feed the Trusty URI.
+	strict bool
 }
 
 func newTrigCtx(al template.Set) *trigCtx {
