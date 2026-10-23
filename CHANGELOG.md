@@ -10,7 +10,7 @@
 `REGEX` or `CONTAINS`. It is covered (it hashes to `protocol.ref`); the kernel does not interpret it. A
 foton without a descriptor carries none.
 
-## 0.3.0 — unreleased
+## 0.3.0 — released 2026-10-23
 
 ### Added
 
@@ -160,7 +160,7 @@ for a namespace the projection already knows (`dcterms` beside `dct`) let map or
 IRI got, so the same claims exported to different TriG bytes from run to run. Ties are now broken by
 prefix name.
 
-## 0.2.2 — unreleased
+## 0.2.2 — not released separately; everything below ships in 0.3.0
 
 ### Security
 
