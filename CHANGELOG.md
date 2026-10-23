@@ -10,7 +10,7 @@ in its assertion: the parent seed's IRI, or the parent URI. A study > project > 
 then walkable in SPARQL. Applies to the TriG export, the signed nanopub quads and `nanopub.Record`. A
 seed with a parent gets a different Trusty URI; seeds without one are unchanged.
 
-## 0.3.0 — unreleased
+## 0.3.0 — released 2026-10-23
 
 ### Added
 
@@ -160,7 +160,7 @@ for a namespace the projection already knows (`dcterms` beside `dct`) let map or
 IRI got, so the same claims exported to different TriG bytes from run to run. Ties are now broken by
 prefix name.
 
-## 0.2.2 — unreleased
+## 0.2.2 — not released separately; everything below ships in 0.3.0
 
 ### Security
 
