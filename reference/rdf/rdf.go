@@ -78,6 +78,9 @@ func Turtle(r *registry.Registry, sel string, trustKeys []ed25519.PublicKey) (st
 				fmt.Fprintf(&b, " ;\n    nk:environment %s", en)
 			}
 		}
+		if d := descriptorLiteral(f.Protocol.Descriptor); d != "" {
+			fmt.Fprintf(&b, " ;\n    nk:protocolDescriptor %s", rdfLiteral(d))
+		}
 		if env, ok := r.Envelope(id); ok && len(env.Signatures) > 0 {
 			// Attribute to the VERIFIED signer (the trusted key that actually signed this foton), never the
 			// self-declared keyid. If no trusted key verifies it, do NOT assert prov:wasAttributedTo -

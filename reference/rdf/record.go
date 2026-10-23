@@ -66,6 +66,9 @@ func Record(r *registry.Registry, fotonID string) ([]byte, error) {
 			q.add(act, rdfNsNK+"environment", iri(en), g)
 		}
 	}
+	if d := descriptorLiteral(f.Protocol.Descriptor); d != "" {
+		q.add(act, rdfNsNK+"protocolDescriptor", lit(d, ""), g)
+	}
 	// A conditional foton (#212) says so in its own quads: it is a fact about the record, not about
 	// who signed it. Each condition is a node named under the foton, so the bytes stay stable.
 	if f.Conditional() {
@@ -146,6 +149,21 @@ func Attribution(r *registry.Registry, fotonID string, keys []ed25519.PublicKey)
 		out[kid] = q.bytes()
 	}
 	return out, nil
+}
+
+// descriptorLiteral is the protocol descriptor in its canonical JSON form, or "" when there is none
+// (#240). The descriptor is opaque to the kernel (SPEC §6.2), so it is carried whole rather than field
+// by field under names the kernel would have to pick; a consumer matches it with REGEX or CONTAINS. It
+// is covered - it hashes to protocol.ref - so it is a fact about the record.
+func descriptorLiteral(d map[string]any) string {
+	if d == nil {
+		return ""
+	}
+	b, err := core.CanonValue(d)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // iriOf is the full IRI of a content hash (https://kton.dev/o/<hex>), or "" for anything that is not
