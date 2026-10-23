@@ -114,6 +114,9 @@ func nanopubQuads(c *trigCtx, st *claim.Statement, body map[string]any, env core
 		scope := str(body, "scope")
 		add("urn:nekton:scope:"+scope, rdfType+"type", iriT(P["nk"]+"Scope"), ASSERT)
 		add("urn:nekton:scope:"+scope, P["rdfs"]+"label", litT(scope, ""), ASSERT)
+		if pr := parentRef(body); pr != "" {
+			add("urn:nekton:scope:"+scope, P["nk"]+"parent", c.refTerm(pr), ASSERT)
+		}
 	} else {
 		subj := "urn:nekton:claim"
 		if len(st.Subject) > 0 {

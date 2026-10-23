@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+**A scope seed's parent is projected** ([#239](https://github.com/kton-protocol/kton/issues/239)). A seed
+that names its parent (`nekton seed --parent`) now projects `<urn:nekton:scope:<name>> nk:parent <parent>`
+in its assertion: the parent seed's IRI, or the parent URI. A study > project > programme hierarchy is
+then walkable in SPARQL. Applies to the TriG export, the signed nanopub quads and `nanopub.Record`. A
+seed with a parent gets a different Trusty URI; seeds without one are unchanged.
+
 ## 0.3.0 — unreleased
 
 ### Added
