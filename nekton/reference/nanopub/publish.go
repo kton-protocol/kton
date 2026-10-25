@@ -117,7 +117,7 @@ func nanopubQuads(c *trigCtx, st *claim.Statement, body map[string]any, env core
 	} else {
 		subj := "urn:nekton:claim"
 		if len(st.Subject) > 0 {
-			subj = c.expand(c.hashRef(st.Subject[0].Key()))
+			subj = c.expand(c.subjectRef(st.Subject[0].Key()))
 		}
 		// EXPAND the predicate to its full IRI (F1a): a stored CURIE like "gxp:reviewed" must be signed as
 		// <https://kton.dev/v/gxp/reviewed>, not the bogus relative <gxp:reviewed>. The published TriG
