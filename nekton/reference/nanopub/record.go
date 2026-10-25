@@ -177,6 +177,14 @@ func strictIRI(s string) bool {
 	return true
 }
 
+// absoluteIRI reports whether s is an absolute IRI (RFC 3987: scheme ":" and a non-empty rest) that
+// can stand in N-Quads as it is. "10:30" has no scheme (a scheme starts with a letter), and text with
+// a space is never one.
+func absoluteIRI(s string) bool {
+	i := strings.IndexByte(s, ':')
+	return i > 0 && i < len(s)-1 && strictIRI(s)
+}
+
 // recordNQuads serializes quads as canonical N-Quads under the strict rule: an IRI that cannot stand
 // is an error, and a literal escapes every control character.
 func recordNQuads(qs []npQuad) ([]byte, error) {
