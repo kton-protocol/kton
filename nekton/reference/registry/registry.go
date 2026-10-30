@@ -1279,13 +1279,17 @@ func readStoreFormat(objectsDir string) (int, error) {
 }
 
 // writeStoreFormat records the marker. Write path only - a read must never mutate its source.
+//
+// Atomically (#251): os.WriteFile creates the file empty and writes after, so a second process
+// opening a store that is being created read "" and refused it. Two creators write the same bytes,
+// so whichever rename lands last changes nothing.
 func writeStoreFormat(objectsDir string) error {
 	have, err := readStoreFormat(objectsDir)
 	if err != nil || have == StoreFormat {
 		return err
 	}
-	return os.WriteFile(filepath.Join(objectsDir, formatMarker),
-		[]byte(fmt.Sprintf("nekton-store %d\n", StoreFormat)), 0o644)
+	return atomicWrite(filepath.Join(objectsDir, formatMarker),
+		[]byte(fmt.Sprintf("nekton-store %d\n", StoreFormat)))
 }
 
 // subnektonPath is where a claim lives: ONE FILE PER SUBNEKTON, named by the scope id (the seed's
