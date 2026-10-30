@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+**nekton: a store being created could not be opened in parallel** ([#251](https://github.com/kton-protocol/kton/issues/251)).
+The `objects/.format` marker was written with `os.WriteFile`, which creates the file empty first, so a
+process opening a store another process was creating read an empty marker and refused the store. It is
+now written through a temp file and a rename.
+
 ## 0.3.0 — released 2026-10-23
 
 ### Added
