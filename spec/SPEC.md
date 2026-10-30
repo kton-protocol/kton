@@ -251,7 +251,8 @@ Protocol := {
 - `protocol.ref` MUST equal `sha256(canon(descriptor))` when `descriptor` is present.
 - The descriptor is **opaque**: a conforming kernel MUST NOT interpret it.
 - **Conditional fotons.** `conditions` marks a step whose output depended on state the record cannot
-  pin: a database query, a network call, the clock, an unseeded random source. The output can be
+  pin: a database query, a network call, the clock, an unseeded random source, a person's or a
+  language-model agent's judgement. The output can be
   captured and everything downstream is an ordinary foton, but re-running the step with the same inputs
   and protocol need not reproduce it. *If you can hash it, it is an input, not a condition.*
   - `conditions` sits **outside** the descriptor, so the kernel sees it while the descriptor stays
