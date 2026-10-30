@@ -35,7 +35,7 @@ and versioned:
 | qualifies-as | `nk:qualifies-as` | binds a concrete env/tool to an env/tool spectrum (Clause 6.5/10) |
 | env-spectrum | (a `SpectrumId`) | an environment qualification class (Clause 6.5) |
 | action_key | (computed) | the identity of a computation, inputs+protocol (Clause 6.3) |
-| conditional foton | `protocol.conditions` | a foton reproducible only under conditions (Clause 6.2). Conventional `kind`s: `database`, `network`, `clock`, `random`, `license` - the kernel acts on presence, not on the value |
+| conditional foton | `protocol.conditions` | a foton reproducible only under conditions (Clause 6.2). Conventional `kind`s: `database`, `network`, `clock`, `random`, `license`, `manual` (a person did the step; `ref` names the procedure followed, never the person - who did it is the signature's business), `llm` (a language-model agent did the step; `ref` = model or agent id where known, self-declared; add `network` only if the step also read other remote state) - the kernel acts on presence, not on the value ([#249](https://github.com/kton-protocol/kton/issues/249)) |
 | confirmed | `nk:confirmed` | a lightweight general confirmation (no regulatory weight) |
 
 ## 3. Application / example vocabulary (NOT the protocol)

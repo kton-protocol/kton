@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+**Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
+Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
+step a person did (`ref` names the procedure, never the person), and `llm`, a step a language-model agent
+did (`ref` = the model or agent id where known). `llm` covers the model call; `network` is added only if
+the step also read other remote state. Vocabulary only: the kernel acts on the presence of `conditions`.
+
 ## 0.3.0 — released 2026-10-23
 
 ### Added
