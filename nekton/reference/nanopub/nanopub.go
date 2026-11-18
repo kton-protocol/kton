@@ -3,6 +3,7 @@ package nanopub
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"kton.dev/nekton/claim"
@@ -54,23 +55,46 @@ func URIOf(m map[string]any, k string) string { return uriOf(m, k) }
 // Registry renders every claim a registry holds as nanopublications, one after another in a single
 // TriG document - the form a triple store loads in one go. Each nanopublication keeps its own base
 // (this:/sub: are re-declared per claim, which TriG permits), so the named graphs never collide.
-// A record that is not a parseable claim is skipped, never guessed at.
+// A record that is not a parseable claim, or whose subject is neither a content hash nor an absolute
+// IRI, is skipped, never guessed at. Registry does not say which; RegistryReport does.
 func Registry(reg *registry.Registry, c *Context) (string, int) {
+	trig, n, _ := RegistryReport(reg, c)
+	return trig, n
+}
+
+// Skipped is a registry record that has no nanopublication projection, and why.
+type Skipped struct {
+	ClaimID string
+	Reason  string
+}
+
+// RegistryReport is Registry, and also names every record it skipped. A skipped claim used to vanish
+// from the projection without a trace, so an index built from it was silently incomplete.
+func RegistryReport(reg *registry.Registry, c *Context) (string, int, []Skipped) {
 	var b strings.Builder
 	n := 0
+	var skipped []Skipped
 	for _, rec := range reg.Records(0) {
 		st, payload, err := claim.ParseEnvelope(rec.Envelope)
 		if err != nil {
+			skipped = append(skipped, Skipped{rec.ClaimID, "not a parseable claim: " + err.Error()})
 			continue
 		}
 		var body map[string]any
-		if json.Unmarshal(st.Predicate, &body) != nil {
+		if err := json.Unmarshal(st.Predicate, &body); err != nil {
+			skipped = append(skipped, Skipped{rec.ClaimID, "claim predicate: " + err.Error()})
 			continue
+		}
+		if st.PredicateType != claim.ScopePredicateType && len(st.Subject) > 0 {
+			if s := st.Subject[0].Key(); strings.HasPrefix(c.subjectRef(s), `"`) {
+				skipped = append(skipped, Skipped{rec.ClaimID, fmt.Sprintf("subject %q is neither a content hash nor an absolute IRI", s)})
+				continue
+			}
 		}
 		id := strings.TrimPrefix(claim.ClaimID(payload), "sha256:")
 		b.WriteString(renderTrig(c, st, body, rec.Envelope, id, "", "", ""))
 		b.WriteString("\n")
 		n++
 	}
-	return b.String(), n
+	return b.String(), n, skipped
 }
