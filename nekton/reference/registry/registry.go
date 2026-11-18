@@ -326,7 +326,9 @@ type Registry struct {
 	// delivered like anything else; the reader unions lines that share a claim id, exactly as `Add`
 	// unions a twin at ingest.
 	feed          []Record
-	root          rootState // this store's own root scope and the head it chains from (#213, root.go)
+	root          rootState       // this store's own root scope and the head it chains from (#213, root.go)
+	lazy          bool            // a write registry: scope files are loaded on demand (#248, lazy.go)
+	loaded        map[string]bool // scope files a write registry has loaded
 	deferredCount int
 	seen          map[string]bool // claim id -> present (idempotency)
 	maxSeq        int
@@ -952,6 +954,11 @@ func (r *Registry) mergeTwinInMemory(rec Record) {
 // trusted key is a `verify`/trust-policy concern (out of the kernel, SPEC §8); Add requires only
 // that a signature is present.
 func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
+	if r.lazy {
+		if err := r.loadFor(env); err != nil {
+			return "", false, err
+		}
+	}
 	st, payload, err := claim.ParseEnvelope(env)
 	if err != nil {
 		return "", false, err

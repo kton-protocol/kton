@@ -28,7 +28,9 @@ func defaultBy(priv ed25519.PrivateKey) string {
 	return "key:" + hex.EncodeToString(sum[:])[:16]
 }
 
-func now() string { return time.Now().UTC().Format(time.RFC3339) }
+// now is the timestamp of entries the store writes itself (a root seed without --when, a registration).
+// A variable so a test can pin it.
+var now = func() string { return time.Now().UTC().Format(time.RFC3339) }
 
 // CreateRoot signs a root seed with priv, stores it and records it as this store's root. by defaults
 // to key:<keyid>, when to now.
