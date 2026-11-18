@@ -23,12 +23,70 @@ func KeyIDHex(pub ed25519.PublicKey) string {
 // that surfaces "who signed this" must derive identity from HERE (given the trusted keys), so a
 // tampered attribution is dropped rather than presented as established (cold-session systemic finding).
 func VerifiedSignerKeyID(e Envelope, keys []ed25519.PublicKey) string {
-	for _, pub := range keys {
-		if ok, err := e.Verify(pub); ok && err == nil {
-			return KeyIDHex(pub)
+	for i, ok := range VerifiedKeys(e, keys) {
+		if ok {
+			return KeyIDHex(keys[i])
 		}
 	}
 	return ""
+}
+
+// VerifiedKeys reports, for each key in keys (same order, same length), whether any signature of the
+// envelope verifies under it - the answer `e.Verify(keys[i])` gives, for all keys at once (#247).
+//
+// It decodes the payload and builds the PAE once, and tries each signature first against the trusted
+// key its keyid names. Only a signature whose keyid is empty, names no trusted key, or does not verify
+// under the key it names is tried against the other keys not yet verified. The keyid stays a hint
+// (SPEC §8): a wrong or forged one costs time, never changes the answer. In the common case that is
+// one ed25519 check per signature instead of keys x signatures.
+func VerifiedKeys(e Envelope, keys []ed25519.PublicKey) []bool {
+	out := make([]bool, len(keys))
+	if len(keys) == 0 || len(e.Signatures) == 0 {
+		return out
+	}
+	payload, err := e.PayloadBytes()
+	if err != nil {
+		return out
+	}
+	msg := PAE(e.PayloadType, payload)
+	byID := map[string][]int{} // keyid -> indices in keys (a key listed twice is one key)
+	var ids []string           // distinct keyids, in first-seen order
+	for i, k := range keys {
+		id := KeyIDHex(k)
+		if _, seen := byID[id]; !seen {
+			ids = append(ids, id)
+		}
+		byID[id] = append(byID[id], i)
+	}
+	verified := map[string]bool{}
+	mark := func(id string) {
+		verified[id] = true
+		for _, i := range byID[id] {
+			out[i] = true
+		}
+	}
+	for _, s := range e.Signatures {
+		sig, err := base64.StdEncoding.DecodeString(s.Sig)
+		if err != nil {
+			continue
+		}
+		if is, named := byID[s.KeyID]; named {
+			if ed25519.Verify(keys[is[0]], msg, sig) {
+				mark(s.KeyID)
+				continue
+			}
+		}
+		for _, id := range ids {
+			if verified[id] || id == s.KeyID {
+				continue
+			}
+			if ed25519.Verify(keys[byID[id][0]], msg, sig) {
+				mark(id)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // PayloadType is the DSSE payload type for in-toto statements (spec §8).

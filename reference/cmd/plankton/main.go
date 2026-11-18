@@ -59,6 +59,8 @@ usage:
   plankton material <sha256:id> [--json]              what evidence is attached to a foton
   plankton add <envelope.dsse.json>... [--print-id] [--registry D]    ingest a signed foton into the registry (D or PLANKTON_DIR)
   plankton show <foton.dsse.json|sha256:id> [--json]  print a foton: command, environment, inputs, outputs
+      --trust-keys D     also list what each trusted producer said beside the record: the concrete
+                         environment it ran in (kton-env/v1) and where its copies live (kton-locator/v1)
       --json on show/producer/uses/lineage/reproductions: the machine form. A record's id is a
       NAMED field there, so a consumer never has to assume it is the first hash on a line.
   plankton producer [--source D] [--json] <sha256:…>  who produced this file (who OUTPUT it; lineage join)
@@ -779,6 +781,9 @@ func run(cmd string, args []string) error {
 				sources = append(sources, more...)
 			case args[i] == "--strict":
 				strict = true
+			case args[i] == "--source" || args[i] == "--sources-file":
+				// a known flag at the end, without its value: say that, not "unknown flag" (#186)
+				return fmt.Errorf("%s needs a value - `plankton %s ... %s <dir>`", args[i], cmd, args[i])
 			case strings.HasPrefix(args[i], "-"):
 				// Any dash prefix, not just "--": `-x` fell through and became the QUERY.
 				return fmt.Errorf("unknown flag %q - `plankton %s` takes --source, --sources-file, "+
@@ -1005,6 +1010,10 @@ func run(cmd string, args []string) error {
 				if len(h.Conditions) > 0 {
 					mark = "  CONDITIONAL(" + conditionKinds(h.Conditions) + ")"
 				}
+				if h.Qualification == "required" {
+					// SPEC §6.5: the hit may come from another image of the class (#225)
+					mark += "  QUALIFICATION REQUIRED(class " + h.EnvClass + ": reuse only under a trusted qualifies-as claim for your environment)"
+				}
 				fmt.Printf("  %s  declared-signer=%s (unverified)  output=%s%s\n", h.FotonID, signer, strings.Join(h.Outputs, ", "), mark)
 			}
 			fmt.Fprintln(os.Stderr, "note: these are COMPETING cache-key matches, not a trusted result - anyone can author a foton with these inputs, and their OUTPUTS may differ. Pick a hit whose SIGNER you trust and `plankton verify` it.")
@@ -1113,10 +1122,19 @@ func run(cmd string, args []string) error {
 		// and the caller needs a non-zero exit at the moment it matters. A record the kernel REFUSES
 		// (unsigned, not a foton, structurally invalid) is the peer's problem, not ours: skip it,
 		// count it, and name it, because a silent skip is how an incomplete mirror looks complete.
-		added, refused := 0, 0
+		added, refused, carried := 0, 0, 0
 		var refusedIDs []string
 		for _, rec := range src.Records(0) {
 			id, isNew, err := local.Add(rec.Envelope)
+			if err == nil {
+				// the record's verification material travels with it (#225): kton-env/v1,
+				// kton-locator/v1 and any other scheme, as held by the peer
+				n, cerr := local.CarryMaterial(src, id)
+				if cerr != nil {
+					return fmt.Errorf("mirror of %s: could not carry the material of %s: %w", peer, id, cerr)
+				}
+				carried += n
+			}
 			switch {
 			case err == nil && isNew:
 				added++
@@ -1137,6 +1155,9 @@ func run(cmd string, args []string) error {
 			}
 		}
 		msg := fmt.Sprintf("mirrored %s: %d new", peer, added)
+		if carried > 0 {
+			msg += fmt.Sprintf(", %d material attachment(s) carried", carried)
+		}
 		if refused > 0 {
 			msg += fmt.Sprintf(", %d REFUSED as invalid (%s)", refused, strings.Join(refusedIDs, ", "))
 		}
@@ -1175,6 +1196,8 @@ func parseReproducesArgs(args []string) (ref, cand, via string, asJSON bool, err
 		case args[i] == "--via" && i+1 < len(args):
 			i++
 			via = args[i]
+		case args[i] == "--via":
+			return "", "", "", false, fmt.Errorf("--via needs a value - `plankton reproduces <a> <b> --via <sha256:normalizer-ref>`")
 		case strings.HasPrefix(args[i], "-"):
 			return "", "", "", false, fmt.Errorf("unknown flag %q - `plankton reproduces` takes --via and --json", args[i])
 		case ref == "":

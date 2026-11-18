@@ -42,6 +42,10 @@ func TestQueryCommandsRefuseLastWins(t *testing.T) {
 		{"attach, single-dash flag", "attach", []string{a, "-x", "--scheme", "rekor-entry", "--file", ev},
 			"unknown flag"},
 		{"material, single-dash flag", "material", []string{a, "-x"}, "unknown flag"},
+		// a known flag without its value is named as such, not as unknown (#186)
+		{"producer, --source without value", "producer", []string{a, "--source"}, "--source needs a value"},
+		{"uses, --sources-file without value", "uses", []string{a, "--sources-file"}, "--sources-file needs a value"},
+		{"reproduces, --via without value", "reproduces", []string{a, b, "--via"}, "--via needs a value"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := run(tc.cmd, tc.args)

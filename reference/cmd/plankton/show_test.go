@@ -32,7 +32,7 @@ func TestShowRendersTheWholeDescriptor(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		if err := showHuman("sha256:"+strings.Repeat("e", 64), f, core.Envelope{}); err != nil {
+		if err := showHuman("sha256:"+strings.Repeat("e", 64), f, core.Envelope{}, carried{}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -56,7 +56,7 @@ func TestShowJSONCarriesTheDescriptorWhole(t *testing.T) {
 		Protocol: core.Protocol{Kind: "script", Descriptor: map[string]any{"cmd": "run", "envRef": "oci://x"}},
 	}
 	out := captureStdout(t, func() {
-		if err := showJSON("sha256:"+strings.Repeat("e", 64), f, core.Envelope{}); err != nil {
+		if err := showJSON("sha256:"+strings.Repeat("e", 64), f, core.Envelope{}, carried{}); err != nil {
 			t.Fatal(err)
 		}
 	})
