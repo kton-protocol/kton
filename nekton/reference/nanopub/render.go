@@ -129,6 +129,11 @@ func (c *trigCtx) curie(iri string) string {
 // fieldIRI resolves an object-field key (e.g. "outcome") to a term IRI, via the aliases if it is a
 // known term/CURIE, else minting it in the default lab namespace.
 func (c *trigCtx) fieldIRI(key string) string {
+	// The reserved field has a reserved term (#257, review R2): an alias file must not move it, or a
+	// replacement is found under one IRI in one registry and another in the next.
+	if key == template.ReplacesField {
+		return c.curie(c.prefixes["nk"] + "replaces")
+	}
 	if r := c.al.Resolve(key); strings.Contains(r, "://") {
 		return c.curie(r)
 	}
@@ -141,6 +146,24 @@ func (c *trigCtx) hashRef(v string) string {
 		return c.curie(c.prefixes["pk"] + strings.TrimPrefix(v, "sha256:"))
 	}
 	if strings.Contains(v, "://") {
+		return c.curie(v)
+	}
+	return quote(v)
+}
+
+// subjectRef renders a claim subject. A subject is a Ref (SPEC §3): a content hash or a URI, so any
+// absolute IRI stands as one - urn:, tag:, did:, mailto: as well as http(s) - not only a value that
+// contains "://". hashRef's rule made `urn:werk:x` a literal in subject position: invalid RDF, which
+// the per-record projection refused and a TriG parser rejects. A subject that is neither a content
+// hash nor an absolute IRI still comes out as a literal, which Record refuses and Registry skips.
+//
+// Object field values keep hashRef's rule: they are untyped text, "Note:foo" is an absolute IRI by
+// syntax alone, and their form feeds nanopublish's Trusty URI.
+func (c *trigCtx) subjectRef(v string) string {
+	if r := c.hashRef(v); !strings.HasPrefix(r, `"`) {
+		return r
+	}
+	if absoluteIRI(v) {
 		return c.curie(v)
 	}
 	return quote(v)
@@ -181,6 +204,18 @@ func agentIRI(c *trigCtx, by string) string {
 		return c.curie(by)
 	}
 	return c.curie(c.prefixes["agent"] + core.HashBytes([]byte(by))[7:19]) // stable slug from `by`
+}
+
+// parentRef is a seed's signed parent - "sha256:<hex>" for a parent seed named by hash, or its URI -
+// or "" when the seed names none (#239). The hierarchy a seed signs (study > project > programme) is
+// then walkable in the graph, not only in the store.
+func parentRef(body map[string]any) string {
+	p, _ := body["parent"].(map[string]any)
+	if h, _ := p["hash"].(string); h != "" {
+		return h
+	}
+	u, _ := p["uri"].(string)
+	return u
 }
 
 func str(m map[string]any, k string) string {
@@ -247,17 +282,29 @@ func renderTrig(c *trigCtx, st *claim.Statement, body map[string]any, env core.E
 		// The scope NAME comes from the signed seed, so it is record data like any object value and
 		// goes through curie (an escaped IRI), never straight into <...>: a name containing `>` or a
 		// newline closed the IRI and could open graphs of its own in the export (B1, 0.2.2).
-		fmt.Fprintf(&b, "  %s a nk:Scope ;\n    rdfs:label %s .\n", c.curie("urn:nekton:scope:"+scope), quote(scope))
+		fmt.Fprintf(&b, "  %s a nk:Scope ;\n    rdfs:label %s", c.curie("urn:nekton:scope:"+scope), quote(scope))
+		if pr := parentRef(body); pr != "" {
+			// a parent is a Ref like a subject: a urn: parent is an IRI too (kton-review N2)
+			fmt.Fprintf(&b, " ;\n    nk:parent %s", c.subjectRef(pr))
+		}
+		b.WriteString(" .\n")
 	} else {
-		subj := "<urn:nekton:claim>"
+		// Every subject the claim was signed with gets its own triple (same predicate, same object):
+		// asserting only the first said less than the signature (#253).
+		subjs := []string{"<urn:nekton:claim>"}
 		if len(st.Subject) > 0 {
-			subj = c.hashRef(st.Subject[0].Key())
+			subjs = subjs[:0]
+			for _, s := range st.Subject {
+				subjs = append(subjs, c.subjectRef(s.Key()))
+			}
 		}
 		// Expand a raw CURIE predicate (e.g. a bare `nekton claim` stored "gxp:reviewed") to its full
 		// IRI first, so curie() re-renders it as a DECLARED prefixed name (or the full IRI) - not a bare
 		// <gxp:reviewed>, which a prefixed SPARQL query silently never matches.
 		pred := c.curie(c.expand(uriOf(body, "predicate")))
-		fmt.Fprintf(&b, "  %s %s sub:o .\n", subj, pred)
+		for _, subj := range subjs {
+			fmt.Fprintf(&b, "  %s %s sub:o .\n", subj, pred)
+		}
 		// object field bag -> properties of sub:o; structured values unfold into named nodes (value.go)
 		var lines []string
 		var nestedLines []string

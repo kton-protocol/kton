@@ -33,6 +33,11 @@ func TestReplacePrevious(t *testing.T) {
 	if _, err := set.Spec("qm/status", "urn:doc:1", map[string]string{"state": "approved"}, nil); err != nil {
 		t.Errorf("the first status has nothing to replace and must still sign: %v", err)
 	}
+	upper := "SHA256:" + strings.ToUpper(strings.TrimPrefix(claimID, "sha256:"))
+	spec, err = set.Spec("qm/status", "urn:doc:1", map[string]string{"state": "x", "replaces": upper}, nil)
+	if err != nil || spec.Object["replaces"] != claimID {
+		t.Errorf("an upper-case id must be signed normalised: %v, %v", spec.Object["replaces"], err)
+	}
 	for _, bad := range []string{"urn:doc:0", "sha256:0123", "previous"} {
 		if _, err := set.Spec("qm/status", "urn:doc:1", map[string]string{"state": "x", "replaces": bad}, nil); err == nil {
 			t.Errorf("replaces = %q accepted", bad)

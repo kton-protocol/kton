@@ -363,7 +363,7 @@ func (s Set) resolveTemplate(name string) string {
 func (s Set) Spec(name, subject string, values map[string]string, files map[string][]byte) (claim.Spec, error) {
 	t, ok := s.Get(name)
 	if !ok {
-		if reason, refused := s.refused[s.resolveTemplate(name)]; refused {
+		if reason := s.RefusedReason(name); reason != "" {
 			return claim.Spec{}, fmt.Errorf("template %q in %s is refused: %s", name, s.origin, reason)
 		}
 		return claim.Spec{}, fmt.Errorf("no template %q in %s", name, s.origin)
@@ -452,10 +452,14 @@ func (s Set) Spec(name, subject string, values map[string]string, files map[stri
 				fname, val, f.Values)
 		}
 		if fname == ReplacesField {
-			if _, ok := core.NormalizeContentHash(val); !ok || !strings.HasPrefix(val, "sha256:") {
+			n, ok := core.NormalizeContentHash(val)
+			if !ok || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(val)), "sha256:") {
 				return claim.Spec{}, fmt.Errorf("field %s = %q is not a claim id (sha256:<64-hex>) - "+
 					"a claim replaces another only by naming it", fname, val)
 			}
+			// Sign the NORMALISED id (review R1): an upper-case id was signed as typed and projected to an
+			// IRI that never matches the replaced claim's.
+			val = n
 		}
 		if f.Type == "integer" && !xsdInteger(val) {
 			return claim.Spec{}, fmt.Errorf("field %s = %q is not an integer (an `integer` field takes "+
@@ -539,6 +543,9 @@ func (s Set) Skipped() []string { return s.skipped }
 
 // Refused returns the templates refused at load, by name, with the reason (#255).
 func (s Set) Refused() map[string]string { return s.refused }
+
+// RefusedReason says why the template a caller asked for by name (or alias) was refused, or "".
+func (s Set) RefusedReason(name string) string { return s.refused[s.resolveTemplate(name)] }
 
 func unknownFieldType(t Template) string {
 	// A seed template is never built by Spec (it refuses one), so its field types are not checked

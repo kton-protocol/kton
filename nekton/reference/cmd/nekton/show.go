@@ -124,8 +124,12 @@ func showClaim(args []string) error {
 		fmt.Printf("           %s has not arrived, so this claim is in no index here.\n", deferredScope)
 		fmt.Printf("           Incomplete, not invalid (SPEC §11): add the predecessor and it resolves.\n")
 	}
-	if len(st.Subject) > 0 {
-		fmt.Printf("subject:   %s\n", st.Subject[0].Key())
+	for i, sub := range st.Subject { // every subject the claim was signed with, not only the first (#253)
+		if i == 0 {
+			fmt.Printf("subject:   %s\n", sub.Key())
+		} else {
+			fmt.Printf("           %s\n", sub.Key())
+		}
 	}
 	fmt.Printf("predicate: %s\n", nanopub.URIOf(body, "predicate"))
 	if ctx := nanopub.URIOf(body, "context"); ctx != "" {
