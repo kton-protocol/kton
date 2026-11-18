@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+**Template field types `integer` and `iri`, and unknown types refused** ([#255](https://github.com/kton-protocol/kton/issues/255)).
+A template field's type was any string, and `Spec` checked only `ref`, `enum` and `file`, so a value of
+a field meant as a number or an IRI was signed unchecked and a typo in a type went unnoticed. `integer`
+now refuses a value that is not an `xsd:integer`; `iri` takes an IRI or a CURIE or term the alias file
+resolves, and signs the resolved IRI. A claim template that declares a type the kernel does not know
+is refused at load, by itself, with the reason named; the rest of the set keeps working.
+
 ## 0.3.0 — released 2026-10-23
 
 ### Added

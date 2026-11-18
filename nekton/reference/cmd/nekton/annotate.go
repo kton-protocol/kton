@@ -525,4 +525,16 @@ func reportSkipped(set template.Set) {
 		fmt.Fprintf(os.Stderr, "note: skipping %q - it declares no fields, predicate or "+
 			"predicateType, so it is not a template.\n", f)
 	}
+	for _, name := range sortedNames(set.Refused()) {
+		fmt.Fprintf(os.Stderr, "note: refusing template %q - %s.\n", name, set.Refused()[name])
+	}
+}
+
+func sortedNames(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

@@ -27,7 +27,7 @@ import (
 
 // Field is one typed slot in a template.
 type Field struct {
-	Type      string   `json:"type"`      // string | enum | date | ref | file
+	Type      string   `json:"type"`      // string (or empty) | enum | date | ref | file | integer | iri
 	Role      string   `json:"role"`      // object (default) | evidence
 	Required  bool     `json:"required"`  //
 	MediaType string   `json:"mediaType"` // for file fields
@@ -74,6 +74,17 @@ type Set struct {
 	// skipped names files in the template source that are not templates. They are reported rather
 	// than absorbed (which was silent) or fatal (which took the corpus down for one stray file).
 	skipped []string
+	// refused names templates that ARE templates but declare a field type the kernel does not know,
+	// with the reason. A typo in a type was signed away as an unchecked string (#255); refusing the
+	// whole set for it would take every other template down, so only that template is refused.
+	refused map[string]string
+}
+
+// fieldTypes are the field types Spec knows how to check. Anything else is a typo or an application
+// type the kernel cannot vouch for, and a template that declares one is refused at load (#255).
+var fieldTypes = map[string]bool{
+	"": true, "string": true, "enum": true, "date": true, "ref": true, "file": true,
+	"integer": true, "iri": true,
 }
 
 // New builds a Set from bytes the caller already has - a fetch, a bundle, an embedded asset, an
@@ -146,6 +157,13 @@ func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (
 		// the declared name is what makes it possible, and that key was introduced to stop hyphenated
 		// names being mangled. Both properties are wanted, so the collision is named instead of
 		// silently broken either way.
+		if reason := unknownFieldType(t); reason != "" {
+			if s.refused == nil {
+				s.refused = map[string]string{}
+			}
+			s.refused[name] = reason
+			continue
+		}
 		if prev, dup := s.templates[name]; dup {
 			return Set{}, fmt.Errorf("two templates in %s declare the name %q (predicates %q and %q) - "+
 				"which one `--template %s` means would depend on map order, and a predicate is signed",
@@ -312,6 +330,9 @@ func (s Set) resolveTemplate(name string) string {
 func (s Set) Spec(name, subject string, values map[string]string, files map[string][]byte) (claim.Spec, error) {
 	t, ok := s.Get(name)
 	if !ok {
+		if reason, refused := s.refused[s.resolveTemplate(name)]; refused {
+			return claim.Spec{}, fmt.Errorf("template %q in %s is refused: %s", name, s.origin, reason)
+		}
 		return claim.Spec{}, fmt.Errorf("no template %q in %s", name, s.origin)
 	}
 	if t.IsSeed() {
@@ -397,6 +418,19 @@ func (s Set) Spec(name, subject string, values map[string]string, files map[stri
 			return claim.Spec{}, fmt.Errorf("field %s = %q is not one of the template's values %v",
 				fname, val, f.Values)
 		}
+		if f.Type == "integer" && !xsdInteger(val) {
+			return claim.Spec{}, fmt.Errorf("field %s = %q is not an integer (an `integer` field takes "+
+				"digits with an optional sign, as xsd:integer)", fname, val)
+		}
+		if f.Type == "iri" {
+			iri, ok := s.iriValue(val)
+			if !ok {
+				return claim.Spec{}, fmt.Errorf("field %s = %q is not an IRI: an `iri` field takes a "+
+					"scheme:// IRI, a urn:, tag:, did: or mailto: IRI, or a CURIE or term the alias file "+
+					"resolves - an undeclared prefix would be signed as though it were an IRI", fname, val)
+			}
+			val = iri // the resolved IRI is what is signed, as for the predicate
+		}
 		object[fname] = val
 	}
 	// A value for a field the template does not declare is refused rather than dropped. A dropped
@@ -463,3 +497,72 @@ func sortedKeys(m map[string]Field) []string {
 // refusing the whole directory for one of them is how a stray editor backup made every template
 // unusable. Naming them is the middle answer.
 func (s Set) Skipped() []string { return s.skipped }
+
+// Refused returns the templates refused at load, by name, with the reason (#255).
+func (s Set) Refused() map[string]string { return s.refused }
+
+func unknownFieldType(t Template) string {
+	// A seed template is never built by Spec (it refuses one), so its field types are not checked
+	// here and nothing signs them through this path; `responsible: idset` there is description.
+	if t.IsSeed() {
+		return ""
+	}
+	for _, fname := range sortedKeys(t.Fields) {
+		if ft := t.Fields[fname].Type; !fieldTypes[ft] {
+			return fmt.Sprintf("field %q has type %q, which the kernel does not know (known: string, "+
+				"enum, date, ref, file, integer, iri) - its values would be signed unchecked", fname, ft)
+		}
+	}
+	return ""
+}
+
+// xsdInteger reports whether v is in the lexical space of xsd:integer: an optional sign and digits.
+func xsdInteger(v string) bool {
+	if v != "" && (v[0] == '+' || v[0] == '-') {
+		v = v[1:]
+	}
+	if v == "" {
+		return false
+	}
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// iriValue resolves v as the value of an `iri` field: a CURIE or term the alias file knows becomes its
+// IRI; otherwise v must already be one - scheme:// or one of the schemes whose IRIs have no "//".
+// A CURIE with an undeclared prefix is NOT accepted on syntax alone: `qa:x` is a syntactically valid
+// IRI with scheme qa, and signing it would attest a term nobody defined.
+func (s Set) iriValue(v string) (string, bool) {
+	if v == "" || strings.ContainsAny(v, " \t\n\r<>\"{}|\\^`") {
+		return "", false
+	}
+	if r := s.Resolve(v); r != v {
+		return r, !strings.ContainsAny(r, " \t\n\r<>\"{}|\\^`")
+	}
+	i := strings.IndexByte(v, ':')
+	if i <= 0 || i == len(v)-1 {
+		return "", false
+	}
+	if strings.HasPrefix(v[i:], "://") && len(v) > i+3 {
+		return v, validScheme(v[:i])
+	}
+	switch strings.ToLower(v[:i]) {
+	case "urn", "tag", "did", "mailto":
+		return v, true
+	}
+	return "", false
+}
+
+func validScheme(sch string) bool {
+	for i, r := range sch {
+		letter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		if !letter && (i == 0 || !((r >= '0' && r <= '9') || r == '+' || r == '-' || r == '.')) {
+			return false
+		}
+	}
+	return sch != ""
+}
