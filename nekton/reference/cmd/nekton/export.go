@@ -84,9 +84,9 @@ func buildClaims(dir, title string, trustKeys []ed25519.PublicKey) (*exportClaim
 		// Every trusted key that actually signed, not the first one found: a co-signed claim with two
 		// trusted signers is the case the whole four-eyes idea rests on, and reporting one of them
 		// loses exactly the fact that matters.
-		for _, pub := range trustKeys {
-			if ok, err := rec.Envelope.Verify(pub); ok && err == nil {
-				ec.VerifiedSigners = append(ec.VerifiedSigners, core.KeyIDHex(pub))
+		for i, ok := range core.VerifiedKeys(rec.Envelope, trustKeys) { // #247: the named key first
+			if ok {
+				ec.VerifiedSigners = append(ec.VerifiedSigners, core.KeyIDHex(trustKeys[i]))
 			}
 		}
 		switch {

@@ -805,10 +805,17 @@ func run(cmd string, args []string) error {
 		// dependency - an incomplete chain)". A local write failure was reported in exactly those
 		// words, with exit 0. That is not imprecision, it is a wrong diagnosis of the one
 		// class of error that could arrive.
-		added, refused := 0, 0
+		added, refused, carried := 0, 0, 0
 		var refusedIDs []string
 		for _, rec := range src.RawRecords() {
-			_, isNew, err := local.Add(rec.Envelope)
+			id, isNew, err := local.Add(rec.Envelope)
+			if err == nil {
+				n, cerr := local.CarryMaterial(src, id) // §8.1 evidence travels with its record (#225)
+				if cerr != nil {
+					return fmt.Errorf("mirror of %s: could not carry the material of %s: %w", peer, id, cerr)
+				}
+				carried += n
+			}
 			switch {
 			case err == nil && isNew:
 				added++
@@ -826,6 +833,9 @@ func run(cmd string, args []string) error {
 			}
 		}
 		msg := fmt.Sprintf("mirrored %s: %d new", peer, added)
+		if carried > 0 {
+			msg += fmt.Sprintf(", %d material attachment(s) carried", carried)
+		}
 		if refused > 0 {
 			msg += fmt.Sprintf(", %d REFUSED as invalid (%s)", refused, strings.Join(refusedIDs, ", "))
 		}

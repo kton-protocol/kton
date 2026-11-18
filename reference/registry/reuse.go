@@ -26,6 +26,11 @@ type ReuseHit struct {
 	FotonID        string           `json:"fotonId"`
 	Outputs        []string         `json:"outputs"`
 	Verification   string           `json:"verification"`
+	// Qualification is "required" when the hit declares an environment CLASS (SPEC §6.5): it may have
+	// run in another image of that class, and reusing it is sound only under a trusted qualifies-as
+	// claim for the concrete environment the consumer runs in (#225). EnvClass names the class.
+	Qualification string `json:"qualification,omitempty"`
+	EnvClass      string `json:"envClass,omitempty"`
 }
 
 // ReuseHits returns the hits for an action key in index order, each with its declared signer and
@@ -43,6 +48,9 @@ func (r *Registry) ReuseHits(actionKey string) []ReuseHit {
 				h.Outputs = append(h.Outputs, o.Hash)
 			}
 			h.Conditions = f.Protocol.Conditions
+			if class, ok := f.Protocol.Descriptor["environment"].(string); ok && class != "" && f.Statement == "v1" {
+				h.Qualification, h.EnvClass = "required", class
+			}
 		}
 		hits = append(hits, h)
 	}

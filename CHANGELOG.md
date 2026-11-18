@@ -2,7 +2,53 @@
 
 ## Unreleased
 
+### Changed
+
+**Verifying against trusted keys checks the named key first** ([#247](https://github.com/kton-protocol/kton/issues/247)).
+`export --trust-keys` (both kernels), the RDF and nanopub attribution, reproductions and
+`core.VerifiedSignerKeyID` checked every signature against every trusted key, rebuilding the PAE for
+each. `core.VerifiedKeys(env, keys)` builds it once and tries each signature first against the trusted
+key its keyid names; only a signature with an empty, unknown or wrong keyid falls back to the other
+keys. The answer is the same as before (a test compares it with per-key `Verify` over hinted, unhinted,
+mis-hinted, forged-hint and co-signed envelopes); the keyid stays a hint (SPEC §8). With 7 trusted keys
+and one signature: 65 µs instead of 444 µs per record.
+
+### Removed
+
+**nekton no longer reads or migrates the per-claim store layout of 0.2** (core round: no backwards
+compatibility before 1.0). Stores written before subnekton files (`objects/<algo>/<hash>.json`, one
+file per claim) were read and migrated on the first write that touched a record. That code is gone. A
+store that still holds such a file is refused when opened, with the file named - never read as though
+the records were absent. Re-create it from its envelopes (`nekton add`), or read it with nekton 0.3. A
+stray `.json` that is not a record file does not block a store.
+
+### Fixed
+
+**Two diagnostics say what is wrong** ([#186](https://github.com/kton-protocol/kton/issues/186)). A
+template file with a JSON mistake (e.g. `"fields": []`) was skipped with "it declares no fields,
+predicate or predicateType, so it is not a template"; the note now gives the parse error
+(`template.Set.SkipReason`). A known flag at the end without its value (`plankton producer <id>
+--source`, `--sources-file`, `plankton reproduces <a> <b> --via`) was reported as an unknown flag; it is
+now reported as a flag that needs a value.
+
 ### Added
+
+**Conditional fotons are marked in every plankton export** ([#224](https://github.com/kton-protocol/kton/issues/224)).
+The per-record quads marked a conditional foton (#212); the JSON graph and the Turtle export did not, so
+a view or query built on them showed it as an ordinary activity. The JSON graph now carries
+`conditional: true` and `conditions` on the foton; the Turtle carries `nk:conditional true` and one
+`nk:condition [ nk:conditionKind …; nk:conditionRef … ]` per condition, the terms the per-record quads
+use. `verifiedSigners` still says only who signed; it is not a reproducibility statement.
+
+**Environment and locator material travels and is shown** ([#225](https://github.com/kton-protocol/kton/issues/225)).
+`plankton mirror` and `nekton mirror` now carry a record's verification material (SPEC §8.1) with it,
+skipping what the peer already holds (`Registry.CarryMaterial`): `kton-env/v1` and `kton-locator/v1`
+were lost on a peer, so a fact a covered `envRef` used to carry before #223 went missing. `plankton
+show --trust-keys D` (and `--json`, field `carried`) lists, per trusted producer, the concrete
+environment it ran in and where its copies live, and says when producers ran in different
+environments. A `reuse` hit from a foton/v1 record that declares an environment class carries
+`qualification: "required"` and `envClass`, so the SPEC §6.5 obligation - a trusted qualifies-as claim
+for the concrete environment - is on the answer.
 
 **Writing a claim no longer opens the whole store** ([#248](https://github.com/kton-protocol/kton/issues/248)).
 `nekton claim/annotate/seed --add` opened the registry first - read, parsed and indexed every
