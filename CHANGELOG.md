@@ -4,12 +4,57 @@
 
 ### Added
 
+**Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
+Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
+step a person did (`ref` names the procedure, never the person), and `llm`, a step a language-model agent
+did (`ref` = the model or agent id where known). `llm` covers the model call; `network` is added only if
+the step also read other remote state. Vocabulary only: the kernel acts on the presence of `conditions`.
+
+**A foton's protocol descriptor is in the RDF** ([#240](https://github.com/kton-protocol/kton/issues/240)).
+`rdf.Record` and `plankton export --rdf` carry the descriptor whole, as one literal in canonical JSON,
+`nk:protocolDescriptor`, so a question like "steps whose command matches a pattern" can be asked with
+`REGEX` or `CONTAINS`. It is covered (it hashes to `protocol.ref`); the kernel does not interpret it. A
+foton without a descriptor carries none.
+
+**A scope seed's parent is projected** ([#239](https://github.com/kton-protocol/kton/issues/239)). A seed
+that names its parent (`nekton seed --parent`) now projects `<urn:nekton:scope:<name>> nk:parent <parent>`
+in its assertion: the parent seed's IRI, or the parent URI. A study > project > programme hierarchy is
+then walkable in SPARQL. Applies to the TriG export, the signed nanopub quads and `nanopub.Record`. A
+seed with a parent gets a different Trusty URI; seeds without one are unchanged.
+**`nanopub.RegistryReport` names what a registry projection skipped** ([#245](https://github.com/kton-protocol/kton/issues/245)). `nanopub.Registry` dropped a
+record it could not project without a trace, so a triple store loaded from it was incomplete and
+nobody knew. `RegistryReport` returns the same TriG and count, plus one `Skipped{ClaimID, Reason}` per
+record left out. `Registry` keeps its signature.
+
 **Template field types `integer` and `iri`, and unknown types refused** ([#255](https://github.com/kton-protocol/kton/issues/255)).
 A template field's type was any string, and `Spec` checked only `ref`, `enum` and `file`, so a value of
 a field meant as a number or an IRI was signed unchecked and a typo in a type went unnoticed. `integer`
 now refuses a value that is not an `xsd:integer`; `iri` takes an IRI or a CURIE or term the alias file
 resolves, and signs the resolved IRI. A claim template that declares a type the kernel does not know
 is refused at load, by itself, with the reason named; the rest of the set keeps working.
+
+### Fixed
+
+**A claim about a `urn:`, `tag:`, `did:` or `mailto:` subject projects to RDF** (#245). The nanopub
+projection took a value as an IRI only if it began with `sha256:` or contained `://`, so a subject
+like `urn:werk:x` became a literal in subject position: invalid RDF. `nanopub.Record` refused the claim
+(`"urn:werk:x" is not an absolute IRI`), and an index that skips refused records lost it. A subject is a
+Ref (SPEC §3), so every absolute IRI (RFC 3987: a scheme starting with a letter, `:`, a non-empty rest,
+no space or forbidden character) is now an IRI, after the `sha256:` mapping. `Registry` skips a claim
+whose subject is still not one instead of emitting a document a parser rejects. Object field values keep
+their rule: they are untyped text, and `Note:foo` is an absolute IRI by syntax alone. The Trusty URI of
+a nanopublication changes only for a subject that was not `://`-shaped, whose quads were invalid before.
+
+**nekton: a store being created could not be opened in parallel** ([#251](https://github.com/kton-protocol/kton/issues/251)).
+The `objects/.format` marker was written with `os.WriteFile`, which creates the file empty first, so a
+process opening a store another process was creating read an empty marker and refused the store. It is
+now written through a temp file and a rename.
+
+**The nanopub projection asserts every subject of a claim** ([#253](https://github.com/kton-protocol/kton/issues/253)).
+A claim signed about several subjects was asserted only about the first, in the published TriG, in the
+signed graph and in `nanopub.Record`, and `nekton show` printed only the first. Each subject now gets its
+own triple with the same predicate and object. A single-subject claim projects byte for byte as before;
+a multi-subject claim gets a new Trusty URI, because its signed graph now holds every subject.
 
 ## 0.3.0 — released 2026-10-23
 
