@@ -77,3 +77,27 @@ func TestHeldFollowsRecordsAndSeesRemovals(t *testing.T) {
 		t.Error("a removed claim line did not change Held")
 	}
 }
+
+// A line that is not a record - a claimId with no envelope that hashes to it - does not count in Held
+// (#261 review H1).
+func TestHeldIgnoresNonRecords(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := Open(dir)
+	env, _, err := claim.SignWith(claim.Spec{Subject: []claim.SubjectSpec{{URI: "urn:a"}}, Predicate: "https://kton.dev/v/x", By: "k", When: "2026-11-18T00:00:00Z"}, ed25519.NewKeyFromSeed(make([]byte, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Add(env); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := ReadPosition(dir)
+	f, err := os.OpenFile(filepath.Join(dir, "objects", "unscoped.nekton.jsonl"), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString(`{"claimId":"sha256:` + strings.Repeat("7", 64) + `"}` + "\n")
+	f.Close()
+	if after, _ := ReadPosition(dir); after.Held != before.Held {
+		t.Error("a claimId-only line changed Held")
+	}
+}

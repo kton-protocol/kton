@@ -61,3 +61,24 @@ func splitKey(k string) (string, string) {
 	i := strings.IndexByte(k, ':')
 	return k[:i], k[i+1:]
 }
+
+// A stray object file whose content does not derive its name does not count in Held (#261 review H1).
+func TestHeldIgnoresStrayObjectFiles(t *testing.T) {
+	dir := t.TempDir()
+	r, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _ := signFoton(t, strings.Repeat("a", 64), nil)
+	if _, _, err := r.Add(env); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := ReadPosition(dir)
+	stray := filepath.Join(dir, "objects", "sha256", strings.Repeat("9", 64)+".json")
+	if err := os.WriteFile(stray, []byte(`{"note":"not a record"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := ReadPosition(dir); after.Held != before.Held {
+		t.Error("a stray object file changed Held")
+	}
+}

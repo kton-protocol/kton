@@ -44,6 +44,13 @@ type Position struct {
 	// Records(since) brings that it did not hold. If the next Position.Held differs from that, the
 	// store lost something (a checkout or merge from outside: the kernel never removes), and the
 	// consumer reads again from 0. Co-signatures and twins share their key, so they never change it.
+	//
+	// A key counts only where the content proves it (#261 review H1): a nekton line whose payload hashes
+	// to its claimId, a plankton object file whose record derives the file's name. So a stray file or a
+	// claimId-only line does not count. Held detects LOSS - a checkout or merge that dropped records - not
+	// a forger: XOR is linear, and whoever can write the store can plant records that cancel a removal
+	// (and could as well rewrite .seq and its epoch). A multiset hash (MuHash, LtHash) would be the step
+	// up if that ever has to hold.
 	Held string `json:"held"`
 }
 
@@ -77,9 +84,13 @@ func heldKeys(path, rel string) []string {
 				continue
 			}
 			var of struct {
-				ClaimID string `json:"claimId"`
+				ClaimID  string   `json:"claimId"`
+				Envelope Envelope `json:"envelope"`
 			}
-			if json.Unmarshal([]byte(line), &of) == nil && of.ClaimID != "" {
+			if json.Unmarshal([]byte(line), &of) != nil || of.ClaimID == "" {
+				continue
+			}
+			if pb, err := of.Envelope.PayloadBytes(); err == nil && HashBytes(pb) == of.ClaimID {
 				keys = append(keys, of.ClaimID)
 			}
 		}
@@ -87,9 +98,43 @@ func heldKeys(path, rel string) []string {
 	}
 	parts := strings.Split(rel, "/")
 	if len(parts) == 2 && strings.HasSuffix(parts[1], ".json") && !strings.HasPrefix(parts[1], ".") {
-		return []string{parts[0] + ":" + strings.TrimSuffix(parts[1], ".json")}
+		key := parts[0] + ":" + strings.TrimSuffix(parts[1], ".json")
+		if objectProvesKey(path, key) {
+			return []string{key}
+		}
 	}
 	return nil
+}
+
+// objectProvesKey reports whether a plankton object file's record derives its own file name: its foton
+// id (computed, not the stored field) or, for a record with none, the hash of its payload - the key the
+// registry filed it under. Nothing is verified; this only keeps non-records out of Held.
+func objectProvesKey(path, key string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var of struct {
+		FotonID  string   `json:"fotonId"`
+		Envelope Envelope `json:"envelope"`
+	}
+	if json.Unmarshal(b, &of) != nil {
+		return false
+	}
+	if of.FotonID == "" {
+		pb, err := of.Envelope.PayloadBytes()
+		return err == nil && HashBytes(pb) == key
+	}
+	st, err := of.Envelope.Statement()
+	if err != nil {
+		return false
+	}
+	f, err := st.ToFoton()
+	if err != nil {
+		return false
+	}
+	id, err := f.FotonID()
+	return err == nil && id == of.FotonID && id == key
 }
 
 // ReadPosition reads the position of the store at dir (a plankton or nekton registry directory).
