@@ -96,6 +96,10 @@ type Set struct {
 	// skipped names files in the template source that are not templates. They are reported rather
 	// than absorbed (which was silent) or fatal (which took the corpus down for one stray file).
 	skipped []string
+	// skipWhy says, per skipped file, which of the two reasons applies (#186): it did not parse as
+	// JSON (most likely a template with a typo - the operator needs the parse error), or it parsed but
+	// declares nothing a template declares (most likely not a template at all).
+	skipWhy map[string]string
 	// refused names templates that ARE templates but declare a field type the kernel does not know,
 	// with the reason. A typo in a type was signed away as an unchecked string (#255); refusing the
 	// whole set for it would take every other template down, so only that template is refused.
@@ -138,7 +142,8 @@ func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (
 			// whose top level is an array, or with a field of the wrong type, still failed the whole
 			// Load - and those are the likeliest shapes of a stray config or data file. The
 			// regression that change targets was still reachable through them.
-			s.skipped = append(s.skipped, key)
+			s.skip(key, "it is not valid template JSON: "+err.Error()+" - if it is meant as a template, fix "+
+				"that; it is not loaded")
 			continue
 		}
 		// A template's NAME is the one it declares. The key it arrived under - a filename, a fetch
@@ -166,7 +171,7 @@ func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (
 		// because it produces a SEED (SPEC §7.4). What every template does declare is somewhere to
 		// put values or something to assert; a file with neither is not one.
 		if len(t.Fields) == 0 && t.Predicate == "" && t.PredicateType == "" {
-			s.skipped = append(s.skipped, key)
+			s.skip(key, "it declares no fields, predicate or predicateType, so it is not a template")
 			continue
 		}
 		// A name collision is REFUSED, not resolved by luck. `templates` is a map and New ranges it,
@@ -540,6 +545,17 @@ func sortedKeys(m map[string]Field) []string {
 // refusing the whole directory for one of them is how a stray editor backup made every template
 // unusable. Naming them is the middle answer.
 func (s Set) Skipped() []string { return s.skipped }
+
+// SkipReason says why a file in Skipped() was skipped.
+func (s Set) SkipReason(file string) string { return s.skipWhy[file] }
+
+func (s *Set) skip(file, why string) {
+	s.skipped = append(s.skipped, file)
+	if s.skipWhy == nil {
+		s.skipWhy = map[string]string{}
+	}
+	s.skipWhy[file] = why
+}
 
 // Refused returns the templates refused at load, by name, with the reason (#255).
 func (s Set) Refused() map[string]string { return s.refused }
