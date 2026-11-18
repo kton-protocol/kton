@@ -4,6 +4,16 @@
 
 ### Added
 
+**Diffs: `Position.Held` and `rdf.RecordOf`** ([#260](https://github.com/kton-protocol/kton/issues/260)).
+`Position` (#233) now also carries `held`: the XOR of sha256(key) over every distinct record key on disk
+(a plankton object file's name, a nekton line's `claimId`), computed without opening the store. A
+consumer that follows a store by `Records(since)` keeps its own copy with `core.HeldWith` and
+`registry.HeldKey`; if the store's `held` differs from it, something was removed from outside (a git
+checkout or merge: the kernel never removes), and the consumer reads again from 0. Twins and
+co-signatures share a key and never change it. `rdf.RecordOf(envelope)` gives a foton's per-record quads
+from the envelope alone, as `nanopub.Record` already does for claims; `registry.ParseFotonEnvelope`
+decodes a foton envelope as ingest does.
+
 **Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
 Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
 step a person did (`ref` names the procedure, never the person), and `llm`, a step a language-model agent
