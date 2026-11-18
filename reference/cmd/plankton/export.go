@@ -38,7 +38,12 @@ type exportFoton struct {
 	InputRefs  []core.FileRef `json:"inputRefs"`
 	OutputRefs []core.FileRef `json:"outputRefs"`
 	Descriptor map[string]any `json:"descriptor,omitempty"`
-	KeyIDs     []string       `json:"keyids"` // the SELF-DECLARED keyids on the envelope (unverified)
+	// A conditional foton (#212) says so here too (#224): it is reproducible only under its
+	// conditions, and a view or query built on this export must not count it as a reproduction.
+	// verifiedSigners still says who signed; it is not a reproducibility statement.
+	Conditional bool             `json:"conditional,omitempty"`
+	Conditions  []core.Condition `json:"conditions,omitempty"`
+	KeyIDs      []string         `json:"keyids"` // the SELF-DECLARED keyids on the envelope (unverified)
 	// Every trusted key that actually signed, as in `nekton export`: a foton's signatures are unioned
 	// onto one record, so several independent producers are several verified signers.
 	VerifiedSigner  string   `json:"verifiedSigner,omitempty"`
@@ -91,7 +96,8 @@ func buildGraph(dir, title string, trustKeys []ed25519.PublicKey) (*exportGraph,
 		}
 		env, _ := r.Envelope(id)
 		ef := exportFoton{ID: id, Kind: f.Protocol.Kind, Ref: f.Protocol.Ref, Descriptor: f.Protocol.Descriptor,
-			InputRefs: []core.FileRef{}, OutputRefs: []core.FileRef{}, KeyIDs: []string{}}
+			InputRefs: []core.FileRef{}, OutputRefs: []core.FileRef{}, KeyIDs: []string{},
+			Conditional: f.Conditional(), Conditions: f.Protocol.Conditions}
 		for _, in := range f.Inputs {
 			touch(in).IsInput = true
 			ef.Inputs = append(ef.Inputs, in.Hash)
