@@ -267,56 +267,36 @@ func TestCoSignatureUnionInsideASubnekton(t *testing.T) {
 	}
 }
 
-// A store an older build wrote is one file per claim. It must still load, and migrate into its
-// subnekton the first time a write touches a record - without dropping a co-signature.
-func TestLegacyPerClaimStoreLoadsAndMigrates(t *testing.T) {
+// A store an older build wrote is one file per claim. nekton 0.4 does not read or migrate it (no
+// backwards compatibility before 1.0), and it must say so: opening it as though the flat records were
+// absent would show the store as emptier than it is.
+func TestLegacyPerClaimStoreIsRefused(t *testing.T) {
 	dir := t.TempDir()
-	priv1, priv2 := testKey(t, 5), testKey(t, 6)
+	priv1 := testKey(t, 5)
 	envSeed, scopeID := sign(t, seedSpec("lab/legacy"), priv1)
-	envC1, c1 := sign(t, chained("urn:demo:r1", scopeID, scopeID), priv1)
-
 	flat := filepath.Join(dir, "objects", "sha256")
 	if err := os.MkdirAll(flat, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for id, env := range map[string]core.Envelope{scopeID: envSeed, c1: envC1} {
-		b, err := json.MarshalIndent(objectFile{ClaimID: id, Envelope: env}, "", "  ")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(flat, bare(id)+".json"), b, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	r, err := Open(dir)
+	b, err := json.MarshalIndent(objectFile{ClaimID: scopeID, Envelope: envSeed}, "", "  ")
 	if err != nil {
-		t.Fatalf("Open on a legacy store: %v", err)
+		t.Fatal(err)
 	}
-	if _, n, ok := r.Heads(scopeID); !ok || n != 1 {
-		t.Fatalf("legacy store did not load: ok=%v chainLen=%d", ok, n)
+	if err := os.WriteFile(filepath.Join(flat, bare(scopeID)+".json"), b, 0o644); err != nil {
+		t.Fatal(err)
 	}
-
-	envTwin, _ := sign(t, chained("urn:demo:r1", scopeID, scopeID), priv2)
-	if _, _, err := r.Add(envTwin); err != nil {
-		t.Fatalf("add twin: %v", err)
+	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "per-claim layout") {
+		t.Fatalf("Open on a 0.2 store: %v, want a refusal naming the layout", err)
 	}
-	if _, err := os.Stat(filepath.Join(flat, bare(c1)+".json")); err == nil {
-		t.Error("the legacy per-claim file survived migration, so the record now loads twice")
+	// a stray .json that is not a record file does not block the store
+	if err := os.Remove(filepath.Join(flat, bare(scopeID)+".json")); err != nil {
+		t.Fatal(err)
 	}
-	sub := filepath.Join(dir, "objects", "scope", bare(scopeID)+".nekton.jsonl")
-	found := false
-	for _, of := range readSubnekton(sub) {
-		if of.ClaimID == c1 {
-			found = true
-			if len(of.Envelope.Signatures) != 2 {
-				t.Errorf("migrated record carries %d signature(s), want 2: the union missed the legacy copy",
-					len(of.Envelope.Signatures))
-			}
-		}
+	if err := os.WriteFile(filepath.Join(dir, "objects", "notes.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if !found {
-		t.Error("the touched record did not migrate into its subnekton")
+	if _, err := Open(dir); err != nil {
+		t.Errorf("a stray notes.json blocked the store: %v", err)
 	}
 }
 
