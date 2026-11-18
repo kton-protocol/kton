@@ -2,6 +2,7 @@ package registry
 
 import (
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -10,8 +11,8 @@ import (
 
 // One write into a store holding n claims in another scope: write registry vs full Open (#248).
 func TestLazyWriteCost(t *testing.T) {
-	if testing.Short() {
-		t.Skip()
+	if os.Getenv("KTON_MEASURE") == "" {
+		t.Skip("a measurement, not a check: KTON_MEASURE=1 go test -run LazyWriteCost -v ./registry")
 	}
 	priv := lazyKey()
 	dir := t.TempDir()
