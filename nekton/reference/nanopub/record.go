@@ -136,11 +136,11 @@ func Attribution(c *Context, env core.Envelope, keys []ed25519.PublicKey) (map[s
 	assertion, np := base+"#assertion", base
 	by := str(body, "by")
 	out := map[string][]byte{}
-	for _, pub := range keys {
-		if ok, err := env.Verify(pub); !ok || err != nil {
+	for i, ok := range core.VerifiedKeys(env, keys) {
+		if !ok {
 			continue
 		}
-		kid := core.KeyIDHex(pub)
+		kid := core.KeyIDHex(keys[i])
 		agent, g := P["agent"]+kid, AttributionGraph(id, kid)
 		qs := []npQuad{
 			{assertion, P["prov"] + "wasAttributedTo", g, iriT(agent)},
