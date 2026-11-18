@@ -321,6 +321,13 @@ func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag 
 		if isNew && spec.PredicateType == claim.ScopePredicateType && rid != r.Root() {
 			// the root lists the subnektons this store opened, in order (#213)
 			by, _ := spec.PredicateBody["by"].(string)
+			if r.Root() == "" { // a seed with an explicit --parent into a store without a root
+				created, err := r.CreateRoot(priv, by, "")
+				if err != nil {
+					return fmt.Errorf("seed %s is stored, but creating the root to register it in failed: %w", rid, err)
+				}
+				msg("root %s  (created: this store had none)\n", created)
+			}
 			reg, err := r.RegisterSubnekton(rid, priv, by)
 			if err != nil {
 				return fmt.Errorf("seed %s is stored, but registering it in the root failed: %w", rid, err)

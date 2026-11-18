@@ -194,3 +194,20 @@ func TestIngestCreatesNoRoot(t *testing.T) {
 		t.Errorf("ingest gave the store a root: %s", dst.Root())
 	}
 }
+
+// nekton seed --parent X --add into a store without a root: stored and registered (root created).
+func TestSeedWithParentIntoEmptyStore(t *testing.T) {
+	reg := filepath.Join(t.TempDir(), "reg")
+	spec := claimSpec{
+		Subject:       []subjSpec{{URI: "urn:nekton:scope:child"}},
+		PredicateType: claim.ScopePredicateType,
+		PredicateBody: map[string]any{"scope": "child", "genesis": true, "by": "CN=t", "when": "2026-11-18T00:00:00Z", "parent": map[string]any{"uri": "urn:elsewhere"}},
+	}
+	if err := signClaim(spec, newKey(t), "", true, reg, true); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := registry.Open(reg)
+	if r.Root() == "" || len(r.Registered()) != 1 {
+		t.Fatalf("root %q, registered %v", r.Root(), r.Registered())
+	}
+}
