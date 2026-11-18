@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+**Verifying against trusted keys checks the named key first** ([#247](https://github.com/kton-protocol/kton/issues/247)).
+`export --trust-keys` (both kernels), the RDF and nanopub attribution, reproductions and
+`core.VerifiedSignerKeyID` checked every signature against every trusted key, rebuilding the PAE for
+each. `core.VerifiedKeys(env, keys)` builds it once and tries each signature first against the trusted
+key its keyid names; only a signature with an empty, unknown or wrong keyid falls back to the other
+keys. The answer is the same as before (a test compares it with per-key `Verify` over hinted, unhinted,
+mis-hinted, forged-hint and co-signed envelopes); the keyid stays a hint (SPEC §8). With 7 trusted keys
+and one signature: 65 µs instead of 444 µs per record.
+
 ### Removed
 
 **nekton no longer reads or migrates the per-claim store layout of 0.2** (core round: no backwards
