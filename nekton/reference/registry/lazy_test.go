@@ -52,7 +52,7 @@ func TestWriteToEqualsFullOpen(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := full.CreateRoot(priv, "b", when); err != nil {
+		if _, err := full.CreateRoot(priv, "b", when, "root/eq"); err != nil {
 			t.Fatal(err)
 		}
 		for i := 0; i < 3; i++ {
@@ -154,4 +154,86 @@ func mustID(t *testing.T, env interface{ PayloadBytes() ([]byte, error) }) strin
 		t.Fatal(err)
 	}
 	return claim.ClaimID(b)
+}
+
+// W1: a root file holding a record no position was issued for (a merged copy) makes the write registry
+// step aside BEFORE anything is stored, so a new seed is stored once and registered (#269 review).
+func TestFallbackStillRegistersANewSeed(t *testing.T) {
+	priv := lazyKey()
+	a, b := t.TempDir(), t.TempDir()
+	ra, _ := Open(a)
+	if _, err := ra.CreateRoot(priv, "b", "2026-11-18T00:00:00Z", "root/w1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ra.Write(claim.Spec{Subject: []claim.SubjectSpec{{URI: "urn:a"}}, Predicate: "https://kton.dev/v/x", By: "b", When: "2026-11-18T00:00:00Z"}, priv); err != nil {
+		t.Fatal(err)
+	}
+	// a copy writes one entry; its root file is merged into a's as a git merge would (no .seq entry)
+	copyDir(t, a, b)
+	rb, _ := Open(b)
+	wb, err := rb.Write(claim.Spec{Subject: []claim.SubjectSpec{{URI: "urn:b"}}, Predicate: "https://kton.dev/v/x", By: "b", When: "2026-11-18T00:00:01Z"}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootFile, _ := subnektonPath(filepath.Join(a, "objects"), ra.Root())
+	recB, _ := rb.Claim(wb.ID)
+	line, _ := marshalRecord(objectFile{ClaimID: wb.ID, Envelope: recB.Envelope})
+	f, _ := os.OpenFile(rootFile, os.O_APPEND|os.O_WRONLY, 0o644)
+	f.Write(append(line, '\n'))
+	f.Close()
+
+	seed := claim.Spec{Subject: []claim.SubjectSpec{{URI: "urn:nekton:scope:child"}}, PredicateType: claim.ScopePredicateType,
+		PredicateBody: map[string]any{"scope": "child", "genesis": true, "by": "b", "when": "2026-11-18T10:00:05Z"}}
+	w, err := WriteTo(a, seed, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.IsNew || w.Registered == "" {
+		t.Fatalf("seed write through the fallback: %+v, want new and registered", w)
+	}
+	full, _ := Open(a)
+	if !full.Registered()[w.ID] {
+		t.Errorf("the root does not list the new seed")
+	}
+}
+
+// D1: the write path refuses a 0.2 per-claim store as Open does, and writes nothing into it.
+func TestWriteToRefusesLegacyStore(t *testing.T) {
+	dir := t.TempDir()
+	priv := lazyKey()
+	env, id, err := claim.SignWith(claim.Spec{Subject: []claim.SubjectSpec{{URI: "urn:old"}}, Predicate: "https://kton.dev/v/x", By: "b", When: "2026-11-18T00:00:00Z"}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat := filepath.Join(dir, "objects", "sha256")
+	os.MkdirAll(flat, 0o755)
+	b, _ := json.Marshal(objectFile{ClaimID: id, Envelope: env})
+	if err := os.WriteFile(filepath.Join(flat, strings.TrimPrefix(id, "sha256:")+".json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = WriteTo(dir, claim.Spec{Subject: []claim.SubjectSpec{{URI: "urn:new"}}, Predicate: "https://kton.dev/v/x", By: "b", When: "2026-11-18T00:00:00Z"}, priv)
+	if err == nil || !strings.Contains(err.Error(), "per-claim layout") {
+		t.Fatalf("WriteTo into a 0.2 store: %v, want the layout refusal", err)
+	}
+	for _, f := range []string{".format", ".root"} {
+		if _, err := os.Stat(filepath.Join(dir, "objects", f)); err == nil {
+			t.Errorf("objects/%s was written into a refused store", f)
+		}
+	}
+}
+
+func copyDir(t *testing.T, src, dst string) {
+	t.Helper()
+	filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		b, _ := os.ReadFile(p)
+		return os.WriteFile(target, b, 0o644)
+	})
 }

@@ -39,6 +39,12 @@ func OpenForWrite(dir string) (*Registry, error) {
 	if err := checkStoreFormat(dir, r.objectsDir); err != nil {
 		return nil, err
 	}
+	// The 0.2 per-claim layout is refused here as Open refuses it, before anything is written: a
+	// write registry never runs readStore, and writing into such a store left one every reader
+	// refuses while the writer reported success (#263 + #269 review D1).
+	if err := refuseLegacyLayout(r.objectsDir); err != nil {
+		return nil, err
+	}
 	if err := writeStoreFormat(r.objectsDir); err != nil {
 		return nil, err
 	}
@@ -109,4 +115,35 @@ func WriteTo(dir string, spec claim.Spec, priv ed25519.PrivateKey) (Written, err
 		return Written{}, err
 	}
 	return full.Write(spec, priv)
+}
+
+// refuseLegacyLayout looks one level into objects/ (objects/<algo>/<64 hex>.json, the only place the
+// 0.2 layout put records) without reading any record.
+func refuseLegacyLayout(objectsDir string) error {
+	dirs, err := os.ReadDir(objectsDir)
+	if err != nil {
+		return nil // no objects/ yet: nothing to refuse
+	}
+	n, first := 0, ""
+	for _, d := range dirs {
+		if !d.IsDir() || d.Name() == "scope" {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(objectsDir, d.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if rel := d.Name() + "/" + f.Name(); legacyLayout.MatchString(rel) {
+				if n == 0 {
+					first = filepath.Join(objectsDir, d.Name(), f.Name())
+				}
+				n++
+			}
+		}
+	}
+	if n > 0 {
+		return legacyLayoutError(objectsDir, n, first)
+	}
+	return nil
 }

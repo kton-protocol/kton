@@ -58,7 +58,9 @@ one claim (its twin, its scope's seed, its prev) is there, because the scope is 
 payload. `registry.WriteTo(dir, spec, key)` is the whole write path on it, and the CLI uses it. The
 result on disk is byte-identical to a full Open + Add (test); a record on disk without a position yet
 (an unopened merge) makes the write fall back to a full Open, so numbering stays as a full Open gives
-it. Measured: one write beside 5000 claims, 30 ms instead of 756 ms.
+it. A write registry loads every scope file the write touches before it stores
+anything, so that fallback never lands between storing a seed and registering it, and it refuses a
+0.2 per-claim store exactly as Open does. Measured: one write beside 5000 claims, 30 ms instead of 756 ms.
 
 **The root nekton: a store's unscoped claims are chained, and its subnektons registered** ([#213](https://github.com/kton-protocol/kton/issues/213)).
 The root of a nekton store was a bag: unscoped claims had no signed order, and a mirror or copy that

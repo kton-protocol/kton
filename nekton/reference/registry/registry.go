@@ -1594,10 +1594,7 @@ func readStore(objectsDir string) (recs []Record, hardErr error) {
 		return nil, err
 	}
 	if len(legacy) > 0 {
-		return nil, fmt.Errorf("nekton store %s holds %d record(s) in the per-claim layout of nekton 0.2 "+
-			"(e.g. %s). nekton 0.4 does not read or migrate that layout; reading on would show the store "+
-			"as emptier than it is. Re-create the store from its envelopes (nekton add), or read it with "+
-			"nekton 0.3", objectsDir, len(legacy), legacy[0])
+		return nil, legacyLayoutError(objectsDir, len(legacy), legacy[0])
 	}
 	sort.Strings(nektons)
 	for _, p := range nektons {
@@ -1896,4 +1893,12 @@ func (r *Registry) CarryMaterial(src *Registry, subject string) (int, error) {
 		n++
 	}
 	return n, nil
+}
+
+// legacyLayoutError is the one refusal of a 0.2 per-claim store, for Open and for a write registry.
+func legacyLayoutError(objectsDir string, n int, first string) error {
+	return fmt.Errorf("nekton store %s holds %d record(s) in the per-claim layout of nekton 0.2 "+
+		"(e.g. %s). nekton 0.4 does not read or migrate that layout; reading on would show the store "+
+		"as emptier than it is. Re-create the store from its envelopes (nekton add), or read it with "+
+		"nekton 0.3", objectsDir, n, first)
 }

@@ -146,6 +146,22 @@ type Written struct {
 func (r *Registry) Write(spec claim.Spec, priv ed25519.PrivateKey) (Written, error) {
 	var w Written
 	var err error
+	// A write registry loads every scope file this write touches BEFORE anything is stored: the root
+	// (an unscoped claim chains there, a seed is registered there) and the target scope. Whatever
+	// makes it step aside (ErrNeedsFullOpen) then comes before the first write, never between storing
+	// a seed and registering it (#269 review W1).
+	if r.lazy {
+		if r.root.Root != "" {
+			if err := r.loadScope(r.root.Root); err != nil {
+				return w, err
+			}
+		}
+		if spec.Scope != "" {
+			if err := r.loadScope(spec.Scope); err != nil {
+				return w, err
+			}
+		}
+	}
 	if w.CreatedRoot, err = r.Place(&spec, priv); err != nil {
 		return w, err
 	}
@@ -158,7 +174,9 @@ func (r *Registry) Write(spec claim.Spec, priv ed25519.PrivateKey) (Written, err
 		return w, err
 	}
 	r.ownAppend(w.ID)
-	if w.IsNew && spec.PredicateType == claim.ScopePredicateType && w.ID != r.root.Root {
+	// A seed this store holds but its root does not list yet is registered, new or not: a write that
+	// stored the seed and then failed before registering must not leave it unlisted for good (W1).
+	if spec.PredicateType == claim.ScopePredicateType && w.ID != r.root.Root && (w.IsNew || !r.Registered()[w.ID]) {
 		by, _ := spec.PredicateBody["by"].(string)
 		// A seed with an explicit parent leaves Place nothing to do, but it is still opened in this
 		// store and belongs on its root's list: a store without a root gets one first.
