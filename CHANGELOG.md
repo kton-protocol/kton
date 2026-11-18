@@ -34,15 +34,17 @@ now reported as a flag that needs a value.
 **RDF projection follow-ups from the #206/#207 review** ([#210](https://github.com/kton-protocol/kton/issues/210)).
 - `nanopub.RegistryReport` skips a *deferred* claim (its seed or prev is not held) and names it, where
   it was rendered like any claim; and renders a co-signed claim once, with every signature, where the
-  feed's one line per co-signature rendered it once per signer.
+  feed's one line per co-signature rendered it once per signer - so `RegistryReport`'s count for a
+  store with co-signed claims is lower than before.
 - A claim is attributed to every trusted key that verifies it (`prov:wasAttributedTo` each), as
   plankton does since #207; it was the first one only. An empty declared keyid no longer falls onto a
   shared `agent/` node: the claimed signer is the first non-empty keyid, else the slug of `by`.
 - Structured values: an empty list is `rdf:nil` (it disappeared), a list inside a list is its own
   `rdf:Seq` node with members `rdf:_1`, `rdf:_2`, … (its items were flattened into the parent field).
   Flat lists project as before.
-- `iriEsc` escapes a `%` that does not start a `%XX` escape (it made an invalid IRI). A valid escape
-  stays, so `a b` and `a%20b` remain one IRI, as RFC 3986 percent-encoding equivalence has it.
+- A `%` that does not start a `%XX` escape: in a value, `iriEsc` escapes it (it made an invalid IRI);
+  a subject carrying one is no IRI and is skipped and named, because escaping it would turn
+  `urn:x:%zz` into `urn:x:%25zz`, another subject's IRI.
 - plankton RDF: with trusted keys and none verifying, `nk:signerVerified false` is emitted even when
   the declared keyid is not hex (the claimed signer is then not named).
 The Trusty URI of a nanopublication changes only for claims with an empty or nested list, several

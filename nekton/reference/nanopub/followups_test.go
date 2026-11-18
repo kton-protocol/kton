@@ -97,3 +97,23 @@ func TestEmptyAndNestedLists(t *testing.T) {
 		}
 	}
 }
+
+// A subject whose '%' starts no %XX escape is no IRI: it is skipped and named, never escaped into
+// another subject's IRI (#268 review T1).
+func TestBrokenPercentSubjectIsSkipped(t *testing.T) {
+	reg, err := registry.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad, _, err := reg.Add(signedAbout(t, "urn:x:%zz", map[string]any{"v": "1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := reg.Add(signedAbout(t, "urn:x:%25zz", map[string]any{"v": "2"})); err != nil {
+		t.Fatal(err)
+	}
+	trig, n, skipped := RegistryReport(reg, NewContext(template.Set{}, nil))
+	if n != 1 || len(skipped) != 1 || skipped[0].ClaimID != bad {
+		t.Fatalf("n=%d skipped=%+v, want urn:x:%%zz skipped and urn:x:%%25zz rendered\n%s", n, skipped, trig)
+	}
+}

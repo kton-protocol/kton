@@ -85,8 +85,8 @@ func iriEsc(s string) string {
 	for i := 0; i < len(s); i++ { // iterate BYTES: forbidden chars are all ASCII; UTF-8 tails (>=0x80) pass
 		ch := s[i]
 		// A '%' that does not start a %XX escape is escaped itself (#210): left alone it made an invalid
-		// IRI. A valid %XX stays, so "a b" and "a%20b" are one IRI - they are one IRI under RFC 3986
-		// percent-encoding equivalence anyway.
+		// IRI. This is for values; a SUBJECT with one is refused before it gets here (absoluteIRI), since
+		// escaping it could make it another subject's IRI (#268 review T1).
 		loneP := ch == '%' && !(i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2]))
 		if ch <= 0x20 || loneP || strings.IndexByte("<>\"{}|^`\\", ch) >= 0 {
 			fmt.Fprintf(&b, "%%%02X", ch)
@@ -449,16 +449,12 @@ func nodeTerm(path string) string {
 }
 
 // verifiedSigners returns the keyids of every trusted key that verifies a signature of env, sorted
-// and without repeats (#210).
+// and without repeats (#210), through the one verification path plankton uses too (#264).
 func verifiedSigners(env core.Envelope, keys []ed25519.PublicKey) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, k := range keys {
-		kid := core.KeyIDHex(k)
-		if seen[kid] {
-			continue
-		}
-		if ok, err := env.Verify(k); ok && err == nil {
+	for i, ok := range core.VerifiedKeys(env, keys) {
+		if kid := core.KeyIDHex(keys[i]); ok && !seen[kid] {
 			seen[kid] = true
 			out = append(out, kid)
 		}
