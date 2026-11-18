@@ -16,6 +16,12 @@ the step also read other remote state. Vocabulary only: the kernel acts on the p
 `REGEX` or `CONTAINS`. It is covered (it hashes to `protocol.ref`); the kernel does not interpret it. A
 foton without a descriptor carries none.
 
+**A scope seed's parent is projected** ([#239](https://github.com/kton-protocol/kton/issues/239)). A seed
+that names its parent (`nekton seed --parent`) now projects `<urn:nekton:scope:<name>> nk:parent <parent>`
+in its assertion: the parent seed's IRI, or the parent URI. A study > project > programme hierarchy is
+then walkable in SPARQL. Applies to the TriG export, the signed nanopub quads and `nanopub.Record`. A
+seed with a parent gets a different Trusty URI; seeds without one are unchanged.
+
 **`nanopub.RegistryReport` names what a registry projection skipped** ([#245](https://github.com/kton-protocol/kton/issues/245)). `nanopub.Registry` dropped a
 record it could not project without a trace, so a triple store loaded from it was incomplete and
 nobody knew. `RegistryReport` returns the same TriG and count, plus one `Skipped{ClaimID, Reason}` per
