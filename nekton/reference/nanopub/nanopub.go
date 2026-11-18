@@ -85,9 +85,11 @@ func RegistryReport(reg *registry.Registry, c *Context) (string, int, []Skipped)
 			skipped = append(skipped, Skipped{rec.ClaimID, "claim predicate: " + err.Error()})
 			continue
 		}
-		if st.PredicateType != claim.ScopePredicateType && len(st.Subject) > 0 {
-			if s := st.Subject[0].Key(); strings.HasPrefix(c.subjectRef(s), `"`) {
-				skipped = append(skipped, Skipped{rec.ClaimID, fmt.Sprintf("subject %q is neither a content hash nor an absolute IRI", s)})
+		if st.PredicateType != claim.ScopePredicateType {
+			// EVERY subject is rendered (#253), so every one must be an IRI: one literal subject made
+			// the whole document unparseable for a strict store (kton-review N1).
+			if bad := nonIRISubject(c, st); bad != "" {
+				skipped = append(skipped, Skipped{rec.ClaimID, fmt.Sprintf("subject %q is neither a content hash nor an absolute IRI", bad)})
 				continue
 			}
 		}
@@ -97,4 +99,14 @@ func RegistryReport(reg *registry.Registry, c *Context) (string, int, []Skipped)
 		n++
 	}
 	return b.String(), n, skipped
+}
+
+// nonIRISubject returns the first subject of st that would render as a literal, or "".
+func nonIRISubject(c *Context, st *claim.Statement) string {
+	for _, sub := range st.Subject {
+		if k := sub.Key(); strings.HasPrefix(c.subjectRef(k), `"`) {
+			return k
+		}
+	}
+	return ""
 }

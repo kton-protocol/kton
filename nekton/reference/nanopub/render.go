@@ -284,15 +284,22 @@ func renderTrig(c *trigCtx, st *claim.Statement, body map[string]any, env core.E
 		}
 		b.WriteString(" .\n")
 	} else {
-		subj := "<urn:nekton:claim>"
+		// Every subject the claim was signed with gets its own triple (same predicate, same object):
+		// asserting only the first said less than the signature (#253).
+		subjs := []string{"<urn:nekton:claim>"}
 		if len(st.Subject) > 0 {
-			subj = c.subjectRef(st.Subject[0].Key())
+			subjs = subjs[:0]
+			for _, s := range st.Subject {
+				subjs = append(subjs, c.subjectRef(s.Key()))
+			}
 		}
 		// Expand a raw CURIE predicate (e.g. a bare `nekton claim` stored "gxp:reviewed") to its full
 		// IRI first, so curie() re-renders it as a DECLARED prefixed name (or the full IRI) - not a bare
 		// <gxp:reviewed>, which a prefixed SPARQL query silently never matches.
 		pred := c.curie(c.expand(uriOf(body, "predicate")))
-		fmt.Fprintf(&b, "  %s %s sub:o .\n", subj, pred)
+		for _, subj := range subjs {
+			fmt.Fprintf(&b, "  %s %s sub:o .\n", subj, pred)
+		}
 		// object field bag -> properties of sub:o; structured values unfold into named nodes (value.go)
 		var lines []string
 		var nestedLines []string

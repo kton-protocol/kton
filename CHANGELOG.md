@@ -21,7 +21,6 @@ that names its parent (`nekton seed --parent`) now projects `<urn:nekton:scope:<
 in its assertion: the parent seed's IRI, or the parent URI. A study > project > programme hierarchy is
 then walkable in SPARQL. Applies to the TriG export, the signed nanopub quads and `nanopub.Record`. A
 seed with a parent gets a different Trusty URI; seeds without one are unchanged.
-
 **`nanopub.RegistryReport` names what a registry projection skipped** ([#245](https://github.com/kton-protocol/kton/issues/245)). `nanopub.Registry` dropped a
 record it could not project without a trace, so a triple store loaded from it was incomplete and
 nobody knew. `RegistryReport` returns the same TriG and count, plus one `Skipped{ClaimID, Reason}` per
@@ -43,6 +42,12 @@ a nanopublication changes only for a subject that was not `://`-shaped, whose qu
 The `objects/.format` marker was written with `os.WriteFile`, which creates the file empty first, so a
 process opening a store another process was creating read an empty marker and refused the store. It is
 now written through a temp file and a rename.
+
+**The nanopub projection asserts every subject of a claim** ([#253](https://github.com/kton-protocol/kton/issues/253)).
+A claim signed about several subjects was asserted only about the first, in the published TriG, in the
+signed graph and in `nanopub.Record`, and `nekton show` printed only the first. Each subject now gets its
+own triple with the same predicate and object. A single-subject claim projects byte for byte as before;
+a multi-subject claim gets a new Trusty URI, because its signed graph now holds every subject.
 
 ## 0.3.0 — released 2026-10-23
 
