@@ -4,6 +4,18 @@
 
 ### Added
 
+**Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
+Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
+step a person did (`ref` names the procedure, never the person), and `llm`, a step a language-model agent
+did (`ref` = the model or agent id where known). `llm` covers the model call; `network` is added only if
+the step also read other remote state. Vocabulary only: the kernel acts on the presence of `conditions`.
+
+**A foton's protocol descriptor is in the RDF** ([#240](https://github.com/kton-protocol/kton/issues/240)).
+`rdf.Record` and `plankton export --rdf` carry the descriptor whole, as one literal in canonical JSON,
+`nk:protocolDescriptor`, so a question like "steps whose command matches a pattern" can be asked with
+`REGEX` or `CONTAINS`. It is covered (it hashes to `protocol.ref`); the kernel does not interpret it. A
+foton without a descriptor carries none.
+
 **A scope seed's parent is projected** ([#239](https://github.com/kton-protocol/kton/issues/239)). A seed
 that names its parent (`nekton seed --parent`) now projects `<urn:nekton:scope:<name>> nk:parent <parent>`
 in its assertion: the parent seed's IRI, or the parent URI. A study > project > programme hierarchy is
