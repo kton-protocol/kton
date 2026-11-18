@@ -330,7 +330,7 @@ func (s Set) resolveTemplate(name string) string {
 func (s Set) Spec(name, subject string, values map[string]string, files map[string][]byte) (claim.Spec, error) {
 	t, ok := s.Get(name)
 	if !ok {
-		if reason, refused := s.refused[s.resolveTemplate(name)]; refused {
+		if reason := s.RefusedReason(name); reason != "" {
 			return claim.Spec{}, fmt.Errorf("template %q in %s is refused: %s", name, s.origin, reason)
 		}
 		return claim.Spec{}, fmt.Errorf("no template %q in %s", name, s.origin)
@@ -500,6 +500,9 @@ func (s Set) Skipped() []string { return s.skipped }
 
 // Refused returns the templates refused at load, by name, with the reason (#255).
 func (s Set) Refused() map[string]string { return s.refused }
+
+// RefusedReason says why the template a caller asked for by name (or alias) was refused, or "".
+func (s Set) RefusedReason(name string) string { return s.refused[s.resolveTemplate(name)] }
 
 func unknownFieldType(t Template) string {
 	// A seed template is never built by Spec (it refuses one), so its field types are not checked
