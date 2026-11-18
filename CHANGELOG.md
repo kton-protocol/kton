@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+
+**Two diagnostics say what is wrong** ([#186](https://github.com/kton-protocol/kton/issues/186)). A
+template file with a JSON mistake (e.g. `"fields": []`) was skipped with "it declares no fields,
+predicate or predicateType, so it is not a template"; the note now gives the parse error
+(`template.Set.SkipReason`). A known flag at the end without its value (`plankton producer <id>
+--source`, `--sources-file`, `plankton reproduces <a> <b> --via`) was reported as an unknown flag; it is
+now reported as a flag that needs a value.
+
 ### Added
 
 **Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).

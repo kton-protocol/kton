@@ -528,8 +528,7 @@ func arg(args []string, i int) string {
 // stray file. Naming them on stderr is the answer that does neither.
 func reportSkipped(set template.Set) {
 	for _, f := range set.Skipped() {
-		fmt.Fprintf(os.Stderr, "note: skipping %q - it declares no fields, predicate or "+
-			"predicateType, so it is not a template.\n", f)
+		fmt.Fprintf(os.Stderr, "note: skipping %q - %s.\n", f, set.SkipReason(f))
 	}
 	for _, name := range sortedNames(set.Refused()) {
 		fmt.Fprintf(os.Stderr, "note: refusing template %q - %s.\n", name, set.Refused()[name])
