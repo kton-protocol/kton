@@ -42,3 +42,21 @@ func TestWritePlacesUnderTheRoot(t *testing.T) {
 		t.Errorf("a claim in subnekton %s moved the root head to %s (%s)", w2.ID, r.RootHead(), w3.ID)
 	}
 }
+
+// A seed with an explicit parent, written into a store without a root, still gets registered: the
+// write creates the root first (found by #248's benchmark).
+func TestWriteSeedWithParentCreatesRoot(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	r, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := r.Write(claim.Spec{Subject: []claim.SubjectSpec{{URI: "urn:nekton:scope:s"}}, PredicateType: claim.ScopePredicateType,
+		PredicateBody: map[string]any{"scope": "s", "genesis": true, "by": "b", "when": "2026-11-18T00:00:00Z", "parent": map[string]any{"uri": "urn:elsewhere"}}}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.CreatedRoot == "" || r.Root() != w.CreatedRoot || !r.Registered()[w.ID] {
+		t.Fatalf("%+v, root %s, registered %v", w, r.Root(), r.Registered())
+	}
+}

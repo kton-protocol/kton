@@ -145,6 +145,13 @@ func (r *Registry) Write(spec claim.Spec, priv ed25519.PrivateKey) (Written, err
 	}
 	if w.IsNew && spec.PredicateType == claim.ScopePredicateType && w.ID != r.root.Root {
 		by, _ := spec.PredicateBody["by"].(string)
+		// A seed with an explicit parent leaves Place nothing to do, but it is still opened in this
+		// store and belongs on its root's list: a store without a root gets one first.
+		if r.root.Root == "" {
+			if w.CreatedRoot, err = r.CreateRoot(priv, by, ""); err != nil {
+				return w, fmt.Errorf("seed %s is stored, but creating the root to register it in failed: %w", w.ID, err)
+			}
+		}
 		if w.Registered, err = r.RegisterSubnekton(w.ID, priv, by); err != nil {
 			return w, fmt.Errorf("seed %s is stored, but registering it in the root failed: %w", w.ID, err)
 		}
