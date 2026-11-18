@@ -107,9 +107,9 @@ func buildGraph(dir, title string, trustKeys []ed25519.PublicKey) (*exportGraph,
 		for _, sig := range env.Signatures {
 			ef.KeyIDs = append(ef.KeyIDs, sig.KeyID)
 		}
-		for _, pub := range trustKeys {
-			if ok, err := env.Verify(pub); ok && err == nil {
-				ef.VerifiedSigners = append(ef.VerifiedSigners, core.KeyIDHex(pub))
+		for i, ok := range core.VerifiedKeys(env, trustKeys) { // #247: the named key first
+			if ok {
+				ef.VerifiedSigners = append(ef.VerifiedSigners, core.KeyIDHex(trustKeys[i]))
 			}
 		}
 		switch {

@@ -93,9 +93,9 @@ func Turtle(r *registry.Registry, sel string, trustKeys []ed25519.PublicKey) (st
 			// first signature used to suppress every attribution, verified ones included. A key listed
 			// twice among the trusted keys is one attribution.
 			var verified []string
-			for _, pub := range trustKeys {
-				if ok, err := env.Verify(pub); ok && err == nil {
-					verified = append(verified, core.KeyIDHex(pub))
+			for i, ok := range core.VerifiedKeys(env, trustKeys) {
+				if ok {
+					verified = append(verified, core.KeyIDHex(trustKeys[i]))
 				}
 			}
 			sort.Strings(verified)
