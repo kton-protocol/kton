@@ -146,6 +146,24 @@ func (c *trigCtx) hashRef(v string) string {
 	return quote(v)
 }
 
+// subjectRef renders a claim subject. A subject is a Ref (SPEC §3): a content hash or a URI, so any
+// absolute IRI stands as one - urn:, tag:, did:, mailto: as well as http(s) - not only a value that
+// contains "://". hashRef's rule made `urn:werk:x` a literal in subject position: invalid RDF, which
+// the per-record projection refused and a TriG parser rejects. A subject that is neither a content
+// hash nor an absolute IRI still comes out as a literal, which Record refuses and Registry skips.
+//
+// Object field values keep hashRef's rule: they are untyped text, "Note:foo" is an absolute IRI by
+// syntax alone, and their form feeds nanopublish's Trusty URI.
+func (c *trigCtx) subjectRef(v string) string {
+	if r := c.hashRef(v); !strings.HasPrefix(r, `"`) {
+		return r
+	}
+	if absoluteIRI(v) {
+		return c.curie(v)
+	}
+	return quote(v)
+}
+
 // quote renders s as a Turtle string literal. Every control character is escaped, not only the ones
 // the grammar forbids raw (LF, CR): a raw CR made the whole document unparseable, and one such claim
 // broke an export of every claim with it. Escaping changes the text, never the literal's value.
@@ -261,13 +279,14 @@ func renderTrig(c *trigCtx, st *claim.Statement, body map[string]any, env core.E
 		// newline closed the IRI and could open graphs of its own in the export (B1, 0.2.2).
 		fmt.Fprintf(&b, "  %s a nk:Scope ;\n    rdfs:label %s", c.curie("urn:nekton:scope:"+scope), quote(scope))
 		if pr := parentRef(body); pr != "" {
-			fmt.Fprintf(&b, " ;\n    nk:parent %s", c.hashRef(pr))
+			// a parent is a Ref like a subject: a urn: parent is an IRI too (kton-review N2)
+			fmt.Fprintf(&b, " ;\n    nk:parent %s", c.subjectRef(pr))
 		}
 		b.WriteString(" .\n")
 	} else {
 		subj := "<urn:nekton:claim>"
 		if len(st.Subject) > 0 {
-			subj = c.hashRef(st.Subject[0].Key())
+			subj = c.subjectRef(st.Subject[0].Key())
 		}
 		// Expand a raw CURIE predicate (e.g. a bare `nekton claim` stored "gxp:reviewed") to its full
 		// IRI first, so curie() re-renders it as a DECLARED prefixed name (or the full IRI) - not a bare

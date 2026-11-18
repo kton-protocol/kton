@@ -38,6 +38,7 @@ func TestSeedParentIsProjected(t *testing.T) {
 	}{
 		"by hash": {map[string]any{"hash": parent}, "https://kton.dev/o/" + strings.Repeat("ab", 32)},
 		"by uri":  {map[string]any{"uri": "https://example.org/programme"}, "https://example.org/programme"},
+		"by urn":  {map[string]any{"uri": "urn:werk:programme"}, "urn:werk:programme"}, // N2
 	} {
 		env := signSeed(t, "study-1", tc.parent)
 		st, _, err := claim.ParseEnvelope(env)

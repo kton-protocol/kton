@@ -115,12 +115,16 @@ func nanopubQuads(c *trigCtx, st *claim.Statement, body map[string]any, env core
 		add("urn:nekton:scope:"+scope, rdfType+"type", iriT(P["nk"]+"Scope"), ASSERT)
 		add("urn:nekton:scope:"+scope, P["rdfs"]+"label", litT(scope, ""), ASSERT)
 		if pr := parentRef(body); pr != "" {
-			add("urn:nekton:scope:"+scope, P["nk"]+"parent", c.refTerm(pr), ASSERT)
+			o := litT(pr, "")
+			if r := c.subjectRef(pr); !strings.HasPrefix(r, `"`) {
+				o = iriT(c.expand(r)) // a Ref like a subject: a urn: parent is an IRI (kton-review N2)
+			}
+			add("urn:nekton:scope:"+scope, P["nk"]+"parent", o, ASSERT)
 		}
 	} else {
 		subj := "urn:nekton:claim"
 		if len(st.Subject) > 0 {
-			subj = c.expand(c.hashRef(st.Subject[0].Key()))
+			subj = c.expand(c.subjectRef(st.Subject[0].Key()))
 		}
 		// EXPAND the predicate to its full IRI (F1a): a stored CURIE like "gxp:reviewed" must be signed as
 		// <https://kton.dev/v/gxp/reviewed>, not the bogus relative <gxp:reviewed>. The published TriG
