@@ -96,17 +96,14 @@ func nanopubQuads(c *trigCtx, st *claim.Statement, body map[string]any, env core
 	add(NP, P["np"]+"hasPublicationInfo", iriT(PUBINFO), HEAD)
 
 	by, when := str(body, "by"), str(body, "when")
+	// Every VERIFIED signer, and a primary agent chosen as in the TriG face (#210; render.go).
 	agent := c.expand(agentIRI(c, by))
-	signerVerified := false
-	if len(env.Signatures) > 0 {
-		// Attribute to the VERIFIED signer (a trusted key that actually signed), not the self-declared
-		// keyid a relabeler can forge (cold-session verified-attribution sibling: the RSA nanopublish path).
-		if vk := core.VerifiedSignerKeyID(env, c.trustKeys); vk != "" {
-			agent = P["agent"] + vk
-			signerVerified = true
-		} else {
-			agent = P["agent"] + env.Signatures[0].KeyID
-		}
+	verified := verifiedSigners(env, c.trustKeys)
+	signerVerified := len(verified) > 0
+	if signerVerified {
+		agent = P["agent"] + verified[0]
+	} else if kid := declaredSigner(env); kid != "" {
+		agent = P["agent"] + kid
 	}
 
 	// Assertion
@@ -159,7 +156,9 @@ func nanopubQuads(c *trigCtx, st *claim.Statement, body map[string]any, env core
 	// Provenance: assert prov:wasAttributedTo only for a VERIFIED signer; otherwise carry the claimed
 	// signer as unverified so a consumer never reads a forged keyid as established (verified-attribution).
 	if signerVerified {
-		add(ASSERT, P["prov"]+"wasAttributedTo", iriT(agent), PROV)
+		for _, kid := range verified {
+			add(ASSERT, P["prov"]+"wasAttributedTo", iriT(P["agent"]+kid), PROV)
+		}
 		add(ASSERT, P["nk"]+"signerVerified", litT("true", P["xsd"]+"boolean"), PROV)
 	} else {
 		add(ASSERT, P["nk"]+"claimedSigner", iriT(agent), PROV)

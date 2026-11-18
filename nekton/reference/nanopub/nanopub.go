@@ -74,7 +74,22 @@ func RegistryReport(reg *registry.Registry, c *Context) (string, int, []Skipped)
 	var b strings.Builder
 	n := 0
 	var skipped []Skipped
-	for _, rec := range reg.Records(0) {
+	seen := map[string]bool{}
+	for _, line := range reg.Records(0) {
+		// One claim, once, with every signature it holds: the feed has one line per co-signature, and
+		// rendering each line on its own attributed the claim to that line's signer only.
+		if seen[line.ClaimID] {
+			continue
+		}
+		seen[line.ClaimID] = true
+		rec, indexed := reg.Claim(line.ClaimID)
+		if !indexed {
+			// DEFERRED: held, but its seed or prev is not (SPEC §11: incomplete, not invalid). The CLI
+			// warns about it; the projection named nothing and rendered it like any claim (#210).
+			skipped = append(skipped, Skipped{line.ClaimID, "deferred: its scope's seed or prev is not held here " +
+				"(incomplete, not invalid; it projects once its chain resolves)"})
+			continue
+		}
 		st, payload, err := claim.ParseEnvelope(rec.Envelope)
 		if err != nil {
 			skipped = append(skipped, Skipped{rec.ClaimID, "not a parseable claim: " + err.Error()})

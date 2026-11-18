@@ -2,7 +2,24 @@
 
 ## Unreleased
 
-### Added
+### Fixed
+
+**RDF projection follow-ups from the #206/#207 review** ([#210](https://github.com/kton-protocol/kton/issues/210)).
+- `nanopub.RegistryReport` skips a *deferred* claim (its seed or prev is not held) and names it, where
+  it was rendered like any claim; and renders a co-signed claim once, with every signature, where the
+  feed's one line per co-signature rendered it once per signer.
+- A claim is attributed to every trusted key that verifies it (`prov:wasAttributedTo` each), as
+  plankton does since #207; it was the first one only. An empty declared keyid no longer falls onto a
+  shared `agent/` node: the claimed signer is the first non-empty keyid, else the slug of `by`.
+- Structured values: an empty list is `rdf:nil` (it disappeared), a list inside a list is its own
+  `rdf:Seq` node with members `rdf:_1`, `rdf:_2`, … (its items were flattened into the parent field).
+  Flat lists project as before.
+- `iriEsc` escapes a `%` that does not start a `%XX` escape (it made an invalid IRI). A valid escape
+  stays, so `a b` and `a%20b` remain one IRI, as RFC 3986 percent-encoding equivalence has it.
+- plankton RDF: with trusted keys and none verifying, `nk:signerVerified false` is emitted even when
+  the declared keyid is not hex (the claimed signer is then not named).
+The Trusty URI of a nanopublication changes only for claims with an empty or nested list, several
+trusted signers, or an empty declared keyid.
 
 **Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
 Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
