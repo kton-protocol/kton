@@ -21,6 +21,12 @@ whose subject is still not one instead of emitting a document a parser rejects. 
 their rule: they are untyped text, and `Note:foo` is an absolute IRI by syntax alone. The Trusty URI of
 a nanopublication changes only for a subject that was not `://`-shaped, whose quads were invalid before.
 
+**The nanopub projection asserts every subject of a claim** ([#253](https://github.com/kton-protocol/kton/issues/253)).
+A claim signed about several subjects was asserted only about the first, in the published TriG, in the
+signed graph and in `nanopub.Record`, and `nekton show` printed only the first. Each subject now gets its
+own triple with the same predicate and object. A single-subject claim projects byte for byte as before;
+a multi-subject claim gets a new Trusty URI, because its signed graph now holds every subject.
+
 ## 0.3.0 — released 2026-10-23
 
 ### Added

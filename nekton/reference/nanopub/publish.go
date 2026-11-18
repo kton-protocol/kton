@@ -115,14 +115,20 @@ func nanopubQuads(c *trigCtx, st *claim.Statement, body map[string]any, env core
 		add("urn:nekton:scope:"+scope, rdfType+"type", iriT(P["nk"]+"Scope"), ASSERT)
 		add("urn:nekton:scope:"+scope, P["rdfs"]+"label", litT(scope, ""), ASSERT)
 	} else {
-		subj := "urn:nekton:claim"
+		// One triple per signed subject, as in the published TriG (#253).
+		subjs := []string{"urn:nekton:claim"}
 		if len(st.Subject) > 0 {
-			subj = c.expand(c.subjectRef(st.Subject[0].Key()))
+			subjs = subjs[:0]
+			for _, s := range st.Subject {
+				subjs = append(subjs, c.expand(c.subjectRef(s.Key())))
+			}
 		}
 		// EXPAND the predicate to its full IRI (F1a): a stored CURIE like "gxp:reviewed" must be signed as
 		// <https://kton.dev/v/gxp/reviewed>, not the bogus relative <gxp:reviewed>. The published TriG
 		// re-abbreviates it with c.curie, which expands back to this exact IRI, so signed == published.
-		add(subj, c.expand(uriOf(body, "predicate")), iriT(O), ASSERT)
+		for _, subj := range subjs {
+			add(subj, c.expand(uriOf(body, "predicate")), iriT(O), ASSERT)
+		}
 		if obj, ok := body["object"].(map[string]any); ok {
 			for _, p := range unfold("o", obj) {
 				o := iriT(sub(p.child))
