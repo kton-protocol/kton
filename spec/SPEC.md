@@ -851,6 +851,14 @@ the real Trusty-URI hash and RSA-signing per the nanopublication convention are 
 steps (§1, out of scope). The source binding is always the explicit `prov:wasDerivedFrom` reference.
 *(Scenario 10.)*
 
+**One content IRI.** In every RDF projection, a content address `sha256:<hex>` - a file, a foton, a
+claim - is the IRI `https://kton.dev/o/<hex>`, and nothing else. A claim about a claim (§7.1) therefore
+has as its subject the same IRI that the reviewed claim's projection derives from, and a foton's
+projection names its inputs and outputs by the same IRIs as the claims about those files: projections
+join on it without any mapping. The names a projection format gives its own documents (a
+nanopublication's Trusty URI, its graph names) are that format's, and are bound to the content IRI by
+the provenance reference above.
+
 ## 15 Conformance
 
 A conforming implementation MUST:

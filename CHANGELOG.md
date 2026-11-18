@@ -4,6 +4,13 @@
 
 ### Added
 
+**One content IRI, and claims about claims, written down** (core round). SPEC §14 states that every RDF
+projection names a content address `sha256:<hex>` (a file, a foton, a claim) by the one IRI
+`https://kton.dev/o/<hex>`; a projection format's own names (Trusty URI, graph names) are bound to it by
+`prov:wasDerivedFrom`. A claim id as a subject (§7.1) already worked; a test now holds that a review
+of a claim is found by `About(<claim id>)` and that its RDF subject is the IRI the reviewed claim's
+nanopub derives from.
+
 **Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
 Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
 step a person did (`ref` names the procedure, never the person), and `llm`, a step a language-model agent
