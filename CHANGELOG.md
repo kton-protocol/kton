@@ -52,7 +52,8 @@ for the concrete environment - is on the answer.
 
 **One content IRI, and claims about claims, written down** (core round). SPEC §14 states that every RDF
 projection names a content address `sha256:<hex>` (a file, a foton, a claim) by the one IRI
-`https://kton.dev/o/<hex>`; a projection format's own names (Trusty URI, graph names) are bound to it by
+`https://kton.dev/o/<hex>` with the hex in lower case (the nanopub faces copied an upper-case address
+as given, so `sha256:ABAB…` and `sha256:abab…` were two IRIs); a projection format's own names (Trusty URI, graph names) are bound to it by
 `prov:wasDerivedFrom`. A claim id as a subject (§7.1) already worked; a test now holds that a review
 of a claim is found by `About(<claim id>)` and that its RDF subject is the IRI the reviewed claim's
 nanopub derives from.

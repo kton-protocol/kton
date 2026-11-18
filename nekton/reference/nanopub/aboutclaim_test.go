@@ -55,3 +55,22 @@ func TestClaimAboutAClaim(t *testing.T) {
 		t.Errorf("the review's subject is not %s:\n%s", iri, reviewQuads)
 	}
 }
+
+// An upper-case content address projects to the same lower-case IRI (SPEC §14, #262 review O1).
+func TestUpperCaseHashIsTheSameIRI(t *testing.T) {
+	hex := strings.Repeat("ab", 32)
+	env := signedAbout(t, "urn:x", map[string]any{"file": "sha256:" + strings.ToUpper(hex)})
+	st, _, _ := claim.ParseEnvelope(env)
+	trig := RenderTrig(NewContext(template.Set{}, nil), st, map[string]any{"predicate": map[string]any{"uri": "https://kton.dev/v/x"},
+		"object": map[string]any{"file": "sha256:" + strings.ToUpper(hex)}}, env, "x", "", "", "")
+	if strings.Contains(trig, strings.ToUpper(hex)) || !strings.Contains(trig, hex) {
+		t.Errorf("TriG keeps the upper-case address:\n%s", trig)
+	}
+	own, err := Record(NewRecordContext(template.Set{}), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(own), strings.ToUpper(hex)) {
+		t.Errorf("own quads keep the upper-case address:\n%s", own)
+	}
+}

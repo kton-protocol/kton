@@ -852,7 +852,8 @@ steps (§1, out of scope). The source binding is always the explicit `prov:wasDe
 *(Scenario 10.)*
 
 **One content IRI.** In every RDF projection, a content address `sha256:<hex>` - a file, a foton, a
-claim - is the IRI `https://kton.dev/o/<hex>`, and nothing else. A claim about a claim (§7.1) therefore
+claim - is the IRI `https://kton.dev/o/<hex>` with `<hex>` in lower case, whatever case the record
+carries it in, and nothing else. A claim about a claim (§7.1) therefore
 has as its subject the same IRI that the reviewed claim's projection derives from, and a foton's
 projection names its inputs and outputs by the same IRIs as the claims about those files: projections
 join on it without any mapping. The names a projection format gives its own documents (a

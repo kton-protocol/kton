@@ -69,6 +69,9 @@ func (c *trigCtx) refTerm(v string) npTerm {
 		return litT(v, "")
 	}
 	if strings.HasPrefix(v, "sha256:") {
+		if n, ok := core.NormalizeContentHash(v); ok { // lower-case hex, as the TriG face (#262 O1)
+			v = n
+		}
 		return iriT(c.prefixes["pk"] + strings.TrimPrefix(v, "sha256:"))
 	}
 	if strings.Contains(v, "://") {
