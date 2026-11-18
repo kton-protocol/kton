@@ -779,6 +779,9 @@ func run(cmd string, args []string) error {
 				sources = append(sources, more...)
 			case args[i] == "--strict":
 				strict = true
+			case args[i] == "--source" || args[i] == "--sources-file":
+				// a known flag at the end, without its value: say that, not "unknown flag" (#186)
+				return fmt.Errorf("%s needs a value - `plankton %s ... %s <dir>`", args[i], cmd, args[i])
 			case strings.HasPrefix(args[i], "-"):
 				// Any dash prefix, not just "--": `-x` fell through and became the QUERY.
 				return fmt.Errorf("unknown flag %q - `plankton %s` takes --source, --sources-file, "+
@@ -1175,6 +1178,8 @@ func parseReproducesArgs(args []string) (ref, cand, via string, asJSON bool, err
 		case args[i] == "--via" && i+1 < len(args):
 			i++
 			via = args[i]
+		case args[i] == "--via":
+			return "", "", "", false, fmt.Errorf("--via needs a value - `plankton reproduces <a> <b> --via <sha256:normalizer-ref>`")
 		case strings.HasPrefix(args[i], "-"):
 			return "", "", "", false, fmt.Errorf("unknown flag %q - `plankton reproduces` takes --via and --json", args[i])
 		case ref == "":
