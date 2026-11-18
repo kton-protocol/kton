@@ -14,7 +14,9 @@ without `--parent` names the root as parent and is registered in the root chain 
 `nekton verify --root [--json]` reports the chain, the registered subnektons and whether each is held,
 and forks: two copies of a store that both keep writing fork the root, which is reported and never
 rejected; a mirrored entry does not move the local head. Ingest, `add` of signed envelopes and mirror
-never create or extend a root. Library: `Registry.Root`, `RootHead`, `SetRoot`, `Forks`, `Registered`.
+never create or extend a root. Library: `Registry.Write` (the same write path for linked writers such as the cockpit's say: `Place`,
+sign, `Add`, register), `Place`, `CreateRoot`, `RegisterSubnekton`, `Root`, `RootHead`, `SetRoot`, `Forks`,
+`Registered`.
 SPEC §7.4 (Root, Fork), vocabulary `nk:registers`.
 
 **Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).

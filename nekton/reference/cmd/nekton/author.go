@@ -283,8 +283,12 @@ func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag 
 		if r, err = registry.Open(regOrDefault(regDir)); err != nil {
 			return err
 		}
-		if err := placeInStore(r, &spec, priv, msg); err != nil {
+		created, err := r.Place(&spec, priv)
+		if err != nil {
 			return err
+		}
+		if created != "" {
+			msg("root %s  (created: this store had none)\n", created)
 		}
 	}
 	b, id, err := buildClaimEnv(spec, priv)
@@ -316,7 +320,8 @@ func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag 
 		}
 		if isNew && spec.PredicateType == claim.ScopePredicateType && rid != r.Root() {
 			// the root lists the subnektons this store opened, in order (#213)
-			reg, err := registerSubnekton(r, rid, priv, bodyBy(&spec))
+			by, _ := spec.PredicateBody["by"].(string)
+			reg, err := r.RegisterSubnekton(rid, priv, by)
 			if err != nil {
 				return fmt.Errorf("seed %s is stored, but registering it in the root failed: %w", rid, err)
 			}
