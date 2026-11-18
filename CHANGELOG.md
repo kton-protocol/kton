@@ -4,6 +4,19 @@
 
 ### Added
 
+**The root nekton: a store's unscoped claims are chained, and its subnektons registered** ([#213](https://github.com/kton-protocol/kton/issues/213)).
+The root of a nekton store was a bag: unscoped claims had no signed order, and a mirror or copy that
+dropped one went unnoticed. Now every store has a root, an ordinary scope opened by a seed signed by
+whoever creates the store (`nekton init --sign key`, or the first `--add` write into a store without
+one). A claim written with `--add` and no `--scope` is chained under the root (`scope` = root, `prev` =
+the entry this store appended last), so removal or reordering is detectable as in any scope. A new seed
+without `--parent` names the root as parent and is registered in the root chain (`nk:registers`).
+`nekton verify --root [--json]` reports the chain, the registered subnektons and whether each is held,
+and forks: two copies of a store that both keep writing fork the root, which is reported and never
+rejected; a mirrored entry does not move the local head. Ingest, `add` of signed envelopes and mirror
+never create or extend a root. Library: `Registry.Root`, `RootHead`, `SetRoot`, `Forks`, `Registered`.
+SPEC §7.4 (Root, Fork), vocabulary `nk:registers`.
+
 **Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
 Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
 step a person did (`ref` names the procedure, never the person), and `llm`, a step a language-model agent

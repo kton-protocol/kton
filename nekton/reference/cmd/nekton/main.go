@@ -29,6 +29,13 @@ usage:
                                                       the key is only as strong as its seed)
   nekton pubkey <key.key|hex>                         print the public key hex (what verify/--trust-keys read)
   nekton keyid <key.pub|key.key|hex>                  print the keyid shown as by=key:<id> (map key -> signer)
+  nekton init --sign key.key [--by ID] [--registry D]  open the store's ROOT scope (#213). Every --add write
+                                                      without --scope then chains under it, and every new seed
+                                                      hangs off it and is registered in it. Without init, the
+                                                      first --add write creates the root with its own key
+  nekton verify --root [--registry D] [--json]        the root chain: entries, local head, registered
+                                                      subnektons and whether each is held, forks (reported,
+                                                      never rejected)
   nekton seed <scope-name> --sign key.key [--add] [--registry D]  open a (sub)nekton scope; prints its scope id
       --print-id         print ONLY the bare id on stdout, human lines to stderr
                          (same contract as plankton author --print-id): ID=$(nekton seed … --print-id)
@@ -373,6 +380,9 @@ func run(cmd string, args []string) error {
 	case "seed":
 		return seed(args)
 
+	case "init":
+		return initStore(args)
+
 	case "annotate":
 		return annotate(args)
 
@@ -420,6 +430,16 @@ func run(cmd string, args []string) error {
 		return listMaterial(args)
 
 	case "verify":
+		if len(args) > 0 && args[0] == "--root" {
+			rest, asJSON := takeJSON(args[1:])
+			regDir := ""
+			if len(rest) == 2 && rest[0] == "--registry" {
+				regDir = rest[1]
+			} else if len(rest) != 0 {
+				return fmt.Errorf("usage: nekton verify --root [--registry dir] [--json]")
+			}
+			return rootReport(regDir, asJSON)
+		}
 		if len(args) != 2 {
 			return fmt.Errorf("usage: nekton verify <envelope.dsse.json|sha256:id> <pubkey.pub|hex>")
 		}

@@ -483,8 +483,26 @@ nesting), never meaning.
   gap - is a **seal-verification** judgment, evaluated over the resolved union of sources *when the seal
   is relied upon*, NOT an ingest-time rejection. Removal or reordering then breaks the chain and MUST be
   detectable. *(Scenario 5 / Scenario 2; see Clause 11, Monotonicity.)*
-- **What stays convention (NOT kernel):** the meaning of `responsible`, parent→child registration, and
-  sealing rules are checked by consumers/aggregators, not the kernel.
+- **Root.** Every store has a **root**: an ordinary scope, opened by an ordinary seed signed by whoever
+  creates the store, on that caller's own write path - never during ingest, mirror or sync, because a
+  kernel does not sign on ingest (§8). The store knows which seed is its root; where it keeps that is
+  the store's business (no layout is prescribed). A statement written into a store **without naming a
+  scope belongs to that store's root**: the writer sets `scope` = the root's `scope_id` and `prev` = the
+  root entry it appended last (or the seed). A seed written into a store without a `parent` names the
+  root as its `parent`, and the root chain gets one entry registering it (predicate `nk:registers`,
+  subject = the child's `scope_id`). The root is then the signed, ordered list of what this store said
+  and opened: removal or reordering between two linked entries is detectable as in any scope. It does
+  **not** prove that nothing else was said - a key can sign outside the root, in another store or
+  without naming any scope; a statement without `scope` stays valid (§11). Whether anything is missing
+  after the last entry held is answered as for every scope, by a seal. A root belongs to a store, not
+  to a key: "everything key K said" is the `by-signer` index (§11). ([#213](https://github.com/kton-protocol/kton/issues/213))
+- **Fork.** Two statements of one scope naming the same `prev` are a fork. It happens when a store is
+  copied and both copies keep writing. Both statements are valid (§11); an implementation reports a
+  fork as a fact and MUST NOT reject either. A writer continues from the entry it appended itself, not
+  from one that arrived by mirroring.
+- **What stays convention (NOT kernel):** the meaning of `responsible`, registration of a child in a
+  parent other than the store's root, and sealing rules are checked by consumers/aggregators, not the
+  kernel.
 
 ## 8 Signatures and identity (DSSE) - shared trust layer
 

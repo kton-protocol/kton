@@ -274,6 +274,19 @@ func buildClaimEnv(spec claimSpec, priv ed25519.PrivateKey) ([]byte, string, err
 // of prose - the cockpit was anchoring on the "indexed claim" line, a dependency on output
 // formatting that nothing guaranteed and no test protected (#56).
 func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag bool, regDir string, printID bool) error {
+	msg := humanOut(printID)
+	// Writing INTO a store: open it first, because where the claim goes is part of what is signed. A
+	// claim without a scope chains under the store's root, a new seed hangs off it (#213).
+	var r *registry.Registry
+	if addFlag {
+		var err error
+		if r, err = registry.Open(regOrDefault(regDir)); err != nil {
+			return err
+		}
+		if err := placeInStore(r, &spec, priv, msg); err != nil {
+			return err
+		}
+	}
 	b, id, err := buildClaimEnv(spec, priv)
 	if err != nil {
 		return err
@@ -291,20 +304,23 @@ func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag 
 	if !writeFile {
 		dest = "(no -o file written; ingested via --add below)"
 	}
-	msg := humanOut(printID)
 	msg("claim %s  keyid=%s  %s\n", id, keyidHex(priv.Public().(ed25519.PublicKey)), dest)
 	if addFlag {
 		var env core.Envelope
 		if err := json.Unmarshal(b, &env); err != nil {
 			return err
 		}
-		r, err := registry.Open(regOrDefault(regDir))
-		if err != nil {
-			return err
-		}
 		rid, isNew, err := r.Add(env)
 		if err != nil {
 			return err
+		}
+		if isNew && spec.PredicateType == claim.ScopePredicateType && rid != r.Root() {
+			// the root lists the subnektons this store opened, in order (#213)
+			reg, err := registerSubnekton(r, rid, priv, bodyBy(&spec))
+			if err != nil {
+				return fmt.Errorf("seed %s is stored, but registering it in the root failed: %w", rid, err)
+			}
+			msg("registered in root %s  (entry %s)\n", r.Root(), reg)
 		}
 		if isNew {
 			msg("indexed claim %s  (registry now holds %d claims)\n", rid, r.Len())

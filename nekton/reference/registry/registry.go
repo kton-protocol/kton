@@ -326,6 +326,7 @@ type Registry struct {
 	// delivered like anything else; the reader unions lines that share a claim id, exactly as `Add`
 	// unions a twin at ingest.
 	feed          []Record
+	root          rootState // this store's own root scope and the head it chains from (#213, root.go)
 	deferredCount int
 	seen          map[string]bool // claim id -> present (idempotency)
 	maxSeq        int
@@ -541,6 +542,9 @@ func openAt(dir string, create bool) (*Registry, error) {
 	// Verification material is read AFTER settling and never feeds into it: §8.1 requires that its
 	// presence, absence or invalidity leave a record's validity and resolvability untouched.
 	r.material = readAllMaterial(r.objectsDir)
+	if r.root, err = readRoot(r.objectsDir); err != nil {
+		return nil, err
+	}
 	if b, err := os.ReadFile(r.peersPath); err == nil {
 		_ = json.Unmarshal(b, &r.peers)
 	}
@@ -1083,6 +1087,7 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 			"see the warning above for which check it failed", id)
 	}
 	r.feed = append(r.feed, rec)
+	r.advanceRootHead(id, st)
 	// This record may be the dependency something already held has been waiting for. `Add` used to
 	// leave those alone, so within ONE process adding a seed did not resolve the scoped claim that
 	// named it:
