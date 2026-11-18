@@ -26,6 +26,13 @@ record it could not project without a trace, so a triple store loaded from it wa
 nobody knew. `RegistryReport` returns the same TriG and count, plus one `Skipped{ClaimID, Reason}` per
 record left out. `Registry` keeps its signature.
 
+**Template field types `integer` and `iri`, and unknown types refused** ([#255](https://github.com/kton-protocol/kton/issues/255)).
+A template field's type was any string, and `Spec` checked only `ref`, `enum` and `file`, so a value of
+a field meant as a number or an IRI was signed unchecked and a typo in a type went unnoticed. `integer`
+now refuses a value that is not an `xsd:integer`; `iri` takes an IRI or a CURIE or term the alias file
+resolves, and signs the resolved IRI. A claim template that declares a type the kernel does not know
+is refused at load, by itself, with the reason named; the rest of the set keeps working.
+
 ### Fixed
 
 **A claim about a `urn:`, `tag:`, `did:` or `mailto:` subject projects to RDF** (#245). The nanopub

@@ -212,6 +212,9 @@ func annotate(args []string) error {
 	reportSkipped(tset)
 	t, ok := tset.Get(tmplName)
 	if !ok {
+		if reason := tset.RefusedReason(tmplName); reason != "" { // #255 review T2: say why
+			return fmt.Errorf("template %q in %s is refused: %s", tmplName, tdir, reason)
+		}
 		return fmt.Errorf("no template %q in %s", tmplName, tdir)
 	}
 
@@ -457,6 +460,9 @@ func listTemplates(args []string) error {
 func showTemplate(tset template.Set, name string) error {
 	t, ok := tset.Get(name)
 	if !ok {
+		if reason := tset.RefusedReason(name); reason != "" {
+			return fmt.Errorf("template %q is refused: %s", name, reason)
+		}
 		return fmt.Errorf("no template %q", name)
 	}
 	fmt.Printf("template:  %s\n", t.Name)
@@ -525,4 +531,16 @@ func reportSkipped(set template.Set) {
 		fmt.Fprintf(os.Stderr, "note: skipping %q - it declares no fields, predicate or "+
 			"predicateType, so it is not a template.\n", f)
 	}
+	for _, name := range sortedNames(set.Refused()) {
+		fmt.Fprintf(os.Stderr, "note: refusing template %q - %s.\n", name, set.Refused()[name])
+	}
+}
+
+func sortedNames(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

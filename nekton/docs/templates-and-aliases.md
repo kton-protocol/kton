@@ -60,7 +60,12 @@ It is shapes over opaque IRIs; it produces one signed claim.
 ```
 
 Field grammar:
-- **type** - `string | enum | date | ref | file`.
+- **type** - `string | enum | date | ref | file | integer | iri` (empty means `string`). `integer`
+  takes an optional sign and digits (`xsd:integer`). `iri` takes a `scheme://` IRI, a `urn:`, `tag:`,
+  `did:` or `mailto:` IRI, or a CURIE or term the alias file resolves; the resolved IRI is what is
+  signed, and a CURIE with an undeclared prefix is refused. A claim template that declares any other
+  type is refused when the set is loaded (named on stderr; `--template` says why), and the rest of the
+  set keeps working (#255). Seed templates are not built by `Spec`, so their types are not checked.
 - **role** - `object` (scalar/ref goes into the claim's `object{}`) or `evidence` (a ref goes into
   `evidence[]`). Default: scalars → `object`, files → `evidence`.
 - **file** - the value is a **path**; nekton hashes it to a `{hash, mediaType}` ref. The bytes are
