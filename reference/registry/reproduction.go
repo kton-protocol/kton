@@ -86,9 +86,9 @@ func (r *Registry) Reproductions(outputHash string, trusted []ed25519.PublicKey)
 			continue
 		}
 		matched := false
-		for _, pub := range trusted {
-			if okv, verr := env.Verify(pub); okv && verr == nil {
-				kid := core.KeyIDHex(pub)
+		for i, okv := range core.VerifiedKeys(env, trusted) {
+			if okv {
+				kid := core.KeyIDHex(trusted[i])
 				out.Producers = append(out.Producers, Producer{FotonID: id, KeyID: kid, Verified: true})
 				signers[kid] = true
 				matched = true
