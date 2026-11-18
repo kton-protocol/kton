@@ -201,6 +201,18 @@ func agentIRI(c *trigCtx, by string) string {
 	return c.curie(c.prefixes["agent"] + core.HashBytes([]byte(by))[7:19]) // stable slug from `by`
 }
 
+// parentRef is a seed's signed parent - "sha256:<hex>" for a parent seed named by hash, or its URI -
+// or "" when the seed names none (#239). The hierarchy a seed signs (study > project > programme) is
+// then walkable in the graph, not only in the store.
+func parentRef(body map[string]any) string {
+	p, _ := body["parent"].(map[string]any)
+	if h, _ := p["hash"].(string); h != "" {
+		return h
+	}
+	u, _ := p["uri"].(string)
+	return u
+}
+
 func str(m map[string]any, k string) string {
 	if v, ok := m[k].(string); ok {
 		return v
@@ -265,7 +277,12 @@ func renderTrig(c *trigCtx, st *claim.Statement, body map[string]any, env core.E
 		// The scope NAME comes from the signed seed, so it is record data like any object value and
 		// goes through curie (an escaped IRI), never straight into <...>: a name containing `>` or a
 		// newline closed the IRI and could open graphs of its own in the export (B1, 0.2.2).
-		fmt.Fprintf(&b, "  %s a nk:Scope ;\n    rdfs:label %s .\n", c.curie("urn:nekton:scope:"+scope), quote(scope))
+		fmt.Fprintf(&b, "  %s a nk:Scope ;\n    rdfs:label %s", c.curie("urn:nekton:scope:"+scope), quote(scope))
+		if pr := parentRef(body); pr != "" {
+			// a parent is a Ref like a subject: a urn: parent is an IRI too (kton-review N2)
+			fmt.Fprintf(&b, " ;\n    nk:parent %s", c.subjectRef(pr))
+		}
+		b.WriteString(" .\n")
 	} else {
 		// Every subject the claim was signed with gets its own triple (same predicate, same object):
 		// asserting only the first said less than the signature (#253).

@@ -14,8 +14,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"kton.dev/nekton/claim"
@@ -87,7 +89,10 @@ func (r *Registry) resolveSeqs(ids []string, persist bool) (map[string]int, erro
 }
 
 func (r *Registry) withWriteLock(fn func() error) error {
-	lp := filepath.Join(r.dir, ".objects.lock")
+	return withLockFile(filepath.Join(r.dir, ".objects.lock"), fn)
+}
+
+func withLockFile(lp string, fn func() error) error {
 	for attempt := 0; attempt < 2000; attempt++ {
 		f, err := os.OpenFile(lp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
@@ -95,7 +100,9 @@ func (r *Registry) withWriteLock(fn func() error) error {
 			defer os.Remove(lp)
 			return fn()
 		}
-		if !os.IsExist(err) {
+		// On Windows a lock file whose holder is deleting it is "pending delete" until the last handle
+		// closes, and creating it then fails with access denied, not "exists": that is a busy lock too.
+		if !os.IsExist(err) && !(runtime.GOOS == "windows" && os.IsPermission(err)) {
 			return err
 		}
 		if fi, e := os.Stat(lp); e == nil && time.Since(fi.ModTime()) > 30*time.Second {
@@ -1262,7 +1269,7 @@ const formatMarker = ".format"
 // readStoreFormat returns the recorded format, or 0 when the store carries no marker (a format-1
 // store, an empty directory, or one written by a 0.2 build from before the marker existed).
 func readStoreFormat(objectsDir string) (int, error) {
-	b, err := os.ReadFile(filepath.Join(objectsDir, formatMarker))
+	b, err := readFileShared(filepath.Join(objectsDir, formatMarker))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
@@ -1278,14 +1285,40 @@ func readStoreFormat(objectsDir string) (int, error) {
 	return v, nil
 }
 
+// readFileShared is os.ReadFile, except that on Windows a sharing violation is retried for a moment:
+// a file that was just renamed into place can still be held by the process that put it there (or by
+// a virus scanner), and that passes.
+func readFileShared(path string) ([]byte, error) {
+	const errorSharingViolation = syscall.Errno(32) // ERROR_SHARING_VIOLATION
+	for attempt := 0; ; attempt++ {
+		b, err := os.ReadFile(path)
+		if err == nil || runtime.GOOS != "windows" || !errors.Is(err, errorSharingViolation) || attempt == 200 {
+			return b, err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // writeStoreFormat records the marker. Write path only - a read must never mutate its source.
+//
+// Atomically (#251): os.WriteFile creates the file empty and writes after, so a second process
+// opening a store that is being created read "" and refused it. So the marker is written whole and
+// renamed into place, and only by one creator: under the object write lock, and only if it is still
+// missing. Renaming over a marker another process has open fails on Windows (Go opens files without
+// FILE_SHARE_DELETE), so a current marker is never replaced.
 func writeStoreFormat(objectsDir string) error {
 	have, err := readStoreFormat(objectsDir)
 	if err != nil || have == StoreFormat {
 		return err
 	}
-	return os.WriteFile(filepath.Join(objectsDir, formatMarker),
-		[]byte(fmt.Sprintf("nekton-store %d\n", StoreFormat)), 0o644)
+	return withLockFile(filepath.Join(filepath.Dir(objectsDir), ".objects.lock"), func() error {
+		have, err := readStoreFormat(objectsDir)
+		if err != nil || have == StoreFormat {
+			return err
+		}
+		return atomicWrite(filepath.Join(objectsDir, formatMarker),
+			[]byte(fmt.Sprintf("nekton-store %d\n", StoreFormat)))
+	})
 }
 
 // subnektonPath is where a claim lives: ONE FILE PER SUBNEKTON, named by the scope id (the seed's
