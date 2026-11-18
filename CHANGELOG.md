@@ -33,6 +33,13 @@ now reported as a flag that needs a value.
 
 ### Added
 
+**Conditional fotons are marked in every plankton export** ([#224](https://github.com/kton-protocol/kton/issues/224)).
+The per-record quads marked a conditional foton (#212); the JSON graph and the Turtle export did not, so
+a view or query built on them showed it as an ordinary activity. The JSON graph now carries
+`conditional: true` and `conditions` on the foton; the Turtle carries `nk:conditional true` and one
+`nk:condition [ nk:conditionKind …; nk:conditionRef … ]` per condition, the terms the per-record quads
+use. `verifiedSigners` still says only who signed; it is not a reproducibility statement.
+
 **Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
 Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
 step a person did (`ref` names the procedure, never the person), and `llm`, a step a language-model agent

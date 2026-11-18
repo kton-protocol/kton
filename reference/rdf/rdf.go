@@ -78,6 +78,18 @@ func Turtle(r *registry.Registry, sel string, trustKeys []ed25519.PublicKey) (st
 				fmt.Fprintf(&b, " ;\n    nk:environment %s", en)
 			}
 		}
+		// A conditional foton is marked as in the per-record quads (#224): nk:conditional true and
+		// one node per condition with its kind and ref.
+		if f.Conditional() {
+			fmt.Fprintf(&b, " ;\n    nk:conditional true")
+			for _, c := range f.Protocol.Conditions {
+				fmt.Fprintf(&b, " ;\n    nk:condition [ nk:conditionKind %s", rdfLiteral(c.Kind))
+				if c.Ref != "" {
+					fmt.Fprintf(&b, " ; nk:conditionRef %s", rdfLiteral(c.Ref))
+				}
+				b.WriteString(" ]")
+			}
+		}
 		if d := descriptorLiteral(f.Protocol.Descriptor); d != "" {
 			fmt.Fprintf(&b, " ;\n    nk:protocolDescriptor %s", rdfLiteral(d))
 		}
