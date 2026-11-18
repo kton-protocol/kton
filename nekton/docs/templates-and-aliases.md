@@ -60,6 +60,12 @@ It is shapes over opaque IRIs; it produces one signed claim.
 ```
 
 Field grammar:
+- **replace** (template key) - `previous`, or absent. `previous` says a claim from this template usually
+  supersedes an earlier one: the signing tool fills the reserved field `replaces` with the claim it
+  replaces; absent means nothing is filled in. Any other value refuses the template (#257).
+- **`replaces`** (reserved field) - the id of the claim this one replaces (`sha256:<64-hex>`), refused
+  otherwise. A template with `replace: previous` has it implicitly; one that declares it must make it
+  `type: ref`. A claim replaces another only by naming it.
 - **type** - `string | enum | date | ref | file | integer | iri` (empty means `string`). `integer`
   takes an optional sign and digits (`xsd:integer`). `iri` takes a `scheme://` IRI, a `urn:`, `tag:`,
   `did:` or `mailto:` IRI, or a CURIE or term the alias file resolves; the resolved IRI is what is

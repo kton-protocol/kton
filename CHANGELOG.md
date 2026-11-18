@@ -26,6 +26,13 @@ record it could not project without a trace, so a triple store loaded from it wa
 nobody knew. `RegistryReport` returns the same TriG and count, plus one `Skipped{ClaimID, Reason}` per
 record left out. `Registry` keeps its signature.
 
+**Templates say when a claim replaces an earlier one** ([#257](https://github.com/kton-protocol/kton/issues/257)).
+A template may declare `"replace": "previous"`: the signing tool then fills the reserved field
+`replaces` with the id of the claim this one supersedes. `replaces` takes only a claim id, a template
+that declares it must make it a `ref`, and an unknown `replace` value refuses the template. The kernel
+does not look the previous claim up; that is the signing tool's part. A value is signed normalised (`SHA256:5F2B…` as `sha256:5f2b…`), and it projects under
+the reserved term `nk:replaces` (spec/vocabulary.md), whatever an alias file maps the name to.
+
 **Template field types `integer` and `iri`, and unknown types refused** ([#255](https://github.com/kton-protocol/kton/issues/255)).
 A template field's type was any string, and `Spec` checked only `ref`, `enum` and `file`, so a value of
 a field meant as a number or an IRI was signed unchecked and a typo in a type went unnoticed. `integer`
@@ -55,7 +62,6 @@ A claim signed about several subjects was asserted only about the first, in the 
 signed graph and in `nanopub.Record`, and `nekton show` printed only the first. Each subject now gets its
 own triple with the same predicate and object. A single-subject claim projects byte for byte as before;
 a multi-subject claim gets a new Trusty URI, because its signed graph now holds every subject.
-
 ## 0.3.0 — released 2026-10-23
 
 ### Added

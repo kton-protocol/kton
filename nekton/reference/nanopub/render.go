@@ -129,6 +129,11 @@ func (c *trigCtx) curie(iri string) string {
 // fieldIRI resolves an object-field key (e.g. "outcome") to a term IRI, via the aliases if it is a
 // known term/CURIE, else minting it in the default lab namespace.
 func (c *trigCtx) fieldIRI(key string) string {
+	// The reserved field has a reserved term (#257, review R2): an alias file must not move it, or a
+	// replacement is found under one IRI in one registry and another in the next.
+	if key == template.ReplacesField {
+		return c.curie(c.prefixes["nk"] + "replaces")
+	}
 	if r := c.al.Resolve(key); strings.Contains(r, "://") {
 		return c.curie(r)
 	}

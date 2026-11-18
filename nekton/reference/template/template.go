@@ -48,6 +48,28 @@ type Template struct {
 	Predicate     string           `json:"predicate"`
 	Context       string           `json:"context"`
 	Fields        map[string]Field `json:"fields"`
+	// Replace says whether a claim from this template usually supersedes an earlier one (#257).
+	// "previous": the signing tool fills the reserved field `replaces` with the claim this one
+	// supersedes. Absent: nothing is filled in. The kernel does not decide what "previous" is.
+	Replace string `json:"replace,omitempty"`
+}
+
+// ReplacesField is the reserved field that names the claim a claim replaces: a claim id (#257).
+const ReplacesField = "replaces"
+
+// replaceValues are the values of a template's "replace" key the kernel knows.
+var replaceValues = map[string]bool{"": true, "previous": true}
+
+// templateShapeError names what makes a template unusable for signing, or returns "".
+func templateShapeError(t Template) string {
+	if !replaceValues[t.Replace] {
+		return fmt.Sprintf("\"replace\": %q is not a value the kernel knows (known: previous, or absent)", t.Replace)
+	}
+	if f, ok := t.Fields[ReplacesField]; ok && f.Type != "ref" {
+		return fmt.Sprintf("field %q is reserved for the id of the claim this one replaces, so its type "+
+			"must be ref, not %q", ReplacesField, f.Type)
+	}
+	return unknownFieldType(t)
 }
 
 // IsSeed reports whether this template produces a scope SEED rather than a claim. Spec refuses one:
@@ -157,12 +179,23 @@ func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (
 		// the declared name is what makes it possible, and that key was introduced to stop hyphenated
 		// names being mangled. Both properties are wanted, so the collision is named instead of
 		// silently broken either way.
-		if reason := unknownFieldType(t); reason != "" {
+		if reason := templateShapeError(t); reason != "" {
 			if s.refused == nil {
 				s.refused = map[string]string{}
 			}
 			s.refused[name] = reason
 			continue
+		}
+		if t.Replace == "previous" {
+			if _, declared := t.Fields[ReplacesField]; !declared {
+				// implicit: a template that replaces need not declare the reserved field itself
+				fields := make(map[string]Field, len(t.Fields)+1)
+				for k, v := range t.Fields {
+					fields[k] = v
+				}
+				fields[ReplacesField] = Field{Type: "ref"}
+				t.Fields = fields
+			}
 		}
 		if prev, dup := s.templates[name]; dup {
 			return Set{}, fmt.Errorf("two templates in %s declare the name %q (predicates %q and %q) - "+
@@ -417,6 +450,16 @@ func (s Set) Spec(name, subject string, values map[string]string, files map[stri
 		if f.Type == "enum" && len(f.Values) > 0 && !contains(f.Values, val) {
 			return claim.Spec{}, fmt.Errorf("field %s = %q is not one of the template's values %v",
 				fname, val, f.Values)
+		}
+		if fname == ReplacesField {
+			n, ok := core.NormalizeContentHash(val)
+			if !ok || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(val)), "sha256:") {
+				return claim.Spec{}, fmt.Errorf("field %s = %q is not a claim id (sha256:<64-hex>) - "+
+					"a claim replaces another only by naming it", fname, val)
+			}
+			// Sign the NORMALISED id (review R1): an upper-case id was signed as typed and projected to an
+			// IRI that never matches the replaced claim's.
+			val = n
 		}
 		if f.Type == "integer" && !xsdInteger(val) {
 			return claim.Spec{}, fmt.Errorf("field %s = %q is not an integer (an `integer` field takes "+
