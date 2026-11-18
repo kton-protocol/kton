@@ -4,6 +4,16 @@
 
 ### Added
 
+**Environment and locator material travels and is shown** ([#225](https://github.com/kton-protocol/kton/issues/225)).
+`plankton mirror` and `nekton mirror` now carry a record's verification material (SPEC §8.1) with it,
+skipping what the peer already holds (`Registry.CarryMaterial`): `kton-env/v1` and `kton-locator/v1`
+were lost on a peer, so a fact a covered `envRef` used to carry before #223 went missing. `plankton
+show --trust-keys D` (and `--json`, field `carried`) lists, per trusted producer, the concrete
+environment it ran in and where its copies live, and says when producers ran in different
+environments. A `reuse` hit from a foton/v1 record that declares an environment class carries
+`qualification: "required"` and `envClass`, so the SPEC §6.5 obligation - a trusted qualifies-as claim
+for the concrete environment - is on the answer.
+
 **Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
 Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
 step a person did (`ref` names the procedure, never the person), and `llm`, a step a language-model agent

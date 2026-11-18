@@ -1903,3 +1903,26 @@ func (r *Registry) ClaimIDs() []string {
 	sort.Strings(out)
 	return out
 }
+
+// CarryMaterial copies the verification material src holds about subject into this registry,
+// skipping what is already held (#225). Mirror calls it for every record it copies, so evidence bound
+// to a record (SPEC §8.1) travels with it like a co-signature does. Material is never read or judged
+// here: an unknown scheme is carried as it is.
+func (r *Registry) CarryMaterial(src *Registry, subject string) (int, error) {
+	have := map[VerificationMaterial]bool{}
+	for _, m := range r.Material(subject) {
+		have[m] = true
+	}
+	n := 0
+	for _, m := range src.Material(subject) {
+		if have[m] {
+			continue
+		}
+		if err := r.AttachMaterial(m); err != nil {
+			return n, err
+		}
+		have[m] = true
+		n++
+	}
+	return n, nil
+}
