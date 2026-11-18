@@ -146,7 +146,7 @@ func TestRootForkIsReportedNotRejected(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := rb.SetRoot(ra.Root()); err != nil {
+	if err := rb.SetRoot(ra.Root(), ""); err != nil {
 		t.Fatal(err)
 	}
 	headBefore := ra.RootHead()

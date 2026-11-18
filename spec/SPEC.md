@@ -490,9 +490,14 @@ nesting), never meaning.
   scope belongs to that store's root**: the writer sets `scope` = the root's `scope_id` and `prev` = the
   root entry it appended last (or the seed). A seed written into a store without a `parent` names the
   root as its `parent`, and the root chain gets one entry registering it (predicate `nk:registers`,
-  subject = the child's `scope_id`). The root is then the signed, ordered list of what this store said
-  and opened: removal or reordering between two linked entries is detectable as in any scope. It does
-  **not** prove that nothing else was said - a key can sign outside the root, in another store or
+  subject = the child's `scope_id`). The root seed SHOULD be unique to its store (the reference puts a
+  random part in its scope name), so that two stores never share a root. **The store's own chain** is
+  the path from the root entry it appended last back to the root seed, following `prev`; the entry a
+  writer continues from moves only when the store itself writes. That chain is the signed, ordered list
+  of what this store said and opened: removal or reordering between two linked entries is detectable as
+  in any scope. Entries that name the root but arrive by ingest - from a copy of the store, or signed by
+  any key - are not on it; they are reported, never counted as the store's. The chain does **not**
+  prove that nothing else was said - a key can sign outside the root, in another store or
   without naming any scope; a statement without `scope` stays valid (§11). Whether anything is missing
   after the last entry held is answered as for every scope, by a seal. A root belongs to a store, not
   to a key: "everything key K said" is the `by-signer` index (§11). ([#213](https://github.com/kton-protocol/kton/issues/213))

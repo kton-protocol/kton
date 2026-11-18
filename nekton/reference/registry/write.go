@@ -2,6 +2,7 @@ package registry
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -19,9 +20,16 @@ import (
 // Signing here is the signing helper SPEC §8 permits for a caller that holds its own key. It is never
 // reached from Add, mirror or sync: a kernel does not sign on ingest.
 
-// rootName is the scope name of a store's root seed. Two roots never collide on it: the seed also
-// carries by and when.
-const rootName = "root"
+// rootName is the scope name of a store's root seed: "root/" and a random part, so two stores'
+// roots never share an id - by and when alone collided for one key within one second (#259 review
+// R2). A caller that needs a reproducible root (a corpus rebuilt to the same ids) names it.
+func rootName() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand does not fail on supported platforms
+	}
+	return "root/" + hex.EncodeToString(b)
+}
 
 func defaultBy(priv ed25519.PrivateKey) string {
 	sum := sha256.Sum256(priv.Public().(ed25519.PublicKey))
@@ -33,8 +41,8 @@ func defaultBy(priv ed25519.PrivateKey) string {
 var now = func() string { return time.Now().UTC().Format(time.RFC3339) }
 
 // CreateRoot signs a root seed with priv, stores it and records it as this store's root. by defaults
-// to key:<keyid>, when to now.
-func (r *Registry) CreateRoot(priv ed25519.PrivateKey, by, when string) (string, error) {
+// to key:<keyid>, when to now, name to "root/<random>".
+func (r *Registry) CreateRoot(priv ed25519.PrivateKey, by, when, name string) (string, error) {
 	if r.root.Root != "" {
 		return "", fmt.Errorf("this store already has a root: %s", r.root.Root)
 	}
@@ -44,10 +52,13 @@ func (r *Registry) CreateRoot(priv ed25519.PrivateKey, by, when string) (string,
 	if when == "" {
 		when = now()
 	}
+	if name == "" {
+		name = rootName()
+	}
 	env, id, err := claim.SignWith(claim.Spec{
-		Subject:       []claim.SubjectSpec{{URI: "urn:nekton:scope:" + rootName}},
+		Subject:       []claim.SubjectSpec{{URI: "urn:nekton:scope:" + name}},
 		PredicateType: claim.ScopePredicateType,
-		PredicateBody: map[string]any{"scope": rootName, "genesis": true, "by": by, "when": when},
+		PredicateBody: map[string]any{"scope": name, "genesis": true, "by": by, "when": when},
 	}, priv)
 	if err != nil {
 		return "", err
@@ -55,7 +66,7 @@ func (r *Registry) CreateRoot(priv ed25519.PrivateKey, by, when string) (string,
 	if _, _, err := r.Add(env); err != nil {
 		return "", err
 	}
-	if err := r.SetRoot(id); err != nil {
+	if err := r.SetRoot(id, ""); err != nil {
 		return "", err
 	}
 	return id, nil
@@ -79,7 +90,7 @@ func (r *Registry) Place(spec *claim.Spec, priv ed25519.PrivateKey) (createdRoot
 		if by == "" {
 			by = spec.By
 		}
-		if createdRoot, err = r.CreateRoot(priv, by, ""); err != nil {
+		if createdRoot, err = r.CreateRoot(priv, by, "", ""); err != nil {
 			return "", fmt.Errorf("this store has no root yet and creating one failed: %w", err)
 		}
 	}
@@ -117,6 +128,7 @@ func (r *Registry) RegisterSubnekton(seedID string, priv ed25519.PrivateKey, by 
 	if _, _, err := r.Add(env); err != nil {
 		return "", err
 	}
+	r.ownAppend(id) // this store's own entry: the head moves (#259 review R1)
 	return id, nil
 }
 
@@ -145,12 +157,13 @@ func (r *Registry) Write(spec claim.Spec, priv ed25519.PrivateKey) (Written, err
 	if w.ID, w.IsNew, err = r.Add(env); err != nil {
 		return w, err
 	}
+	r.ownAppend(w.ID)
 	if w.IsNew && spec.PredicateType == claim.ScopePredicateType && w.ID != r.root.Root {
 		by, _ := spec.PredicateBody["by"].(string)
 		// A seed with an explicit parent leaves Place nothing to do, but it is still opened in this
 		// store and belongs on its root's list: a store without a root gets one first.
 		if r.root.Root == "" {
-			if w.CreatedRoot, err = r.CreateRoot(priv, by, ""); err != nil {
+			if w.CreatedRoot, err = r.CreateRoot(priv, by, "", ""); err != nil {
 				return w, fmt.Errorf("seed %s is stored, but creating the root to register it in failed: %w", w.ID, err)
 			}
 		}
