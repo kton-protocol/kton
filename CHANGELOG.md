@@ -13,6 +13,15 @@ keys. The answer is the same as before (a test compares it with per-key `Verify`
 mis-hinted, forged-hint and co-signed envelopes); the keyid stays a hint (SPEC §8). With 7 trusted keys
 and one signature: 65 µs instead of 444 µs per record.
 
+### Removed
+
+**nekton no longer reads or migrates the per-claim store layout of 0.2** (core round: no backwards
+compatibility before 1.0). Stores written before subnekton files (`objects/<algo>/<hash>.json`, one
+file per claim) were read and migrated on the first write that touched a record. That code is gone. A
+store that still holds such a file is refused when opened, with the file named - never read as though
+the records were absent. Re-create it from its envelopes (`nekton add`), or read it with nekton 0.3. A
+stray `.json` that is not a record file does not block a store.
+
 ### Added
 
 **Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
