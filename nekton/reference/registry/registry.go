@@ -1087,7 +1087,6 @@ func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
 			"see the warning above for which check it failed", id)
 	}
 	r.feed = append(r.feed, rec)
-	r.advanceRootHead(id, st)
 	// This record may be the dependency something already held has been waiting for. `Add` used to
 	// leave those alone, so within ONE process adding a seed did not resolve the scoped claim that
 	// named it:

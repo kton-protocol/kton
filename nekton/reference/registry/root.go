@@ -67,34 +67,56 @@ func (r *Registry) RootHead() string {
 	return r.root.Root
 }
 
-// SetRoot records id as this store's root. id must be a seed this store holds, and the store must not
-// have a root already: a store has one root for its whole life, and choosing another would orphan the
-// chain it has. It is called on the caller's own write path only (nekton init, or the first write
-// that needs a root), never on mirror, sync or ingest - a kernel does not sign or decide on ingest.
-func (r *Registry) SetRoot(id string) error {
-	if r.root.Root != "" {
-		if r.root.Root == id {
-			return nil
-		}
+// SetRoot records id as this store's root, continuing from head: a root entry of the chain (or "" for
+// the only head there is). id must be a seed this store holds, and the store must not have another
+// root: a store has one root for its whole life. It is called on the caller's own write path only
+// (nekton init, or adopting a copy), never on mirror, sync or ingest - a kernel does not decide on
+// ingest.
+//
+// A store that adopts a root it already holds entries of (a clone, a restored copy) continues from
+// the chain's tip, not from the seed: starting at the seed would fork its own history. If the root is
+// already forked there is no one tip; SetRoot then refuses and names the heads, and the caller says
+// which branch is this store's (#259 review R4).
+func (r *Registry) SetRoot(id, head string) error {
+	if r.root.Root != "" && r.root.Root != id {
 		return fmt.Errorf("this store already has a root (%s); a store keeps one root", r.root.Root)
 	}
 	if !r.seeds[id] {
 		return fmt.Errorf("%s is not a seed this store holds, so it cannot be its root", id)
 	}
-	r.root = rootState{Root: id}
-	// A store that adopts a root it already holds entries of (a clone, a restored copy) continues
-	// from the chain's tip, not from the seed: starting at the seed would fork its own history.
-	if heads, n, _ := r.Heads(id); n > 0 && len(heads) == 1 {
-		r.root.Head = heads[0]
+	heads, n, _ := r.Heads(id)
+	switch {
+	case head != "":
+		if head != id && !r.inScope[id][head] {
+			return fmt.Errorf("%s is not an entry of root %s", head, id)
+		}
+	case n > 0 && len(heads) > 1:
+		return fmt.Errorf("root %s is forked (heads %v): say which one this store continues from", id, heads)
+	case n > 0:
+		head = heads[0]
 	}
+	if head == id {
+		head = ""
+	}
+	r.root = rootState{Root: id, Head: head}
 	return r.writeRoot()
 }
 
-// advanceRootHead moves the local head when a newly accepted root entry names the current head as its
-// prev. An entry that names an older point (another copy of this store wrote it) does not move the
-// head: it is a fork, reported by Forks, and neither branch is invalid (SPEC §11).
-func (r *Registry) advanceRootHead(id string, st *claim.Statement) {
-	if r.root.Root == "" || st == nil || st.IsSeed() {
+// ownAppend moves the local head to id when id is a root entry that names the current head as its
+// prev. It is called on this store's own write path only (Write, RegisterSubnekton), never from Add:
+// an entry that arrives by add or mirror - from a copy of this store, or signed by anyone - must not
+// become the point this store continues from (#259 review R1). Such an entry is a fork or off-chain,
+// and reported as that.
+func (r *Registry) ownAppend(id string) {
+	if r.root.Root == "" {
+		return
+	}
+	rec, ok := r.claimByID[id]
+	if !ok {
+		return
+	}
+	st, _, err := claim.ParseEnvelope(rec.Envelope)
+	if err != nil || st.IsSeed() {
 		return
 	}
 	p, err := st.ParsePredicate()
@@ -105,6 +127,60 @@ func (r *Registry) advanceRootHead(id string, st *claim.Statement) {
 	if err := r.writeRoot(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not record the root head %s: %v\n", id, err)
 	}
+}
+
+// Chain is this store's own root chain: the entries from the root seed to the local head, oldest
+// first, following prev. Only these are what this store said and opened (#259 review R3): anyone can
+// sign an entry naming a root, and a copy of the store writes its own, but none of those is on the
+// path from this store's head, because the head moves only on this store's own writes.
+func (r *Registry) Chain() []string {
+	if r.root.Root == "" {
+		return nil
+	}
+	var back []string
+	seen := map[string]bool{}
+	for cur := r.RootHead(); cur != r.root.Root && cur != "" && !seen[cur]; {
+		seen[cur] = true
+		rec, ok := r.claimByID[cur]
+		if !ok {
+			break // a missing middle: Unresolved reports it
+		}
+		st, _, err := claim.ParseEnvelope(rec.Envelope)
+		if err != nil {
+			break
+		}
+		p, err := st.ParsePredicate()
+		if err != nil || p == nil {
+			break
+		}
+		back = append(back, cur)
+		cur = p.Prev
+	}
+	for i, j := 0, len(back)-1; i < j; i, j = i+1, j-1 {
+		back[i], back[j] = back[j], back[i]
+	}
+	return back
+}
+
+// OffChain returns the entries that name this store's root but are not on its own chain: forks from a
+// copy of the store, or entries anyone signed (sorted). They are reported, never counted as this
+// store's (SPEC §7.4).
+func (r *Registry) OffChain() []string {
+	if r.root.Root == "" {
+		return nil
+	}
+	on := map[string]bool{}
+	for _, id := range r.Chain() {
+		on[id] = true
+	}
+	var out []string
+	for id := range r.inScope[r.root.Root] {
+		if !on[id] {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Forks returns, for one scope, every point that more than one in-scope claim names as its prev,
@@ -138,13 +214,14 @@ func (r *Registry) Forks(scope string) map[string][]string {
 }
 
 // Registered returns the subnekton seed ids this store's root registers (RegistersPredicate entries
-// in the root scope), sorted, each with whether the seed itself is present.
+// on its own Chain - not every registers entry anyone filed under the root, #259 review R3), each with
+// whether the seed itself is present.
 func (r *Registry) Registered() map[string]bool {
 	out := map[string]bool{}
 	if r.root.Root == "" {
 		return out
 	}
-	for id := range r.inScope[r.root.Root] {
+	for _, id := range r.Chain() {
 		rec, ok := r.claimByID[id]
 		if !ok {
 			continue

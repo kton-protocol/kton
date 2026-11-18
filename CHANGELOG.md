@@ -13,9 +13,13 @@ the entry this store appended last), so removal or reordering is detectable as i
 without `--parent` names the root as parent and is registered in the root chain (`nk:registers`).
 `nekton verify --root [--json]` reports the chain, the registered subnektons and whether each is held,
 and forks: two copies of a store that both keep writing fork the root, which is reported and never
-rejected; a mirrored entry does not move the local head. Ingest, `add` of signed envelopes and mirror
+rejected; a mirrored entry does not move the local head. Only the store's own chain counts - the path
+from the entry it appended last back to the root seed: the head moves only on the store's own writes
+(`Write`, `RegisterSubnekton`), never on `add` or mirror, and entries anyone else filed under the root
+are reported as off-chain. The root seed's scope name is `root/<random>`, so two stores never share a
+root (`nekton init --name` pins it for a corpus that must rebuild to the same ids). Ingest, `add` of signed envelopes and mirror
 never create or extend a root. Library: `Registry.Write` (the same write path for linked writers such as the cockpit's say: `Place`,
-sign, `Add`, register), `Place`, `CreateRoot`, `RegisterSubnekton`, `Root`, `RootHead`, `SetRoot`, `Forks`,
+sign, `Add`, register), `Place`, `CreateRoot`, `RegisterSubnekton`, `Root`, `RootHead`, `SetRoot(id, head)`, `Chain`, `OffChain`, `Forks`,
 `Registered`.
 SPEC §7.4 (Root, Fork), vocabulary `nk:registers`.
 
