@@ -2,7 +2,42 @@
 
 ## Unreleased
 
+### Added
+
+**Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
+Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
+step a person did (`ref` names the procedure, never the person), and `llm`, a step a language-model agent
+did (`ref` = the model or agent id where known). `llm` covers the model call; `network` is added only if
+the step also read other remote state. Vocabulary only: the kernel acts on the presence of `conditions`.
+
+**A foton's protocol descriptor is in the RDF** ([#240](https://github.com/kton-protocol/kton/issues/240)).
+`rdf.Record` and `plankton export --rdf` carry the descriptor whole, as one literal in canonical JSON,
+`nk:protocolDescriptor`, so a question like "steps whose command matches a pattern" can be asked with
+`REGEX` or `CONTAINS`. It is covered (it hashes to `protocol.ref`); the kernel does not interpret it. A
+foton without a descriptor carries none.
+
+**A scope seed's parent is projected** ([#239](https://github.com/kton-protocol/kton/issues/239)). A seed
+that names its parent (`nekton seed --parent`) now projects `<urn:nekton:scope:<name>> nk:parent <parent>`
+in its assertion: the parent seed's IRI, or the parent URI. A study > project > programme hierarchy is
+then walkable in SPARQL. Applies to the TriG export, the signed nanopub quads and `nanopub.Record`. A
+seed with a parent gets a different Trusty URI; seeds without one are unchanged.
+
+**`nanopub.RegistryReport` names what a registry projection skipped** ([#245](https://github.com/kton-protocol/kton/issues/245)). `nanopub.Registry` dropped a
+record it could not project without a trace, so a triple store loaded from it was incomplete and
+nobody knew. `RegistryReport` returns the same TriG and count, plus one `Skipped{ClaimID, Reason}` per
+record left out. `Registry` keeps its signature.
+
 ### Fixed
+
+**A claim about a `urn:`, `tag:`, `did:` or `mailto:` subject projects to RDF** (#245). The nanopub
+projection took a value as an IRI only if it began with `sha256:` or contained `://`, so a subject
+like `urn:werk:x` became a literal in subject position: invalid RDF. `nanopub.Record` refused the claim
+(`"urn:werk:x" is not an absolute IRI`), and an index that skips refused records lost it. A subject is a
+Ref (SPEC §3), so every absolute IRI (RFC 3987: a scheme starting with a letter, `:`, a non-empty rest,
+no space or forbidden character) is now an IRI, after the `sha256:` mapping. `Registry` skips a claim
+whose subject is still not one instead of emitting a document a parser rejects. Object field values keep
+their rule: they are untyped text, and `Note:foo` is an absolute IRI by syntax alone. The Trusty URI of
+a nanopublication changes only for a subject that was not `://`-shaped, whose quads were invalid before.
 
 **nekton: a store being created could not be opened in parallel** ([#251](https://github.com/kton-protocol/kton/issues/251)).
 The `objects/.format` marker was written with `os.WriteFile`, which creates the file empty first, so a
