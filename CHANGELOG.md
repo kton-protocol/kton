@@ -10,6 +10,12 @@ step a person did (`ref` names the procedure, never the person), and `llm`, a st
 did (`ref` = the model or agent id where known). `llm` covers the model call; `network` is added only if
 the step also read other remote state. Vocabulary only: the kernel acts on the presence of `conditions`.
 
+**A foton's protocol descriptor is in the RDF** ([#240](https://github.com/kton-protocol/kton/issues/240)).
+`rdf.Record` and `plankton export --rdf` carry the descriptor whole, as one literal in canonical JSON,
+`nk:protocolDescriptor`, so a question like "steps whose command matches a pattern" can be asked with
+`REGEX` or `CONTAINS`. It is covered (it hashes to `protocol.ref`); the kernel does not interpret it. A
+foton without a descriptor carries none.
+
 ## 0.3.0 — released 2026-10-23
 
 ### Added
