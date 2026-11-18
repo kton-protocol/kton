@@ -5,6 +5,7 @@ package main
 // Accepts a foton envelope file OR a foton id (looked up in the registry).
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"kton.dev/plankton/core"
+	"kton.dev/plankton/foton"
 	"kton.dev/plankton/registry"
 )
 
@@ -26,15 +28,29 @@ func locators(uris []string) string {
 func show(args []string) error {
 	asJSON := false
 	var pos []string
-	for _, a := range args {
+	var trusted []ed25519.PublicKey
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		if a == "--json" {
 			asJSON = true
+			continue
+		}
+		if a == "--trust-keys" {
+			if i+1 >= len(args) {
+				return fmt.Errorf("--trust-keys expects a directory of *.pub keys")
+			}
+			i++
+			ks, err := loadTrustKeys(args[i])
+			if err != nil {
+				return err
+			}
+			trusted = ks
 			continue
 		}
 		pos = append(pos, a)
 	}
 	if len(pos) != 1 {
-		return fmt.Errorf("usage: plankton show <foton.dsse.json | sha256:fotonId> [--json]")
+		return fmt.Errorf("usage: plankton show <foton.dsse.json | sha256:fotonId> [--json] [--trust-keys D]")
 	}
 	arg := pos[0]
 	var env core.Envelope
@@ -78,16 +94,54 @@ func show(args []string) error {
 		return fmt.Errorf("%q is not a foton (%w)", arg, err)
 	}
 	id, _ := f.FotonID()
-
-	if asJSON {
-		return showJSON(id, f, env)
+	c, err := carriedFacts(id, f, env, trusted)
+	if err != nil {
+		return err
 	}
-	return showHuman(id, f, env)
+	if asJSON {
+		return showJSON(id, f, env, c)
+	}
+	return showHuman(id, f, env, c)
+}
+
+// carried is what producers said about their own run of this record beside it (#225): the concrete
+// environment (kton-env/v1) and where their copies live (kton-locator/v1), as verification material,
+// read only against trusted keys - a producer's account, verified as that producer's.
+type carried struct {
+	Checked      bool            `json:"checked"` // false without --trust-keys: nothing was read
+	Environments []foton.RanIn   `json:"environments"`
+	Locators     []foton.Located `json:"locators"`
+}
+
+func carriedFacts(id string, f *core.Foton, env core.Envelope, trusted []ed25519.PublicKey) (carried, error) {
+	c := carried{Environments: []foton.RanIn{}, Locators: []foton.Located{}}
+	if len(trusted) == 0 {
+		return c, nil
+	}
+	c.Checked = true
+	r, err := registry.OpenUnion(dir()) // read only: show never creates a store
+	if err != nil {
+		return c, err
+	}
+	for _, m := range r.Material(id) {
+		envs, err := foton.ReadEnv(m.Scheme, m.Material, env, trusted)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: env material on %s not readable: %v\n", id, err)
+		} else if envs != nil {
+			c.Environments = append(c.Environments, *envs)
+		}
+		locs, err := foton.ReadLocators(m.Scheme, m.Material, *f, trusted)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: locator material on %s not readable: %v\n", id, err)
+		}
+		c.Locators = append(c.Locators, locs...)
+	}
+	return c, nil
 }
 
 // showHuman renders one foton for a person. Split out from show() so both renderings are
 // testable and neither can quietly drift from the other.
-func showHuman(id string, f *core.Foton, env core.Envelope) error {
+func showHuman(id string, f *core.Foton, env core.Envelope, c carried) error {
 
 	fmt.Printf("foton:   %s\n", id)
 	fmt.Printf("kind:    %s\n", f.Protocol.Kind)
@@ -138,13 +192,29 @@ func showHuman(id string, f *core.Foton, env core.Envelope) error {
 	if len(env.Signatures) > 0 {
 		fmt.Printf("declared keyid: %s (unverified envelope field - run `plankton verify` with the signer's key)\n", env.Signatures[0].KeyID)
 	}
+	if c.Checked {
+		envs := map[string]bool{}
+		for _, e := range c.Environments {
+			fmt.Printf("ran in:         %s  (said by %s, verified)\n", e.EnvRef, e.Signer)
+			envs[e.EnvRef] = true
+		}
+		if len(envs) > 1 {
+			fmt.Printf("                %d different environments: the producers ran this in different images\n", len(envs))
+		}
+		for _, l := range c.Locators {
+			fmt.Printf("located:        %s -> %s  (said by %s, verified)\n", l.Path, strings.Join(l.URI, ", "), l.Signer)
+		}
+		if len(c.Environments) == 0 && len(c.Locators) == 0 {
+			fmt.Printf("carried:        no environment or locator material from a trusted key\n")
+		}
+	}
 	return nil
 }
 
 // showJSON emits the same foton structurally, so a consumer does not have to parse the prose above
 // (the argument #39 made for `nekton about`/`by`). The descriptor is emitted whole - that is the
 // point of #54: no field of it can be invisible here, because none of them are named.
-func showJSON(id string, f *core.Foton, env core.Envelope) error {
+func showJSON(id string, f *core.Foton, env core.Envelope, c carried) error {
 	type ref struct {
 		Path string   `json:"path,omitempty"`
 		Hash string   `json:"hash,omitempty"`
@@ -173,6 +243,8 @@ func showJSON(id string, f *core.Foton, env core.Envelope) error {
 		// was parsing the store - which is what an abstraction over the layout exists to prevent,
 		// and what #41 showed fails silently (#85). Symmetric with `nekton about --json`.
 		"envelope": env,
+		// producers' own accounts beside the record, verified against --trust-keys (#225)
+		"carried": c,
 	}, "", "  ")
 	if err != nil {
 		return err
