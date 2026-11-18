@@ -245,15 +245,14 @@ func TestReplayDropsOrphan(t *testing.T) {
 		},
 	}
 	env, id := signHelper(t, priv, orphan)
-	// Write it directly as an object file (simulating a git-merged/planted object).
+	// Write it directly as a line of a subnekton file (simulating a git-merged/planted record).
 	of := map[string]any{"claimId": id, "envelope": env}
-	b, _ := json.MarshalIndent(of, "", "  ")
-	hexid := id[len("sha256:"):]
-	odir := filepath.Join(dir, "objects", "sha256")
+	b, _ := json.Marshal(of)
+	odir := filepath.Join(dir, "objects", "scope")
 	if err := os.MkdirAll(odir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(odir, hexid+".json"), b, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(odir, "unknownscope.nekton.jsonl"), append(b, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	r, err := registry.Open(dir)

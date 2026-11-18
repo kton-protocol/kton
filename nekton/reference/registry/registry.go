@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -114,20 +115,6 @@ func withLockFile(lp string, fn func() error) error {
 	return fmt.Errorf("could not acquire the object write lock (%s)", lp)
 }
 
-// readLegacyObject reads a record an older build left at the flat objects/<algo>/<hash>.json path,
-// so a co-signature union and the migrate-on-touch in persistClaim can still find it.
-func (r *Registry) readLegacyObject(id string) (core.Envelope, bool) {
-	b, err := os.ReadFile(legacyObjectPath(r.objectsDir, id))
-	if err != nil {
-		return core.Envelope{}, false
-	}
-	var of objectFile
-	if json.Unmarshal(b, &of) != nil {
-		return core.Envelope{}, false
-	}
-	return of.Envelope, true
-}
-
 // persistClaim files a claim into its subnekton as a LOCKED on-disk read-modify-write: under the
 // write lock it unions the incoming signatures with whatever that subnekton already holds (possibly
 // just written by another process), then appends a new record or rewrites the file in place. This
@@ -186,22 +173,7 @@ func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envel
 			// Add already do for a twin.
 			return appendSubnekton(path, objectFile{ClaimID: id, Envelope: env})
 		}
-		// Not in the subnekton yet. A record an older build left at the flat path is the same claim:
-		// union with it and migrate it in, so no co-signature is lost crossing the layouts.
-		// Same rule for a record an older build left at the flat path: migrate it only if it IS this
-		// claim. A file named by the target that holds something else is not a co-signature to
-		// preserve, and carrying it across the layouts would plant it in the new one.
-		if disk, ok := r.readLegacyObject(id); ok && derivesClaimID(disk, id) {
-			m, _ := unionSignatures(disk, env)
-			merged = m
-		}
-		if err := appendSubnekton(path, objectFile{ClaimID: id, Envelope: merged}); err != nil {
-			return err
-		}
-		if lp := legacyObjectPath(r.objectsDir, id); lp != "" {
-			os.Remove(lp) // no-op unless this was a migration
-		}
-		return nil
+		return appendSubnekton(path, objectFile{ClaimID: id, Envelope: merged})
 	})
 	return merged, err
 }
@@ -1378,13 +1350,10 @@ func scopedPath(objectsDir, scope, suffix string) (string, error) {
 	return path, nil
 }
 
-// legacyObjectPath is the per-claim path every record had before the store gained subnekton files.
-// Reads still resolve it (openAt walks both forms), and persistClaim migrates a record in the first
-// time a write touches it.
-func legacyObjectPath(objectsDir, claimID string) string {
-	algo, h := splitID(claimID)
-	return filepath.Join(objectsDir, algo, h+".json")
-}
+// legacyLayout matches a record file of the per-claim layout stores had before 0.3
+// (objects/<algo>/<64 hex>.json). kton 0.4 neither reads nor migrates it (no backwards compatibility
+// before 1.0); readStore refuses a store that still has one rather than show it as emptier than it is.
+var legacyLayout = regexp.MustCompile(`(^|/)[a-z0-9]+/[0-9a-f]{64}\.json$`)
 
 // readSubnekton parses a subnekton file into its records. It is deliberately TOLERANT: one corrupt
 // or half-written line must not disable reads over every other record in the scope, so a bad line is
@@ -1590,9 +1559,9 @@ func (r *Registry) RawRecords() []Record {
 	return out
 }
 
-// readStore reads EVERY record a store holds, in both forms: the nekton files
-// (objects/**/*.nekton.jsonl, one record per line) and the legacy per-claim objects
-// (objects/<algo>/<hash>.json) an older build wrote. It is the ONE place that knows the on-disk
+// readStore reads EVERY record a store holds: the nekton files (objects/**/*.nekton.jsonl, one record
+// per line). A store that still holds records in the pre-0.3 per-claim layout is refused, not read
+// as though it were smaller (no backwards compatibility before 1.0). It is the ONE place that knows the on-disk
 // form - openAt and RawRecords both go through it, so a caller can never drift from the layout and
 // silently read half a store. Order is stable (sorted paths, then file order); it carries no
 // meaning, since a scope's order is its `prev` chain.
@@ -1609,33 +1578,24 @@ func readStore(objectsDir string) (recs []Record, hardErr error) {
 		case d.IsDir():
 		case strings.HasSuffix(p, ".nekton.jsonl"):
 			nektons = append(nektons, p)
-		case strings.HasSuffix(p, ".json"):
+		case legacyLayout.MatchString(filepath.ToSlash(p)):
 			legacy = append(legacy, p)
 		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
+	if len(legacy) > 0 {
+		return nil, fmt.Errorf("nekton store %s holds %d record(s) in the per-claim layout of nekton 0.2 "+
+			"(e.g. %s). nekton 0.4 does not read or migrate that layout; reading on would show the store "+
+			"as emptier than it is. Re-create the store from its envelopes (nekton add), or read it with "+
+			"nekton 0.3", objectsDir, len(legacy), legacy[0])
+	}
 	sort.Strings(nektons)
-	sort.Strings(legacy)
 	for _, p := range nektons {
 		for _, of := range readSubnekton(p) {
 			recs = append(recs, Record{ClaimID: of.ClaimID, Envelope: of.Envelope})
 		}
-	}
-	for _, p := range legacy {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		var of objectFile
-		if err := json.Unmarshal(b, &of); err != nil {
-			// A single corrupt object MUST NOT disable reads over every other (good) record - one
-			// bad byte would otherwise be a store-wide DoS. Skip it, name it on stderr, keep going.
-			fmt.Fprintf(os.Stderr, "warning: skipping unreadable record %s: %v\n", p, err)
-			continue
-		}
-		recs = append(recs, Record{ClaimID: of.ClaimID, Envelope: of.Envelope})
 	}
 	return recs, nil
 }
@@ -1905,4 +1865,27 @@ func (r *Registry) ClaimIDs() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// CarryMaterial copies the verification material src holds about subject into this registry,
+// skipping what is already held (#225). Mirror calls it for every record it copies, so evidence bound
+// to a record (SPEC §8.1) travels with it like a co-signature does. Material is never read or judged
+// here: an unknown scheme is carried as it is.
+func (r *Registry) CarryMaterial(src *Registry, subject string) (int, error) {
+	have := map[VerificationMaterial]bool{}
+	for _, m := range r.Material(subject) {
+		have[m] = true
+	}
+	n := 0
+	for _, m := range src.Material(subject) {
+		if have[m] {
+			continue
+		}
+		if err := r.AttachMaterial(m); err != nil {
+			return n, err
+		}
+		have[m] = true
+		n++
+	}
+	return n, nil
 }

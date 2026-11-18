@@ -155,11 +155,11 @@ func Attribution(r *registry.Registry, fotonID string, keys []ed25519.PublicKey)
 		return nil, fmt.Errorf("no foton %s in the registry", id)
 	}
 	out := map[string][]byte{}
-	for _, pub := range keys {
-		if ok, err := env.Verify(pub); !ok || err != nil {
+	for i, ok := range core.VerifiedKeys(env, keys) {
+		if !ok {
 			continue
 		}
-		kid := core.KeyIDHex(pub)
+		kid := core.KeyIDHex(keys[i])
 		g := AttributionGraph(id, kid)
 		var q nquads
 		q.add(iriOf(id), rdfNsProv+"wasAttributedTo", iri(rdfNsAgent+kid), g)
