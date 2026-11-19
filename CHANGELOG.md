@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 — unreleased (tag pending)
+## 0.4.0 — released 2026-11-19
 
 ### Upgrading from 0.3
 
