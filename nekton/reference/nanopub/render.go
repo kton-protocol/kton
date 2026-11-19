@@ -148,6 +148,10 @@ func (c *trigCtx) fieldIRI(key string) string {
 // hashRef renders a "sha256:<hex>" value as pk:<hex>; a URI as its curie; anything else as a literal.
 func (c *trigCtx) hashRef(v string) string {
 	if strings.HasPrefix(v, "sha256:") {
+		// one content IRI (SPEC §14): the hex in lower case, whatever case the claim carries (#262 O1)
+		if n, ok := core.NormalizeContentHash(v); ok {
+			v = n
+		}
 		return c.curie(c.prefixes["pk"] + strings.TrimPrefix(v, "sha256:"))
 	}
 	if strings.Contains(v, "://") {

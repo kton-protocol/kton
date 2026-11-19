@@ -69,6 +69,57 @@ environments. A `reuse` hit from a foton/v1 record that declares an environment 
 `qualification: "required"` and `envClass`, so the SPEC §6.5 obligation - a trusted qualifies-as claim
 for the concrete environment - is on the answer.
 
+**Writing a claim no longer opens the whole store** ([#248](https://github.com/kton-protocol/kton/issues/248)).
+`nekton claim/annotate/seed --add` opened the registry first - read, parsed and indexed every
+subnekton - and then appended one line: about 1 s at 1k claims, 72-126 s at 100k. A write registry
+(`registry.OpenForWrite`) loads only the scope file of each claim it adds: everything `Add` needs for
+one claim (its twin, its scope's seed, its prev) is there, because the scope is part of the signed
+payload. `registry.WriteTo(dir, spec, key)` is the whole write path on it, and the CLI uses it. The
+result on disk is byte-identical to a full Open + Add (test); a record on disk without a position yet
+(an unopened merge) makes the write fall back to a full Open, so numbering stays as a full Open gives
+it. A write registry loads every scope file the write touches before it stores
+anything, so that fallback never lands between storing a seed and registering it, and it refuses a
+0.2 per-claim store exactly as Open does. Measured: one write beside 5000 claims, 30 ms instead of 756 ms.
+
+**The root nekton: a store's unscoped claims are chained, and its subnektons registered** ([#213](https://github.com/kton-protocol/kton/issues/213)).
+The root of a nekton store was a bag: unscoped claims had no signed order, and a mirror or copy that
+dropped one went unnoticed. Now every store has a root, an ordinary scope opened by a seed signed by
+whoever creates the store (`nekton init --sign key`, or the first `--add` write into a store without
+one). A claim written with `--add` and no `--scope` is chained under the root (`scope` = root, `prev` =
+the entry this store appended last), so removal or reordering is detectable as in any scope. A new seed
+without `--parent` names the root as parent and is registered in the root chain (`nk:registers`).
+`nekton verify --root [--json]` reports the chain, the registered subnektons and whether each is held,
+and forks: two copies of a store that both keep writing fork the root, which is reported and never
+rejected; a mirrored entry does not move the local head. Only the store's own chain counts - the path
+from the entry it appended last back to the root seed: the head moves only on the store's own writes
+(`Write`, `RegisterSubnekton`), never on `add` or mirror, and entries anyone else filed under the root
+are reported as off-chain. The root seed's scope name is `root/<random>`, so two stores never share a
+root (`nekton init --name` pins it for a corpus that must rebuild to the same ids). Ingest, `add` of signed envelopes and mirror
+never create or extend a root. Library: `Registry.Write` (the same write path for linked writers such as the cockpit's say: `Place`,
+sign, `Add`, register), `Place`, `CreateRoot`, `RegisterSubnekton`, `Root`, `RootHead`, `SetRoot(id, head)`, `Chain`, `OffChain`, `Forks`,
+`Registered`.
+SPEC §7.4 (Root, Fork), vocabulary `nk:registers`.
+
+**Diffs: `Position.Held` and `rdf.RecordOf`** ([#260](https://github.com/kton-protocol/kton/issues/260)).
+`Position` (#233) now also carries `held`: the XOR of sha256(key) over every distinct record key on disk
+(a plankton object file's name, a nekton line's `claimId`), computed without opening the store. A
+consumer that follows a store by `Records(since)` takes `held` from the `Position` it read with its last
+full read as its baseline, and adds every new key with `core.HeldWith` and `registry.HeldKey`; if the store's `held` differs from it, something was removed from outside (a git
+checkout or merge: the kernel never removes), and the consumer reads again from 0. Twins and
+co-signatures share a key and never change it. A key counts only where the content proves it (a line whose payload
+hashes to its claimId, an object file whose record derives its name). `held` detects loss, not a
+forger with write access to the store: XOR is linear. `rdf.RecordOf(envelope)` gives a foton's per-record quads
+from the envelope alone, as `nanopub.Record` already does for claims; `registry.ParseFotonEnvelope`
+decodes a foton envelope as ingest does.
+
+**One content IRI, and claims about claims, written down** (core round). SPEC §14 states that every RDF
+projection names a content address `sha256:<hex>` (a file, a foton, a claim) by the one IRI
+`https://kton.dev/o/<hex>` with the hex in lower case (the nanopub faces copied an upper-case address
+as given, so `sha256:ABAB…` and `sha256:abab…` were two IRIs); a projection format's own names (Trusty URI, graph names) are bound to it by
+`prov:wasDerivedFrom`. A claim id as a subject (§7.1) already worked; a test now holds that a review
+of a claim is found by `About(<claim id>)` and that its RDF subject is the IRI the reviewed claim's
+nanopub derives from.
+
 **Condition kinds `manual` and `llm`** ([#249](https://github.com/kton-protocol/kton/issues/249)).
 Two more conventional `kind`s for a conditional foton (SPEC §6.2, `spec/vocabulary.md` §2): `manual`, a
 step a person did (`ref` names the procedure, never the person), and `llm`, a step a language-model agent

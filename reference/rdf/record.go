@@ -54,6 +54,24 @@ func Record(r *registry.Registry, fotonID string) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("no foton %s in the registry", id)
 	}
+	return fotonQuads(id, f), nil
+}
+
+// RecordOf returns the same quads as Record, from a signed envelope alone (#260): for a consumer that
+// applies Records(since) and holds the envelope, not an opened registry. The envelope must be a foton;
+// its signature is not checked here (attribution is Attribution's business, as for Record).
+func RecordOf(env core.Envelope) ([]byte, error) {
+	f, id, err := registry.ParseFotonEnvelope(env)
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return nil, fmt.Errorf("the envelope is not a foton")
+	}
+	return fotonQuads(id, f), nil
+}
+
+func fotonQuads(id string, f *core.Foton) []byte {
 	act, g := iriOf(id), RecordGraph(id)
 	var q nquads
 	q.add(act, rdfNsRDF+"type", iri(rdfNsProv+"Activity"), g)
@@ -107,7 +125,7 @@ func Record(r *registry.Registry, fotonID string) ([]byte, error) {
 			}
 		}
 	}
-	return q.bytes(), nil
+	return q.bytes()
 }
 
 // Records returns the own quads of several fotons as one canonical N-Quads document, for a cold
