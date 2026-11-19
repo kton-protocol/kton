@@ -12,18 +12,18 @@ which made 70 dead permalinks look like evidence a reader could follow. They are
 hashes so the trail survives for anyone holding the archive, and so nothing here claims to be
 checkable that is not.*
 
-## Posture: **31 closed · 3 open · 2 accepted boundary**, of 36 recorded attacks → NOT SECURE
+## Posture: **34 closed · 3 open · 2 accepted boundary**, of 39 recorded attacks → NOT SECURE
 
 *These numbers are derived from what is in this directory, not carried forward by hand. `ls
-attacks/*.sh` is 36; `check.sh` prints its own coverage line every run. The previous posture said
+attacks/*.sh` is 39; `check.sh` prints its own coverage line every run. The previous posture said
 "27/29 spectrum members fulfilled · 27 closed · 2 open" over a Closed table with 24 rows, and
 "10 of the 28 PoCs are executable" when 17 are and `check.sh` runs 16 - a report overclaiming its
 own coverage, which is the finding this suite keeps making about everything else.*
 
-**21 of the 36 PoCs are executable**; `check.sh` runs **20** of them here (the 21st,
+**24 of the 39 PoCs are executable**; `check.sh` runs **23** of them here (the 24th,
 `screenshot-viewer-labels`, needs a kton-examples checkout passed as `$1`). The remaining 15 carry no
 verdict: they are records of a finding, reproduced in prose below, and they run nowhere. A green gate
-means those 20 held - not that the suite is complete.
+means those 23 held - not that the suite is complete.
 
 Each attack was recorded as a signed `plankton` foton pinning its PoC (`attacks/<id>.sh`), with theory and
 vulnerable/fixed commits as signed `nekton` claims. Those claims and the `keys/` directory are not in this
@@ -49,6 +49,9 @@ repository, so `nekton verify` cannot be run against them from here - `redteam.p
 | `unvalidated-timestamp` | 1 |
 | `spectrum-no-existence-check` | 1 |
 | `federation-not-order-independent` | 2 |
+| `write-path-trusts-ingested-entry` | 1 |
+| `partial-write-on-fallback` | 1 |
+| `digest-counts-unproven-key` | 1 |
 | `canonicalization` | 1 |
 | `read-face-brittle` | 1 |
 | `witness-not-fully-verified` | 1 |
@@ -70,6 +73,9 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 | `canon-bigint` | RED | `canonicalization` | `24dfc6b` | `1e667f3` |
 | `conditional-merge` | RED | `mark-dropped-on-decode` | `93013f2` | #212 |
 | `envref-collision` | ORANGE | `identity-pin-dropped-on-a-weak-condition` | `4985b23` (#223 before review) | #211 |
+| `root-head-foreign` | ORANGE | `write-path-trusts-ingested-entry` | `ac2121f` (#259 before review) | #259 |
+| `seed-unregistered-fallback` | ORANGE | `partial-write-on-fallback` | `f5b5c4f` (#269 before review) | #269 |
+| `held-unproven-key` | ORANGE | `digest-counts-unproven-key` | `6898ea0` (#261 before review) | #261 |
 | `co-signer-drop` | ORANGE | `federation-not-order-independent` | `0aa44b8` | `b625b1f` |
 | `concurrency-races` | ORANGE | `concurrency-nonatomic` | `a687723` | `af3cefa` |
 | `corrupt-poisons-read` | ORANGE | `read-face-brittle` | `ed7a008` | `056b87a` |
@@ -350,6 +356,27 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 - **vulnerable at:** `4985b23` (#223 before review, never on main)
 - **fixed at (reproduction now fails):** #211
 - **PoC:** [`attacks/envref-collision.sh`](attacks/envref-collision.sh)
+
+### `root-head-foreign` — ORANGE · ✅ closed
+- **class:** `write-path-trusts-ingested-entry`
+- **theory:** A store's root chain is the signed, ordered list of what this store said and opened only if the entry it continues from is one it wrote itself. As first proposed, `Add` moved the local root head whenever an accepted entry named the head as its prev, including an entry signed by any key and brought in by `nekton add` or mirror. The owner's next own write then named the stranger's entry as its prev, and `verify --root` counted a stranger's `nk:registers` as this store's. Fixed: the head moves only on the store's own writes; entries that name the root but arrive by ingest are reported off-chain and never counted (SPEC §7.4).
+- **vulnerable at:** `ac2121f` (#259 before review)
+- **fixed at (reproduction now fails):** #259 (`234c89e`)
+- **PoC:** [`attacks/root-head-foreign.sh`](attacks/root-head-foreign.sh)
+
+### `seed-unregistered-fallback` — ORANGE · ✅ closed
+- **class:** `partial-write-on-fallback`
+- **theory:** The write registry reads only the scope files a write touches and steps aside to a full Open when it meets a record `.seq` does not number (a merged store). It could step aside after storing a new seed and before registering it in the root; the full-Open retry found the seed present and skipped the registration. The seed stayed unlisted, and the CLI said "already present" with exit 0. Fixed: every scope a write touches is loaded before anything is stored, and a held but unlisted seed is registered, new or not.
+- **vulnerable at:** `f5b5c4f` (#269 before review)
+- **fixed at (reproduction now fails):** #269 (`3eec10c`)
+- **PoC:** [`attacks/seed-unregistered-fallback.sh`](attacks/seed-unregistered-fallback.sh)
+
+### `held-unproven-key` — ORANGE · ✅ closed
+- **class:** `digest-counts-unproven-key`
+- **theory:** `Position.Held` lets a consumer that follows a store notice records removed from outside. It XORed sha256 over keys read from disk unverified, so a line that is no record counted although `Records` never delivers it, and, XOR being linear, a removal could be cancelled by appending claimId-only lines chosen by Gaussian elimination. Fixed: a key counts only where the content proves it. Boundary: Held detects loss, not a forger who can write the store; lines with a hash-valid payload still count, which the doc states.
+- **vulnerable at:** `6898ea0` (#261 before review)
+- **fixed at (reproduction now fails):** #261 (`045f477`)
+- **PoC:** [`attacks/held-unproven-key.sh`](attacks/held-unproven-key.sh)
 
 ### `conditional-merge` — RED · ✅ closed
 - **class:** `mark-dropped-on-decode`
