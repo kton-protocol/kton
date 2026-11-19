@@ -107,18 +107,23 @@ func (r *Registry) Place(spec *claim.Spec, priv ed25519.PrivateKey) (createdRoot
 }
 
 // RegisterSubnekton appends the root entry that registers a seed this store opened (nk:registers).
-func (r *Registry) RegisterSubnekton(seedID string, priv ed25519.PrivateKey, by string) (string, error) {
+// when is the seed's own time, so a corpus written with fixed times rebuilds to the same root chain;
+// "" means now, as for CreateRoot.
+func (r *Registry) RegisterSubnekton(seedID string, priv ed25519.PrivateKey, by, when string) (string, error) {
 	if r.root.Root == "" {
 		return "", fmt.Errorf("this store has no root to register %s in", seedID)
 	}
 	if by == "" {
 		by = defaultBy(priv)
 	}
+	if when == "" {
+		when = now()
+	}
 	env, id, err := claim.SignWith(claim.Spec{
 		Subject:   []claim.SubjectSpec{{Hash: seedID}},
 		Predicate: RegistersPredicate,
 		By:        by,
-		When:      now(),
+		When:      when,
 		Scope:     r.root.Root,
 		Prev:      r.RootHead(),
 	}, priv)
@@ -185,7 +190,13 @@ func (r *Registry) Write(spec claim.Spec, priv ed25519.PrivateKey) (Written, err
 				return w, fmt.Errorf("seed %s is stored, but creating the root to register it in failed: %w", w.ID, err)
 			}
 		}
-		if w.Registered, err = r.RegisterSubnekton(w.ID, priv, by); err != nil {
+		// The registration carries the seed's own time, not the wall clock: with it, a seed written
+		// with a fixed --when into a store with a pinned root rebuilds byte for byte (kton-web 19.11.).
+		when, _ := spec.PredicateBody["when"].(string)
+		if when == "" {
+			when = spec.When
+		}
+		if w.Registered, err = r.RegisterSubnekton(w.ID, priv, by, when); err != nil {
 			return w, fmt.Errorf("seed %s is stored, but registering it in the root failed: %w", w.ID, err)
 		}
 	}
