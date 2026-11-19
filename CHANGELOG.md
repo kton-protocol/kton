@@ -1,6 +1,30 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — released 2026-11-19
+
+### Upgrading from 0.3
+
+- **A 0.2 per-claim nekton store is refused** (no migration before 1.0). Open it with nekton 0.3 or
+  re-create it from its envelopes with `nekton add`; the error names the first such file.
+- **Every nekton store has a root scope** (#213). `nekton init` creates it (`--name` pins its name);
+  a store without one gets it on its first write. Unscoped claims are chained under the root and a
+  scope seeded without `--parent` hangs under it, so tools that read a seed's parent now see the
+  root where they saw none. `nekton verify --root` reports the chain.
+- **Content IRIs are lower case** (#262). A `sha256:` address given in upper case projects to the
+  same `https://kton.dev/o/<hex>` IRI as its lower-case form; a triple store loaded from an older
+  projection may hold a second, upper-case IRI.
+- **The nanopub projection asserts every subject and attributes every verified signer** (#253, #210):
+  a claim with several subjects or co-signatures exports more triples than before.
+- **Ids are reproducible only with a pinned root** (#213). The first write into a fresh store creates
+  a root named `root/<random>` at the current time, and seeds without `--parent` and unscoped claims
+  hang off it, so the same `nekton seed … --add --when T` gives a different id on every run. A corpus
+  that must rebuild to the same ids runs `nekton init --sign K --name N --when T` before its first write.
+- **Templates are checked harder** (#255, #257). A field type the kernel does not know is refused at
+  load (0.3 signed it): use `integer`, `iri` or `string`. A field of its own named `replaces` is
+  refused too, since `replaces` is reserved for the claim this one replaces: rename it. Templates are
+  federated data, so this can break other people's templates.
+- **A subject with a broken %-escape is skipped from the nanopub registry projection** (#268) and
+  named in the report; 0.3 escaped it into another IRI.
 
 ### Changed
 
@@ -49,6 +73,27 @@ now reported as a flag that needs a value.
   the declared keyid is not hex (the claimed signer is then not named).
 The Trusty URI of a nanopublication changes only for claims with an empty or nested list, several
 trusted signers, or an empty declared keyid.
+
+**A claim about a `urn:`, `tag:`, `did:` or `mailto:` subject projects to RDF** (#245). The nanopub
+projection took a value as an IRI only if it began with `sha256:` or contained `://`, so a subject
+like `urn:werk:x` became a literal in subject position: invalid RDF. `nanopub.Record` refused the claim
+(`"urn:werk:x" is not an absolute IRI`), and an index that skips refused records lost it. A subject is a
+Ref (SPEC §3), so every absolute IRI (RFC 3987: a scheme starting with a letter, `:`, a non-empty rest,
+no space or forbidden character) is now an IRI, after the `sha256:` mapping. `Registry` skips a claim
+whose subject is still not one instead of emitting a document a parser rejects. Object field values keep
+their rule: they are untyped text, and `Note:foo` is an absolute IRI by syntax alone. The Trusty URI of
+a nanopublication changes only for a subject that was not `://`-shaped, whose quads were invalid before.
+
+**nekton: a store being created could not be opened in parallel** ([#251](https://github.com/kton-protocol/kton/issues/251)).
+The `objects/.format` marker was written with `os.WriteFile`, which creates the file empty first, so a
+process opening a store another process was creating read an empty marker and refused the store. It is
+now written through a temp file and a rename.
+
+**The nanopub projection asserts every subject of a claim** ([#253](https://github.com/kton-protocol/kton/issues/253)).
+A claim signed about several subjects was asserted only about the first, in the published TriG, in the
+signed graph and in `nanopub.Record`, and `nekton show` printed only the first. Each subject now gets its
+own triple with the same predicate and object. A single-subject claim projects byte for byte as before;
+a multi-subject claim gets a new Trusty URI, because its signed graph now holds every subject.
 
 ### Added
 
@@ -158,28 +203,6 @@ now refuses a value that is not an `xsd:integer`; `iri` takes an IRI or a CURIE 
 resolves, and signs the resolved IRI. A claim template that declares a type the kernel does not know
 is refused at load, by itself, with the reason named; the rest of the set keeps working.
 
-### Fixed
-
-**A claim about a `urn:`, `tag:`, `did:` or `mailto:` subject projects to RDF** (#245). The nanopub
-projection took a value as an IRI only if it began with `sha256:` or contained `://`, so a subject
-like `urn:werk:x` became a literal in subject position: invalid RDF. `nanopub.Record` refused the claim
-(`"urn:werk:x" is not an absolute IRI`), and an index that skips refused records lost it. A subject is a
-Ref (SPEC §3), so every absolute IRI (RFC 3987: a scheme starting with a letter, `:`, a non-empty rest,
-no space or forbidden character) is now an IRI, after the `sha256:` mapping. `Registry` skips a claim
-whose subject is still not one instead of emitting a document a parser rejects. Object field values keep
-their rule: they are untyped text, and `Note:foo` is an absolute IRI by syntax alone. The Trusty URI of
-a nanopublication changes only for a subject that was not `://`-shaped, whose quads were invalid before.
-
-**nekton: a store being created could not be opened in parallel** ([#251](https://github.com/kton-protocol/kton/issues/251)).
-The `objects/.format` marker was written with `os.WriteFile`, which creates the file empty first, so a
-process opening a store another process was creating read an empty marker and refused the store. It is
-now written through a temp file and a rename.
-
-**The nanopub projection asserts every subject of a claim** ([#253](https://github.com/kton-protocol/kton/issues/253)).
-A claim signed about several subjects was asserted only about the first, in the published TriG, in the
-signed graph and in `nanopub.Record`, and `nekton show` printed only the first. Each subject now gets its
-own triple with the same predicate and object. A single-subject claim projects byte for byte as before;
-a multi-subject claim gets a new Trusty URI, because its signed graph now holds every subject.
 ## 0.3.0 — released 2026-10-23
 
 ### Added
