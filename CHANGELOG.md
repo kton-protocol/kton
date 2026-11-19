@@ -19,6 +19,8 @@
   a root named `root/<random>` at the current time, and seeds without `--parent` and unscoped claims
   hang off it, so the same `nekton seed … --add --when T` gives a different id on every run. A corpus
   that must rebuild to the same ids runs `nekton init --sign K --name N --when T` before its first write.
+  A seed's registration entry in the root carries the seed's own `--when`, not the wall clock, so
+  the root chain rebuilds too.
 - **Templates are checked harder** (#255, #257). A field type the kernel does not know is refused at
   load (0.3 signed it): use `integer`, `iri` or `string`. A field of its own named `replaces` is
   refused too, since `replaces` is reserved for the claim this one replaces: rename it. Templates are
