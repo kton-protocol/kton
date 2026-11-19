@@ -78,3 +78,28 @@ func TestNQuadsLiteralCannotEndTheLine(t *testing.T) {
 		t.Errorf("literal %s", got)
 	}
 }
+
+// RecordOf gives exactly Record's quads from the envelope alone (#260).
+func TestRecordOfEqualsRecord(t *testing.T) {
+	pubA, privA := key(t)
+	r, err := registry.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := coSigned(t, []ed25519.PrivateKey{privA}, []string{core.KeyIDHex(pubA)})
+	id, _, err := r.Add(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := Record(r, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RecordOf(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("RecordOf differs from Record:\n%s\n---\n%s", got, want)
+	}
+}

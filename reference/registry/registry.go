@@ -863,6 +863,20 @@ func (r *Registry) FotonIDs() []string {
 	return ids
 }
 
+// ParseFotonEnvelope decodes a signed foton envelope as ingest does - canonical payload, canonical v1
+// form - and returns the foton and its id. f is nil for an envelope that is not a foton. The signature
+// is not checked.
+func ParseFotonEnvelope(env core.Envelope) (f *core.Foton, id string, err error) {
+	return parseEnv(env)
+}
+
+// HeldKey is the key a record contributes to core.Position.Held (#260): the foton id, or for a record
+// that has none, the hash of its payload - the name its object file has on disk.
+func HeldKey(rec Record) string {
+	k, _ := recordKey(rec.Envelope, rec.FotonID)
+	return k
+}
+
 // --- helpers ---
 
 func parseEnv(env core.Envelope) (*core.Foton, string, error) {

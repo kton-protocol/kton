@@ -1220,6 +1220,9 @@ type objectFile struct {
 }
 
 // splitID separates "sha256:<hex>" into its algorithm and bare hex, defaulting to sha256.
+// HeldKey is the key a record contributes to core.Position.Held (#260): its claim id.
+func HeldKey(rec Record) string { return rec.ClaimID }
+
 func splitID(id string) (algo, hex string) {
 	algo, hex = "sha256", id
 	if i := strings.IndexByte(id, ':'); i >= 0 {
