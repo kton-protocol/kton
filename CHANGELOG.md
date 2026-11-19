@@ -15,6 +15,16 @@
   projection may hold a second, upper-case IRI.
 - **The nanopub projection asserts every subject and attributes every verified signer** (#253, #210):
   a claim with several subjects or co-signatures exports more triples than before.
+- **Ids are reproducible only with a pinned root** (#213). The first write into a fresh store creates
+  a root named `root/<random>` at the current time, and seeds without `--parent` and unscoped claims
+  hang off it, so the same `nekton seed … --add --when T` gives a different id on every run. A corpus
+  that must rebuild to the same ids runs `nekton init --sign K --name N --when T` before its first write.
+- **Templates are checked harder** (#255, #257). A field type the kernel does not know is refused at
+  load (0.3 signed it): use `integer`, `iri` or `string`. A field of its own named `replaces` is
+  refused too, since `replaces` is reserved for the claim this one replaces: rename it. Templates are
+  federated data, so this can break other people's templates.
+- **A subject with a broken %-escape is skipped from the nanopub registry projection** (#268) and
+  named in the report; 0.3 escaped it into another IRI.
 
 ### Changed
 
