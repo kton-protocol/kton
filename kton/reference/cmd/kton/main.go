@@ -260,13 +260,16 @@ func mirrorPlankton(localDir, peer string) error {
 	for _, rec := range src.Records(0) {
 		envs = append(envs, rec.Envelope)
 	}
-	added, refused, err := settleAdd(local.Add, envs)
+	added, refused, carried, err := settleAdd(local.Add, func(id string) (int, error) { return local.CarryMaterial(src, id) }, envs)
 	if err != nil {
 		return fmt.Errorf("mirror of %s FAILED: %w", peer, err)
 	}
 	msg := fmt.Sprintf("mirrored %s: %d new", peer, added)
 	if refused > 0 {
 		msg += fmt.Sprintf(", %d REFUSED as invalid", refused)
+	}
+	if carried > 0 {
+		msg += fmt.Sprintf(", %d material item(s) carried", carried)
 	}
 	fmt.Printf("%s; registry holds %d fotons\n", msg, local.Len())
 	if refused > 0 {
@@ -302,13 +305,16 @@ func mirrorNekton(localDir, peer string) error {
 	for _, rec := range raw {
 		envs = append(envs, rec.Envelope)
 	}
-	added, refused, err := settleAdd(local.Add, envs)
+	added, refused, carried, err := settleAdd(local.Add, func(id string) (int, error) { return local.CarryMaterial(src, id) }, envs)
 	if err != nil {
 		return fmt.Errorf("mirror of %s FAILED: %w", peer, err)
 	}
 	msg := fmt.Sprintf("mirrored %s: %d new", peer, added)
 	if refused > 0 {
 		msg += fmt.Sprintf(", %d REFUSED as invalid", refused)
+	}
+	if carried > 0 {
+		msg += fmt.Sprintf(", %d material item(s) carried", carried)
 	}
 	fmt.Printf("%s; registry holds %d claim(s)\n", msg, local.Len())
 	fmt.Fprintln(os.Stderr, "note: a claim whose seed or prev is not held yet is STORED and awaits it; "+
@@ -329,23 +335,34 @@ func mirrorNekton(localDir, peer string) error {
 //
 // A local persistence failure is returned: nothing after it can be trusted, and a caller mirroring
 // into a broken destination must not read "skipped" as "the peer sent us junk".
-func settleAdd(add func(core.Envelope) (string, bool, error), envs []core.Envelope) (added, refused int, err error) {
+//
+// carry copies the peer's verification material about each record the local store holds after add
+// (#225: kton-env/v1, kton-locator/v1, any scheme), as plankton mirror and nekton mirror do; without
+// it, kton mirror dropped the material the other two carry.
+func settleAdd(add func(core.Envelope) (string, bool, error), carry func(id string) (int, error), envs []core.Envelope) (added, refused, carried int, err error) {
 	for _, e := range envs {
-		_, isNew, aerr := add(e)
+		id, isNew, aerr := add(e)
+		if aerr == nil && carry != nil {
+			n, cerr := carry(id)
+			if cerr != nil {
+				return added, refused, carried, fmt.Errorf("could not carry the material of %s: %w", id, cerr)
+			}
+			carried += n
+		}
 		switch {
 		case aerr == nil && isNew:
 			added++
 		case aerr == nil:
 			// already held
 		case errors.Is(aerr, preg.ErrPersist), errors.Is(aerr, nreg.ErrPersist):
-			return added, refused, fmt.Errorf("could not write locally after %d record(s) - the local "+
+			return added, refused, carried, fmt.Errorf("could not write locally after %d record(s) - the local "+
 				"store is incomplete and this is not a peer problem: %w", added, aerr)
 		default:
 			refused++
 			fmt.Fprintf(os.Stderr, "warning: peer record refused: %v\n", aerr)
 		}
 	}
-	return added, refused, nil
+	return added, refused, carried, nil
 }
 
 // --- nekton federation server + HTTP mirror (moved verbatim out of the nekton kernel) --------

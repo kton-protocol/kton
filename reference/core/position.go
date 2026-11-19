@@ -47,7 +47,8 @@ type Position struct {
 	//
 	// A key counts only where the content proves it (#261 review H1): a nekton line whose payload hashes
 	// to its claimId, a plankton object file whose record derives the file's name. So a stray file or a
-	// claimId-only line does not count. Held detects LOSS - a checkout or merge that dropped records - not
+	// claimId-only line does not count, nor does a record without any signature (Add's own minimum;
+	// Records never delivers one, so counting it made a consumer re-read for ever). Held detects LOSS - a checkout or merge that dropped records - not
 	// a forger: XOR is linear, and whoever can write the store can plant records that cancel a removal
 	// (and could as well rewrite .seq and its epoch). A multiset hash (MuHash, LtHash) would be the step
 	// up if that ever has to hold.
@@ -90,6 +91,9 @@ func heldKeys(path, rel string) []string {
 			if json.Unmarshal([]byte(line), &of) != nil || of.ClaimID == "" {
 				continue
 			}
+			if len(of.Envelope.Signatures) == 0 {
+				continue // Add's own minimum: a claim is constituted by its signature
+			}
 			if pb, err := of.Envelope.PayloadBytes(); err == nil && HashBytes(pb) == of.ClaimID {
 				keys = append(keys, of.ClaimID)
 			}
@@ -108,7 +112,8 @@ func heldKeys(path, rel string) []string {
 
 // objectProvesKey reports whether a plankton object file's record derives its own file name: its foton
 // id (computed, not the stored field) or, for a record with none, the hash of its payload - the key the
-// registry filed it under. Nothing is verified; this only keeps non-records out of Held.
+// registry filed it under - and that carries at least one signature, as Add requires. No signature is
+// verified; this only keeps non-records out of Held.
 func objectProvesKey(path, key string) bool {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -118,7 +123,7 @@ func objectProvesKey(path, key string) bool {
 		FotonID  string   `json:"fotonId"`
 		Envelope Envelope `json:"envelope"`
 	}
-	if json.Unmarshal(b, &of) != nil {
+	if json.Unmarshal(b, &of) != nil || len(of.Envelope.Signatures) == 0 {
 		return false
 	}
 	if of.FotonID == "" {
