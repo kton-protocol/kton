@@ -298,6 +298,9 @@ type Registry struct {
 	// delivered like anything else; the reader unions lines that share a claim id, exactly as `Add`
 	// unions a twin at ingest.
 	feed          []Record
+	root          rootState       // this store's own root scope and the head it chains from (#213, root.go)
+	lazy          bool            // a write registry: scope files are loaded on demand (#248, lazy.go)
+	loaded        map[string]bool // scope files a write registry has loaded
 	deferredCount int
 	seen          map[string]bool // claim id -> present (idempotency)
 	maxSeq        int
@@ -513,6 +516,9 @@ func openAt(dir string, create bool) (*Registry, error) {
 	// Verification material is read AFTER settling and never feeds into it: §8.1 requires that its
 	// presence, absence or invalidity leave a record's validity and resolvability untouched.
 	r.material = readAllMaterial(r.objectsDir)
+	if r.root, err = readRoot(r.objectsDir); err != nil {
+		return nil, err
+	}
 	if b, err := os.ReadFile(r.peersPath); err == nil {
 		_ = json.Unmarshal(b, &r.peers)
 	}
@@ -920,6 +926,11 @@ func (r *Registry) mergeTwinInMemory(rec Record) {
 // trusted key is a `verify`/trust-policy concern (out of the kernel, SPEC §8); Add requires only
 // that a signature is present.
 func (r *Registry) Add(env core.Envelope) (id string, isNew bool, err error) {
+	if r.lazy {
+		if err := r.loadFor(env); err != nil {
+			return "", false, err
+		}
+	}
 	st, payload, err := claim.ParseEnvelope(env)
 	if err != nil {
 		return "", false, err
@@ -1209,6 +1220,9 @@ type objectFile struct {
 }
 
 // splitID separates "sha256:<hex>" into its algorithm and bare hex, defaulting to sha256.
+// HeldKey is the key a record contributes to core.Position.Held (#260): its claim id.
+func HeldKey(rec Record) string { return rec.ClaimID }
+
 func splitID(id string) (algo, hex string) {
 	algo, hex = "sha256", id
 	if i := strings.IndexByte(id, ':'); i >= 0 {
@@ -1583,10 +1597,7 @@ func readStore(objectsDir string) (recs []Record, hardErr error) {
 		return nil, err
 	}
 	if len(legacy) > 0 {
-		return nil, fmt.Errorf("nekton store %s holds %d record(s) in the per-claim layout of nekton 0.2 "+
-			"(e.g. %s). nekton 0.4 does not read or migrate that layout; reading on would show the store "+
-			"as emptier than it is. Re-create the store from its envelopes (nekton add), or read it with "+
-			"nekton 0.3", objectsDir, len(legacy), legacy[0])
+		return nil, legacyLayoutError(objectsDir, len(legacy), legacy[0])
 	}
 	sort.Strings(nektons)
 	for _, p := range nektons {
@@ -1885,4 +1896,12 @@ func (r *Registry) CarryMaterial(src *Registry, subject string) (int, error) {
 		n++
 	}
 	return n, nil
+}
+
+// legacyLayoutError is the one refusal of a 0.2 per-claim store, for Open and for a write registry.
+func legacyLayoutError(objectsDir string, n int, first string) error {
+	return fmt.Errorf("nekton store %s holds %d record(s) in the per-claim layout of nekton 0.2 "+
+		"(e.g. %s). nekton 0.4 does not read or migrate that layout; reading on would show the store "+
+		"as emptier than it is. Re-create the store from its envelopes (nekton add), or read it with "+
+		"nekton 0.3", objectsDir, n, first)
 }

@@ -36,6 +36,105 @@ type Position struct {
 	// Only the format marker objects/.format is left out; the rest of the bookkeeping (.seq,
 	// peers.json, locks) lives outside objects/ and never changes it.
 	Objects string `json:"objects"`
+	// Held is an order-independent digest of the set of record keys the store holds on disk: the XOR
+	// of sha256(key) over every distinct key, 64 hex digits (#260). It is computed without opening the
+	// store - a plankton key is an object file's name, a nekton key is each line's claimId, read but
+	// neither parsed further nor verified. Because XOR is its own inverse, a consumer can keep its own
+	// copy current: start from the Held it last read and HeldWith(held, key) for every key that
+	// Records(since) brings that it did not hold. If the next Position.Held differs from that, the
+	// store lost something (a checkout or merge from outside: the kernel never removes), and the
+	// consumer reads again from 0. Co-signatures and twins share their key, so they never change it.
+	//
+	// A key counts only where the content proves it (#261 review H1): a nekton line whose payload hashes
+	// to its claimId, a plankton object file whose record derives the file's name. So a stray file or a
+	// claimId-only line does not count. Held detects LOSS - a checkout or merge that dropped records - not
+	// a forger: XOR is linear, and whoever can write the store can plant records that cancel a removal
+	// (and could as well rewrite .seq and its epoch). A multiset hash (MuHash, LtHash) would be the step
+	// up if that ever has to hold.
+	Held string `json:"held"`
+}
+
+// HeldWith returns held with key toggled in: the incremental form of Position.Held. held "" is the
+// empty set.
+func HeldWith(held, key string) string {
+	var acc [32]byte
+	if b, err := hex.DecodeString(held); err == nil && len(b) == 32 {
+		copy(acc[:], b)
+	}
+	sum := sha256.Sum256([]byte(key))
+	for i := range acc {
+		acc[i] ^= sum[i]
+	}
+	return hex.EncodeToString(acc[:])
+}
+
+// heldKeys returns the record keys behind one file under objects/, by its name (rel, slash form) and,
+// for a nekton subnekton file, its lines: <algo>/<hex>.json is the record <algo>:<hex>; a
+// *.nekton.jsonl line contributes its claimId. Anything else (material, markers, temp files) holds
+// no record.
+func heldKeys(path, rel string) []string {
+	if strings.HasSuffix(rel, ".nekton.jsonl") {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		var keys []string
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			var of struct {
+				ClaimID  string   `json:"claimId"`
+				Envelope Envelope `json:"envelope"`
+			}
+			if json.Unmarshal([]byte(line), &of) != nil || of.ClaimID == "" {
+				continue
+			}
+			if pb, err := of.Envelope.PayloadBytes(); err == nil && HashBytes(pb) == of.ClaimID {
+				keys = append(keys, of.ClaimID)
+			}
+		}
+		return keys
+	}
+	parts := strings.Split(rel, "/")
+	if len(parts) == 2 && strings.HasSuffix(parts[1], ".json") && !strings.HasPrefix(parts[1], ".") {
+		key := parts[0] + ":" + strings.TrimSuffix(parts[1], ".json")
+		if objectProvesKey(path, key) {
+			return []string{key}
+		}
+	}
+	return nil
+}
+
+// objectProvesKey reports whether a plankton object file's record derives its own file name: its foton
+// id (computed, not the stored field) or, for a record with none, the hash of its payload - the key the
+// registry filed it under. Nothing is verified; this only keeps non-records out of Held.
+func objectProvesKey(path, key string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var of struct {
+		FotonID  string   `json:"fotonId"`
+		Envelope Envelope `json:"envelope"`
+	}
+	if json.Unmarshal(b, &of) != nil {
+		return false
+	}
+	if of.FotonID == "" {
+		pb, err := of.Envelope.PayloadBytes()
+		return err == nil && HashBytes(pb) == key
+	}
+	st, err := of.Envelope.Statement()
+	if err != nil {
+		return false
+	}
+	f, err := st.ToFoton()
+	if err != nil {
+		return false
+	}
+	id, err := f.FotonID()
+	return err == nil && id == of.FotonID && id == key
 }
 
 // ReadPosition reads the position of the store at dir (a plankton or nekton registry directory).
@@ -70,6 +169,7 @@ func ReadPosition(dir string) (Position, error) {
 	}
 	objects := filepath.Join(dir, "objects")
 	var lines []string
+	held := map[string]bool{}
 	err := filepath.WalkDir(objects, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) && path == objects {
@@ -98,6 +198,9 @@ func ReadPosition(dir string) (Position, error) {
 			return nil
 		}
 		lines = append(lines, fmt.Sprintf("%s\x00%d\x00%d", rel, info.Size(), info.ModTime().UnixNano()))
+		for _, k := range heldKeys(path, rel) {
+			held[k] = true
+		}
 		return nil
 	})
 	if err != nil {
@@ -106,5 +209,11 @@ func ReadPosition(dir string) (Position, error) {
 	sort.Strings(lines)
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	p.Objects = "sha256:" + hex.EncodeToString(sum[:])
+	for k := range held {
+		p.Held = HeldWith(p.Held, k)
+	}
+	if p.Held == "" {
+		p.Held = hex.EncodeToString(make([]byte, 32))
+	}
 	return p, nil
 }
