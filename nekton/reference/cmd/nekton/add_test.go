@@ -39,8 +39,9 @@ func TestClaimAddIngests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Len() != 1 {
-		t.Fatalf("want 1 claim ingested into the --registry, got %d", r.Len())
+	// the claim, plus the store's root seed it was chained under (#213)
+	if r.Len() != 2 || r.Root() == "" || r.RootHead() == r.Root() {
+		t.Fatalf("want the claim chained under a new root: len %d, root %q, head %q", r.Len(), r.Root(), r.RootHead())
 	}
 }
 

@@ -247,11 +247,15 @@ func buildClaimEnv(spec claimSpec, priv ed25519.PrivateKey) ([]byte, string, err
 	if err != nil {
 		return nil, "", err
 	}
+	b, err := envelopeJSON(env)
+	return b, id, err
+}
+
+// envelopeJSON is the on-disk form of a signed envelope this command has always written.
+func envelopeJSON(env core.Envelope) ([]byte, error) {
 	// Marshalled through a map rather than the core.Envelope struct on purpose: a map marshals its
-	// keys alphabetically, which is the on-disk key order this command has always written. Emitting
-	// the struct instead would reorder the file (payloadType before payload) - harmless to any
-	// verifier, but a gratuitous diff in every committed .dsse.json and example snapshot.
-	out, err := json.MarshalIndent(map[string]any{
+	// keys alphabetically, which is the on-disk key order this command has always written.
+	return json.MarshalIndent(map[string]any{
 		"payloadType": env.PayloadType,
 		"payload":     env.Payload,
 		"signatures": []any{map[string]any{
@@ -259,10 +263,6 @@ func buildClaimEnv(spec claimSpec, priv ed25519.PrivateKey) ([]byte, string, err
 			"sig":   env.Signatures[0].Sig,
 		}},
 	}, "", "  ")
-	if err != nil {
-		return nil, "", err
-	}
-	return out, id, nil
 }
 
 // signClaim builds the claim, writes the envelope to outPath (unless --add was given without an
@@ -274,7 +274,29 @@ func buildClaimEnv(spec claimSpec, priv ed25519.PrivateKey) ([]byte, string, err
 // of prose - the cockpit was anchoring on the "indexed claim" line, a dependency on output
 // formatting that nothing guaranteed and no test protected (#56).
 func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag bool, regDir string, printID bool) error {
-	b, id, err := buildClaimEnv(spec, priv)
+	msg := humanOut(printID)
+	var env core.Envelope
+	var id string
+	var w registry.Written
+	if addFlag {
+		// Writing INTO a store: where the claim goes is part of what is signed, so the store places it
+		// (a claim without a scope chains under the root, a new seed hangs off it, #213), and only the
+		// scope files the write touches are read, not the whole store (#248).
+		var err error
+		if w, err = registry.WriteTo(regOrDefault(regDir), spec, priv); err != nil {
+			return err
+		}
+		env, id = w.Envelope, w.ID
+		if w.CreatedRoot != "" {
+			msg("root %s  (created: this store had none)\n", w.CreatedRoot)
+		}
+	} else {
+		var err error
+		if env, id, err = claim.SignWith(spec, priv); err != nil {
+			return err
+		}
+	}
+	b, err := envelopeJSON(env)
 	if err != nil {
 		return err
 	}
@@ -291,25 +313,15 @@ func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag 
 	if !writeFile {
 		dest = "(no -o file written; ingested via --add below)"
 	}
-	msg := humanOut(printID)
 	msg("claim %s  keyid=%s  %s\n", id, keyidHex(priv.Public().(ed25519.PublicKey)), dest)
 	if addFlag {
-		var env core.Envelope
-		if err := json.Unmarshal(b, &env); err != nil {
-			return err
+		if w.Registered != "" {
+			msg("registered in root  (entry %s)\n", w.Registered)
 		}
-		r, err := registry.Open(regOrDefault(regDir))
-		if err != nil {
-			return err
-		}
-		rid, isNew, err := r.Add(env)
-		if err != nil {
-			return err
-		}
-		if isNew {
-			msg("indexed claim %s  (registry now holds %d claims)\n", rid, r.Len())
+		if w.IsNew {
+			msg("indexed claim %s\n", id)
 		} else {
-			msg("already present: claim %s\n", rid)
+			msg("already present: claim %s\n", id)
 		}
 	}
 	if printID {
