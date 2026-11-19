@@ -50,6 +50,18 @@ environments. A `reuse` hit from a foton/v1 record that declares an environment 
 `qualification: "required"` and `envClass`, so the SPEC §6.5 obligation - a trusted qualifies-as claim
 for the concrete environment - is on the answer.
 
+**Writing a claim no longer opens the whole store** ([#248](https://github.com/kton-protocol/kton/issues/248)).
+`nekton claim/annotate/seed --add` opened the registry first - read, parsed and indexed every
+subnekton - and then appended one line: about 1 s at 1k claims, 72-126 s at 100k. A write registry
+(`registry.OpenForWrite`) loads only the scope file of each claim it adds: everything `Add` needs for
+one claim (its twin, its scope's seed, its prev) is there, because the scope is part of the signed
+payload. `registry.WriteTo(dir, spec, key)` is the whole write path on it, and the CLI uses it. The
+result on disk is byte-identical to a full Open + Add (test); a record on disk without a position yet
+(an unopened merge) makes the write fall back to a full Open, so numbering stays as a full Open gives
+it. A write registry loads every scope file the write touches before it stores
+anything, so that fallback never lands between storing a seed and registering it, and it refuses a
+0.2 per-claim store exactly as Open does. Measured: one write beside 5000 claims, 30 ms instead of 756 ms.
+
 **The root nekton: a store's unscoped claims are chained, and its subnektons registered** ([#213](https://github.com/kton-protocol/kton/issues/213)).
 The root of a nekton store was a bag: unscoped claims had no signed order, and a mirror or copy that
 dropped one went unnoticed. Now every store has a root, an ordinary scope opened by a seed signed by

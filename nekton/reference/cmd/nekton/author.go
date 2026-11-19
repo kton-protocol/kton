@@ -283,11 +283,7 @@ func signClaim(spec claimSpec, priv ed25519.PrivateKey, outPath string, addFlag 
 		// (a claim without a scope chains under the root, a new seed hangs off it, #213), and only the
 		// scope files the write touches are read, not the whole store (#248).
 		var err error
-		r, err := registry.Open(regOrDefault(regDir))
-		if err != nil {
-			return err
-		}
-		if w, err = r.Write(spec, priv); err != nil {
+		if w, err = registry.WriteTo(regOrDefault(regDir), spec, priv); err != nil {
 			return err
 		}
 		env, id = w.Envelope, w.ID
