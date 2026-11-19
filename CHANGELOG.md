@@ -60,7 +60,7 @@ a view or query built on them showed it as an ordinary activity. The JSON graph 
 use. `verifiedSigners` still says only who signed; it is not a reproducibility statement.
 
 **Environment and locator material travels and is shown** ([#225](https://github.com/kton-protocol/kton/issues/225)).
-`plankton mirror` and `nekton mirror` now carry a record's verification material (SPEC §8.1) with it,
+`plankton mirror`, `nekton mirror` and `kton mirror plankton|nekton` now carry a record's verification material (SPEC §8.1) with it,
 skipping what the peer already holds (`Registry.CarryMaterial`): `kton-env/v1` and `kton-locator/v1`
 were lost on a peer, so a fact a covered `envRef` used to carry before #223 went missing. `plankton
 show --trust-keys D` (and `--json`, field `carried`) lists, per trusted producer, the concrete
