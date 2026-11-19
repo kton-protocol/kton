@@ -133,6 +133,9 @@ func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (
 			return Set{}, fmt.Errorf("alias file: %w - continuing without it would resolve a CURIE to "+
 				"itself and sign it as though it were an IRI", err)
 		}
+		if err := s.aliases.check(); err != nil {
+			return Set{}, err
+		}
 	}
 	for key, b := range templates {
 		var t Template
@@ -209,7 +212,51 @@ func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (
 		}
 		s.templates[name] = t
 	}
+	// A template alias may not take a template's own name: `--template deviation` would sign another
+	// template's predicate although a template named deviation exists (kton-review 19.11.). Refused
+	// rather than shadowed, so the operator learns that one of the two names never meant what it says.
+	for short, full := range s.aliases.Templates {
+		_, isTemplate := s.templates[short]
+		_, isRefused := s.refused[short]
+		if (isTemplate || isRefused) && full != short {
+			return Set{}, fmt.Errorf("alias file: template alias %q -> %q takes the name of a template in %s - "+
+				"`--template %s` would sign %q's predicate; rename the alias", short, full, s.origin, short, full)
+		}
+	}
 	return s, nil
+}
+
+// fixedSchemes are the IRI schemes the kernel signs as absolute IRIs although they have no "//"
+// (and http/https, which do). An alias may not rename one: a prefix alias {"urn": ...} would turn a
+// template predicate urn:qm:approves into something else, and a predicate is signed.
+var fixedSchemes = map[string]bool{"urn": true, "tag": true, "did": true, "mailto": true, "http": true, "https": true}
+
+// isAbsoluteIRI reports an IRI no alias resolves further: scheme:// or one of fixedSchemes.
+func isAbsoluteIRI(x string) bool {
+	if strings.Contains(x, "://") {
+		return true
+	}
+	i := strings.IndexByte(x, ':')
+	return i > 0 && fixedSchemes[strings.ToLower(x[:i])]
+}
+
+// check refuses alias entries that would redirect an absolute IRI: a prefix named after an IRI
+// scheme, or a term whose name is itself an absolute IRI. Resolve leaves absolute IRIs alone anyway;
+// refusing at load says so instead of ignoring the entry in silence.
+func (a aliasFile) check() error {
+	for p := range a.Prefixes {
+		if fixedSchemes[strings.ToLower(p)] {
+			return fmt.Errorf("alias file: prefix %q is an IRI scheme - it would rewrite every %s: IRI, "+
+				"a template predicate among them; choose another prefix name", p, p)
+		}
+	}
+	for t := range a.Terms {
+		if isAbsoluteIRI(t) {
+			return fmt.Errorf("alias file: term %q is an absolute IRI - a term would redirect it; "+
+				"a term is a short name", t)
+		}
+	}
+	return nil
 }
 
 // LoadAliases reads ONLY the alias file, with no template directory involved. The resulting Set has
@@ -301,7 +348,7 @@ func (s Set) Names() []string {
 	return out
 }
 
-// Get returns a template by name, resolving a template alias first.
+// Get returns a template by name: an exact template name first, then a template alias.
 func (s Set) Get(name string) (Template, bool) {
 	t, ok := s.templates[s.resolveTemplate(name)]
 	return t, ok
@@ -335,8 +382,11 @@ func (s Set) TemplateAliases() map[string][]string {
 // because a caller that wants to SHOW what it is about to sign needs the resolved meaning: the
 // template and alias files are external, mutable and unauthenticated, so the resolved predicate is
 // what the signature will actually attest.
+//
+// An absolute IRI (scheme:// or urn:, tag:, did:, mailto:) is returned as it is: no prefix or term
+// may redirect it (kton-review 19.11.).
 func (s Set) Resolve(x string) string {
-	if strings.Contains(x, "://") {
+	if isAbsoluteIRI(x) {
 		return x
 	}
 	if v, ok := s.aliases.Terms[x]; ok {
@@ -351,6 +401,12 @@ func (s Set) Resolve(x string) string {
 }
 
 func (s Set) resolveTemplate(name string) string {
+	if _, ok := s.templates[name]; ok {
+		return name
+	}
+	if _, ok := s.refused[name]; ok {
+		return name
+	}
 	if v, ok := s.aliases.Templates[name]; ok {
 		return v
 	}

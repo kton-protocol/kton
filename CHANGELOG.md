@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **An alias file can no longer redirect what a template signs** (kton-review). A template alias
+  that takes a template's own name, a prefix named after an IRI scheme (`urn`, `tag`, `did`,
+  `mailto`, `http`, `https`, any case) and a term whose name is an absolute IRI are refused when the
+  alias file loads. An absolute IRI is never resolved further, so a template predicate such as
+  `urn:qm:approves` is signed as written; `--template` finds an exact template name before an alias.
+
 ## 0.4.0 — released 2026-11-19
 
 ### Upgrading from 0.3
