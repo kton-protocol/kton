@@ -3,6 +3,7 @@ package registry
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,5 +100,41 @@ func TestHeldIgnoresNonRecords(t *testing.T) {
 	f.Close()
 	if after, _ := ReadPosition(dir); after.Held != before.Held {
 		t.Error("a claimId-only line changed Held")
+	}
+}
+
+// A line whose payload hashes to its claimId but that carries no signature is no record either: Add
+// refuses it (SPEC §7.2) and Records never delivers it, so counting it made a consumer re-read for
+// ever (#261 review note).
+func TestHeldIgnoresUnsignedLines(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := Open(dir)
+	priv := ed25519.NewKeyFromSeed(make([]byte, 32))
+	env, _, err := claim.SignWith(claim.Spec{Subject: []claim.SubjectSpec{{URI: "urn:a"}}, Predicate: "https://kton.dev/v/x", By: "k", When: "2026-11-18T00:00:00Z"}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Add(env); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := ReadPosition(dir)
+	other, _, err := claim.SignWith(claim.Spec{Subject: []claim.SubjectSpec{{URI: "urn:b"}}, Predicate: "https://kton.dev/v/x", By: "k", When: "2026-11-18T00:00:00Z"}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.Signatures = nil
+	pb, err := other.PayloadBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, _ := json.Marshal(map[string]any{"claimId": core.HashBytes(pb), "envelope": other})
+	f, err := os.OpenFile(filepath.Join(dir, "objects", "unscoped.nekton.jsonl"), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write(append(line, '\n'))
+	f.Close()
+	if after, _ := ReadPosition(dir); after.Held != before.Held {
+		t.Error("an unsigned line changed Held")
 	}
 }

@@ -1,6 +1,7 @@
 package registry_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,5 +81,43 @@ func TestHeldIgnoresStrayObjectFiles(t *testing.T) {
 	}
 	if after, _ := ReadPosition(dir); after.Held != before.Held {
 		t.Error("a stray object file changed Held")
+	}
+}
+
+// An object file whose record derives its name but carries no signature does not count in Held: Add
+// refuses such a record and Records never delivers it, so counting it made a consumer re-read for
+// ever (#261 review note).
+func TestHeldIgnoresUnsignedObjects(t *testing.T) {
+	empty := t.TempDir()
+	if _, err := Open(empty); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := ReadPosition(empty)
+
+	dir := t.TempDir()
+	r, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _ := signFoton(t, strings.Repeat("a", 64), nil)
+	if _, _, err := r.Add(env); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "objects", "sha256", "*.json"))
+	if len(files) != 1 {
+		t.Fatalf("want one object file, got %v", files)
+	}
+	b, _ := os.ReadFile(files[0])
+	var obj map[string]any
+	if err := json.Unmarshal(b, &obj); err != nil {
+		t.Fatal(err)
+	}
+	obj["envelope"].(map[string]any)["signatures"] = []any{}
+	b, _ = json.Marshal(obj)
+	if err := os.WriteFile(files[0], b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := ReadPosition(dir); got.Held != want.Held {
+		t.Error("an unsigned object still counts in Held")
 	}
 }
