@@ -75,7 +75,7 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 | `envref-collision` | ORANGE | `identity-pin-dropped-on-a-weak-condition` | `4985b23` (#223 before review) | #211 |
 | `root-head-foreign` | ORANGE | `write-path-trusts-ingested-entry` | `ac2121f` (#259 before review) | #259 |
 | `seed-unregistered-fallback` | ORANGE | `partial-write-on-fallback` | `f5b5c4f` (#269 before review) | #269 |
-| `held-unproven-key` | ORANGE | `digest-counts-unproven-key` | `6898ea0` (#261 before review) | #261 |
+| `held-unproven-key` | ORANGE | `digest-counts-unproven-key` | `6898ea0` (#261 before review) | #261, #270 |
 | `co-signer-drop` | ORANGE | `federation-not-order-independent` | `0aa44b8` | `b625b1f` |
 | `concurrency-races` | ORANGE | `concurrency-nonatomic` | `a687723` | `af3cefa` |
 | `corrupt-poisons-read` | ORANGE | `read-face-brittle` | `ed7a008` | `056b87a` |
@@ -373,9 +373,9 @@ The recurring class: **a face or backstop trusts recorded/declared data instead 
 
 ### `held-unproven-key` — ORANGE · ✅ closed
 - **class:** `digest-counts-unproven-key`
-- **theory:** `Position.Held` lets a consumer that follows a store notice records removed from outside. It XORed sha256 over keys read from disk unverified, so a line that is no record counted although `Records` never delivers it, and, XOR being linear, a removal could be cancelled by appending claimId-only lines chosen by Gaussian elimination. Fixed: a key counts only where the content proves it. Boundary: Held detects loss, not a forger who can write the store; lines with a hash-valid payload still count, which the doc states.
+- **theory:** `Position.Held` lets a consumer that follows a store notice records removed from outside. It XORed sha256 over keys read from disk unverified, so a line that is no record counted although `Records` never delivers it, and, XOR being linear, a removal could be cancelled by appending claimId-only lines chosen by Gaussian elimination. Fixed: a key counts only where the content proves it, and only for a line that carries at least one signature (#270, `Add`'s own minimum), so neither a claimId-only line nor an unsigned line with a hash-valid payload counts. Boundary: Held detects loss, not a forger who can write the store - a line with a junk signature entry over a payload that is not a claim still counts (nothing is verified), which the doc states.
 - **vulnerable at:** `6898ea0` (#261 before review)
-- **fixed at (reproduction now fails):** #261 (`045f477`)
+- **fixed at (reproduction now fails):** #261 (`045f477`), #270 (`35a56e5`)
 - **PoC:** [`attacks/held-unproven-key.sh`](attacks/held-unproven-key.sh)
 
 ### `conditional-merge` — RED · ✅ closed

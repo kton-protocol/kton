@@ -6,8 +6,9 @@
 # cancelled by appending claimId-only lines chosen by Gaussian elimination: Held unchanged, a record gone.
 #
 # FIXED (#261 review H1): a key counts only where the content proves it (the line's payload hashes to
-# its claimId). Held detects LOSS, not a forger - the doc says so; this gate holds that claim: a
-# claimId-only line does not count, and a removal hidden behind claimId-only lines changes Held.
+# its claimId) and the line carries at least one signature (#270, Add's own minimum). Held detects LOSS,
+# not a forger - the doc says so; this gate holds that claim: a claimId-only line does not count, and a
+# removal hidden behind claimId-only lines, or behind unsigned lines with a hash-valid payload, changes Held.
 set -u
 for t in nekton python3; do
   command -v "$t" >/dev/null 2>&1 || { echo "VERDICT: N-A (no $t on PATH)"; exit 0; }
@@ -29,14 +30,18 @@ n=$(grep -c . "$F"); [ "$n" -ge 2 ] || { echo "setup failed: want two records in
 cp "$F" keep
 python3 -c 'import json,os;print(json.dumps({"claimId":"sha256:"+os.urandom(32).hex()}))' >> "$F"
 h1=$(held); cp keep "$F"
-# 2. remove one record and append claimId-only lines that XOR to its key: Held must change
-python3 - "$F" <<'PY'
-import hashlib, json, os, sys
-path = sys.argv[1]
+# 2./3. remove one record and append lines whose keys XOR to its key - claimId-only lines (2), and
+#        lines whose payload hashes to their claimId but carry NO signature (3, #270): Held must change
+cp keep "$F"
+forge() {  # <file> <mode: bare|unsigned>
+python3 - "$1" "$2" <<'PY'
+import base64, hashlib, json, os, sys
+path, mode = sys.argv[1], sys.argv[2]
 lines = [l for l in open(path).read().splitlines() if l.strip()]
 H = lambda s: int.from_bytes(hashlib.sha256(s.encode()).digest(), "big")
 target = H(json.loads(lines[-1])["claimId"])
-cands = ["sha256:" + os.urandom(32).hex() for _ in range(320)]
+pays = [os.urandom(24) for _ in range(320)]
+cands = ["sha256:" + (hashlib.sha256(p).hexdigest() if mode == "unsigned" else os.urandom(32).hex()) for p in pays]
 basis = {}
 for i, c in enumerate(cands):
     v, s = H(c), {i}
@@ -49,10 +54,18 @@ v, s = target, set()
 while v:
     p = v.bit_length() - 1
     v ^= basis[p][0]; s ^= basis[p][1]
-open(path, "w").write("\n".join(lines[:-1] + [json.dumps({"claimId": cands[i]}) for i in sorted(s)]) + "\n")
+def line(i):
+    if mode == "bare":
+        return json.dumps({"claimId": cands[i]})
+    return json.dumps({"claimId": cands[i], "envelope": {"payloadType": "application/vnd.in-toto+json",
+                       "payload": base64.b64encode(pays[i]).decode(), "signatures": []}})
+open(path, "w").write("\n".join(lines[:-1] + [line(i) for i in sorted(s)]) + "\n")
 PY
-h2=$(held)
+}
+forge "$F" bare; h2=$(held); cp keep "$F"
+forge "$F" unsigned; h3=$(held)
 counted=0; [ "$h1" != "$h0" ] && counted=1
 hidden=0; [ "$h2" = "$h0" ] && hidden=1
-echo "a claimId-only line changed held: $counted (want 0); a removal hidden behind claimId-only lines: $hidden (want 0)"
-if [ "$counted" = 0 ] && [ "$hidden" = 0 ]; then echo "VERDICT: PREVENTED"; else echo "VERDICT: VULNERABLE"; fi
+hidden_unsigned=0; [ "$h3" = "$h0" ] && hidden_unsigned=1
+echo "a claimId-only line changed held: $counted (want 0); a removal hidden behind claimId-only lines: $hidden (want 0); behind unsigned hash-valid lines: $hidden_unsigned (want 0)"
+if [ "$counted" = 0 ] && [ "$hidden" = 0 ] && [ "$hidden_unsigned" = 0 ]; then echo "VERDICT: PREVENTED"; else echo "VERDICT: VULNERABLE"; fi
