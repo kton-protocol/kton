@@ -107,7 +107,9 @@ consumer that follows a store by `Records(since)` takes `held` from the `Positio
 full read as its baseline, and adds every new key with `core.HeldWith` and `registry.HeldKey`; if the store's `held` differs from it, something was removed from outside (a git
 checkout or merge: the kernel never removes), and the consumer reads again from 0. Twins and
 co-signatures share a key and never change it. A key counts only where the content proves it (a line whose payload
-hashes to its claimId, an object file whose record derives its name). `held` detects loss, not a
+hashes to its claimId, an object file whose record derives its name) and that carries at least one
+signature, as `Add` requires: `Records` never delivers an unsigned record, so counting one made a
+consumer re-read for ever. `held` detects loss, not a
 forger with write access to the store: XOR is linear. `rdf.RecordOf(envelope)` gives a foton's per-record quads
 from the envelope alone, as `nanopub.Record` already does for claims; `registry.ParseFotonEnvelope`
 decodes a foton envelope as ingest does.
