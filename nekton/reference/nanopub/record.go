@@ -182,7 +182,19 @@ func strictIRI(s string) bool {
 // a space is never one.
 func absoluteIRI(s string) bool {
 	i := strings.IndexByte(s, ':')
-	return i > 0 && i < len(s)-1 && strictIRI(s)
+	return i > 0 && i < len(s)-1 && strictIRI(s) && percentEncodingValid(s)
+}
+
+// percentEncodingValid reports whether every '%' in s starts a %XX escape. A subject like urn:x:%zz is
+// no IRI: escaping its '%' would make it urn:x:%25zz, a different, valid IRI that another claim may
+// name - two subjects would become one (#268 review T1). So it is refused and named instead.
+func percentEncodingValid(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && !(i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2])) {
+			return false
+		}
+	}
+	return true
 }
 
 // recordNQuads serializes quads as canonical N-Quads under the strict rule: an IRI that cannot stand

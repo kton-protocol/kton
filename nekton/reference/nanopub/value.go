@@ -20,6 +20,9 @@ import (
 // labelling, which the Trusty URI computation does not do. A list repeats the field once per item;
 // items that are objects are named by their index ("o.files.0").
 
+// rdfNS is the RDF namespace, for the list terms below.
+const rdfNS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+
 // prop is one property of an object node: either a scalar (rendered through hashRef / refTerm, as
 // before) or a reference to a child node. Flat string-valued claims project byte-for-byte as they
 // did; a number does not (scalarText writes it without exponent), so neither does its Trusty URI.
@@ -48,9 +51,24 @@ func unfoldValue(node, field, path string, v any) []prop {
 	case map[string]any:
 		return append([]prop{{node: node, field: field, child: path}}, unfold(path, x)...)
 	case []any:
+		if len(x) == 0 {
+			// an empty list is a fact, not nothing (#210): rdf:nil, the empty RDF list
+			return []prop{{node: node, field: field, scalar: rdfNS + "nil"}}
+		}
 		var out []prop
 		for i, item := range x {
-			out = append(out, unfoldValue(node, field, path+"."+strconv.Itoa(i), item)...)
+			p := path + "." + strconv.Itoa(i)
+			if inner, ok := item.([]any); ok {
+				// A list inside a list was flattened into the parent field, losing its boundary (#210).
+				// It becomes its own node, an rdf:Seq whose members rdf:_1, rdf:_2 ... keep order.
+				out = append(out, prop{node: node, field: field, child: p},
+					prop{node: p, field: rdfNS + "type", scalar: rdfNS + "Seq"})
+				for j, it := range inner {
+					out = append(out, unfoldValue(p, rdfNS+"_"+strconv.Itoa(j+1), p+"."+strconv.Itoa(j), it)...)
+				}
+				continue
+			}
+			out = append(out, unfoldValue(node, field, p, item)...)
 		}
 		return out
 	default:

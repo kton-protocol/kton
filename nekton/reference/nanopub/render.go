@@ -83,7 +83,12 @@ func newTrigCtx(al template.Set) *trigCtx {
 func iriEsc(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ { // iterate BYTES: forbidden chars are all ASCII; UTF-8 tails (>=0x80) pass
-		if ch := s[i]; ch <= 0x20 || strings.IndexByte("<>\"{}|^`\\", ch) >= 0 {
+		ch := s[i]
+		// A '%' that does not start a %XX escape is escaped itself (#210): left alone it made an invalid
+		// IRI. This is for values; a SUBJECT with one is refused before it gets here (absoluteIRI), since
+		// escaping it could make it another subject's IRI (#268 review T1).
+		loneP := ch == '%' && !(i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2]))
+		if ch <= 0x20 || loneP || strings.IndexByte("<>\"{}|^`\\", ch) >= 0 {
 			fmt.Fprintf(&b, "%%%02X", ch)
 		} else {
 			b.WriteByte(ch)
@@ -263,19 +268,20 @@ func renderTrig(c *trigCtx, st *claim.Statement, body map[string]any, env core.E
 	b.WriteString("sub:Head {\n  this: a np:Nanopublication ;\n    np:hasAssertion sub:assertion ;\n    np:hasProvenance sub:provenance ;\n    np:hasPublicationInfo sub:pubinfo .\n}\n\n")
 
 	by, when := str(body, "by"), str(body, "when")
+	// Attribute to EVERY cryptographically-verified signer (the trusted keys that actually signed this
+	// claim), never to the self-declared keyid a relabeler can forge (#210: it was the first one only,
+	// where plankton attributes every verified signer since #207). Without a trusted key that verifies
+	// it, the attribution is marked UNVERIFIED below (nk:claimedSigner, not prov:wasAttributedTo), so a
+	// gate/consumer never reads a forged signer as established. agent is the primary one: the first
+	// verified signer, else the first non-empty declared keyid, else the slug of `by` - never a
+	// shared agent/ node for a blank keyid (#210).
 	agent := agentIRI(c, by)
-	signerVerified := false
-	if len(env.Signatures) > 0 {
-		// Attribute to the CRYPTOGRAPHICALLY-VERIFIED signer (the trusted key that actually signed this
-		// claim), never the self-declared keyid a relabeler can forge. Without a trusted key that
-		// verifies it, the attribution is marked UNVERIFIED below (nk:claimedSigner, not
-		// prov:wasAttributedTo), so a gate/consumer never reads a forged signer as established.
-		if vk := core.VerifiedSignerKeyID(env, c.trustKeys); vk != "" {
-			agent = c.curie(c.prefixes["agent"] + vk)
-			signerVerified = true
-		} else {
-			agent = c.curie(c.prefixes["agent"] + env.Signatures[0].KeyID)
-		}
+	verified := verifiedSigners(env, c.trustKeys)
+	signerVerified := len(verified) > 0
+	if signerVerified {
+		agent = c.curie(c.prefixes["agent"] + verified[0])
+	} else if kid := declaredSigner(env); kid != "" {
+		agent = c.curie(c.prefixes["agent"] + kid)
 	}
 
 	// Assertion
@@ -350,7 +356,10 @@ func renderTrig(c *trigCtx, st *claim.Statement, body map[string]any, env core.E
 	// Provenance
 	b.WriteString("sub:provenance {\n  sub:assertion")
 	if signerVerified {
-		fmt.Fprintf(&b, "\n    prov:wasAttributedTo %s ;\n    nk:signerVerified true", agent)
+		for _, kid := range verified {
+			fmt.Fprintf(&b, "\n    prov:wasAttributedTo %s ;", c.curie(c.prefixes["agent"]+kid))
+		}
+		fmt.Fprint(&b, "\n    nk:signerVerified true")
 	} else {
 		// no trusted key verified this signature: carry the CLAIMED signer, but do not assert it as
 		// established attribution (a consumer/gate that trusts prov:wasAttributedTo must not see it here).
@@ -442,3 +451,30 @@ func renderTrig(c *trigCtx, st *claim.Statement, body map[string]any, env core.E
 func nodeTerm(path string) string {
 	return "sub:" + path // segments are plain names or digests (value.go: segment)
 }
+
+// verifiedSigners returns the keyids of every trusted key that verifies a signature of env, sorted
+// and without repeats (#210), through the one verification path plankton uses too (#264).
+func verifiedSigners(env core.Envelope, keys []ed25519.PublicKey) []string {
+	seen := map[string]bool{}
+	var out []string
+	for i, ok := range core.VerifiedKeys(env, keys) {
+		if kid := core.KeyIDHex(keys[i]); ok && !seen[kid] {
+			seen[kid] = true
+			out = append(out, kid)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// declaredSigner is the first non-empty keyid the envelope declares (unverified), or "".
+func declaredSigner(env core.Envelope) string {
+	for _, s := range env.Signatures {
+		if s.KeyID != "" {
+			return s.KeyID
+		}
+	}
+	return ""
+}
+
+func isHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' }

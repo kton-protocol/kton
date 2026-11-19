@@ -128,3 +128,21 @@ func TestExportRDF_KeyIDInjection(t *testing.T) {
 		t.Fatalf("signerVerified false without any trusted key:\n%s", out)
 	}
 }
+
+// A non-hex declared keyid is not named, but the verdict still is: keys were given and none verified,
+// so nk:signerVerified false (#210).
+func TestExportRDF_NonHexKeyidStillGetsTheVerdict(t *testing.T) {
+	r, err := registry.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	addFotonKID(t, r, "qc", "raw.csv", strings.Repeat("11", 32), "out.csv", strings.Repeat("44", 32), "not-hex!")
+	pub, _, _ := ed25519.GenerateKey(rand.Reader) // trusted, but did not sign
+	out, err := buildRDF(r, "", []ed25519.PublicKey{pub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "nk:signerVerified false") || strings.Contains(out, "claimedSigner agent:not") {
+		t.Fatalf("want the verdict false and no claimed signer node:\n%s", out)
+	}
+}

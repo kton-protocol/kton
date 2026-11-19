@@ -126,8 +126,12 @@ func Turtle(r *registry.Registry, sel string, trustKeys []ed25519.PublicKey) (st
 					}
 				}
 				fmt.Fprintf(&b, " ;\n    nk:signerVerified true")
-			} else if a := agentNode(claimed); a != "" {
-				fmt.Fprintf(&b, " ;\n    nk:claimedSigner %s", a)
+			} else {
+				// The claimed signer is named only when its keyid can be an IRI segment; the verdict does
+				// not depend on that (#210: a non-hex keyid suppressed `false` as well).
+				if a := agentNode(claimed); a != "" {
+					fmt.Fprintf(&b, " ;\n    nk:claimedSigner %s", a)
+				}
 				// false only when keys were given and none verified, as nekton writes it (#232): with
 				// no keys nobody was asked, and `false` would read as checked and failed.
 				if len(trustKeys) > 0 {
