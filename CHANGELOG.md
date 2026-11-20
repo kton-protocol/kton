@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.4.1
+## 0.4.1 — released 2026-11-20
 
 ### Upgrading from 0.4.0
 
