@@ -316,11 +316,20 @@ func mirrorNekton(localDir, peer string) error {
 	if carried > 0 {
 		msg += fmt.Sprintf(", %d material item(s) carried", carried)
 	}
+	// A peer line that does not parse is in no record RawRecords hands us, so the copy is short by
+	// it and nothing above would say so (#287, as nekton mirror since #286).
+	unreadable := src.Unreadable()
+	if unreadable > 0 {
+		msg += fmt.Sprintf(", %d peer line(s) UNREADABLE", unreadable)
+	}
 	fmt.Printf("%s; registry holds %d claim(s)\n", msg, local.Len())
 	fmt.Fprintln(os.Stderr, "note: a claim whose seed or prev is not held yet is STORED and awaits it; "+
 		"`nekton head <scope>` reports a scope that does not resolve.")
 	if refused > 0 {
 		return fmt.Errorf("%d peer claim(s) were refused - this copy is INCOMPLETE", refused)
+	}
+	if unreadable > 0 {
+		return fmt.Errorf("%d line(s) of the peer's store do not parse as a record - this copy is INCOMPLETE", unreadable)
 	}
 	return nil
 }
