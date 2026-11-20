@@ -23,11 +23,11 @@ func TestReadSubnektonForKeepsEveryLineThatCanCarryTheID(t *testing.T) {
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := readSubnektonFor(p, id)
+	got, _ := readSubnektonFor(p, id)
 	if len(got) != 2 || got[0].ClaimID != id || got[1].ClaimID != id {
 		t.Fatalf("readSubnektonFor = %+v, want the plain and the escaped line", got)
 	}
-	if all := readSubnekton(p); len(all) != 3 {
+	if all, _ := readSubnekton(p); len(all) != 3 {
 		t.Errorf("readSubnekton = %d lines, want 3", len(all))
 	}
 }

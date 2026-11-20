@@ -120,11 +120,12 @@ func (b *batchState) locked(fn func() error) error {
 // file while a batch runs, from the file otherwise.
 func (r *Registry) linesFor(path, id string) []objectFile {
 	if r.batch == nil {
-		return readSubnektonFor(path, id)
+		out, _ := readSubnektonFor(path, id) // the write path: a reader counts these on open
+		return out
 	}
 	all, ok := r.batch.lines[path]
 	if !ok {
-		all = readSubnekton(path)
+		all, _ = readSubnekton(path) // counted when the scope was loaded
 		r.batch.lines[path] = all
 	}
 	var out []objectFile

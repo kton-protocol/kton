@@ -317,6 +317,7 @@ type Registry struct {
 	maxSeq        int
 	epoch         string // the numbering this store's cursors belong to (core.SeqMap.Epoch)
 	dropped       int    // on-disk records dropped as orphans / chain-invalid on load (§7.4)
+	unreadable    int    // store lines that did not parse as a record: this read is not the whole store
 
 	claimByID   map[string]Record
 	bySubject   map[string][]int // subject key (hash/uri) -> record indices
@@ -397,10 +398,11 @@ func OpenUnion(dirs ...string) (*Registry, error) {
 		if err := checkStoreFormat(d, objects); err != nil {
 			return nil, err
 		}
-		recs, err := readStore(objects)
+		recs, bad, err := readStore(objects)
 		if err != nil {
 			return nil, err
 		}
+		u.unreadable += bad // a line lost in ANY source makes the union incomplete
 		for _, rec := range recs {
 			rec.Seq = 0 // a source's own positions mean nothing in a union view; settle numbers them
 			pending = append(pending, rec)
@@ -499,10 +501,11 @@ func openAt(dir string, create bool) (*Registry, error) {
 			return nil, err
 		}
 	}
-	pending, err := readStore(r.objectsDir)
+	pending, bad, err := readStore(r.objectsDir)
 	if err != nil {
 		return nil, err
 	}
+	r.unreadable = bad
 	// Objects on disk are sorted by content hash, NOT chain order, and a git-merged/planted object
 	// could be an orphan. So replay is chain-VALIDATING: index records whose §7.4 chain resolves
 	// against the state so far, settling repeatedly (a child waits for its seed/prev), then DROP
@@ -1387,20 +1390,23 @@ var legacyLayout = regexp.MustCompile(`(^|/)[a-z0-9]+/[0-9a-f]{64}\.json$`)
 
 // readSubnekton parses a subnekton file into its records. It is deliberately TOLERANT: one corrupt
 // or half-written line must not disable reads over every other record in the scope, so a bad line is
-// named on stderr and skipped. A missing file is an empty subnekton, not an error.
-func readSubnekton(path string) []objectFile { return readSubnektonFor(path, "") }
+// named on stderr and skipped. It is also COUNTED (unreadable), so a reader that needs the whole store
+// can refuse a read that is not (Registry.Unreadable; kton-review F2). A missing file is an empty
+// subnekton, not an error.
+func readSubnekton(path string) (recs []objectFile, unreadable int) {
+	return readSubnektonFor(path, "")
+}
 
 // readSubnektonFor is readSubnekton restricted to the lines that can carry claim id `id` ("" = all).
 // persistClaim looks for one claim's earlier lines under the write lock, and decoding the whole scope
 // file for that made every Add linear in the scope (kton-cockpit 20.11.). A line whose claimId is id
 // contains id as written, or spells it with a JSON escape; a line with neither is skipped undecoded.
 // Every line that passes is decoded and checked exactly as before.
-func readSubnektonFor(path, id string) []objectFile {
+func readSubnektonFor(path, id string) (out []objectFile, unreadable int) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
-	var out []objectFile
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -1412,11 +1418,12 @@ func readSubnektonFor(path, id string) []objectFile {
 		var of objectFile
 		if err := json.Unmarshal([]byte(line), &of); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: skipping unreadable record in %s: %v\n", path, err)
+			unreadable++
 			continue
 		}
 		out = append(out, of)
 	}
-	return out
+	return out, unreadable
 }
 
 // marshalRecord renders one record as a single JSONL line.
@@ -1591,11 +1598,20 @@ func (r *Registry) at(idxs []int) []Record {
 // Dropped reports how many on-disk records were dropped as orphans / chain-invalid on load (§7.4).
 func (r *Registry) Dropped() int { return r.dropped }
 
+// Unreadable reports how many store lines this registry's reads could not parse as a record (half a
+// line, a line that is not JSON). Such a line is skipped, so it is in neither the index, RawRecords
+// nor Dropped: a non-zero count means what this registry holds is NOT the whole store, and a reader
+// that needs the whole store (a federation union, a release gate) should refuse it - the counterpart
+// of plankton's Degraded (kton-review F2). A crash mid-append leaves such a line for good; it was
+// never acknowledged, but the count stays until the line is removed from the file. A registry from
+// OpenForWrite reads only the scopes a write loaded, so its count covers those scopes, not the store.
+func (r *Registry) Unreadable() int { return r.unreadable }
+
 // RawRecords returns every record on disk (pre-settle), including orphans Open would drop. Used by
 // federation: the RECEIVER decides validity against its OWN union (like Add), not the sender's, so a
 // peer's orphan whose parent the receiver already holds still transfers.
 func (r *Registry) RawRecords() []Record {
-	out, _ := readStore(r.objectsDir)
+	out, _, _ := readStore(r.objectsDir)
 	return out
 }
 
@@ -1605,7 +1621,7 @@ func (r *Registry) RawRecords() []Record {
 // form - openAt and RawRecords both go through it, so a caller can never drift from the layout and
 // silently read half a store. Order is stable (sorted paths, then file order); it carries no
 // meaning, since a scope's order is its `prev` chain.
-func readStore(objectsDir string) (recs []Record, hardErr error) {
+func readStore(objectsDir string) (recs []Record, unreadable int, hardErr error) {
 	var nektons, legacy []string
 	if err := filepath.WalkDir(objectsDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -1623,18 +1639,20 @@ func readStore(objectsDir string) (recs []Record, hardErr error) {
 		}
 		return nil
 	}); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if len(legacy) > 0 {
-		return nil, legacyLayoutError(objectsDir, len(legacy), legacy[0])
+		return nil, 0, legacyLayoutError(objectsDir, len(legacy), legacy[0])
 	}
 	sort.Strings(nektons)
 	for _, p := range nektons {
-		for _, of := range readSubnekton(p) {
+		ofs, bad := readSubnekton(p)
+		unreadable += bad
+		for _, of := range ofs {
 			recs = append(recs, Record{ClaimID: of.ClaimID, Envelope: of.Envelope})
 		}
 	}
-	return recs, nil
+	return recs, unreadable, nil
 }
 
 // Records answers §12's sync(since): everything this participant holds above the cursor, in
