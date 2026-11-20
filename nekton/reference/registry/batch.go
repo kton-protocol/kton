@@ -48,6 +48,11 @@ type batchState struct {
 // test can shorten it.
 var batchChunk = 2 * time.Second
 
+// batchGap is how long AddAll leaves the lock free between chunks. A waiter retries every 5 ms
+// (withLockFile), so a batch that took the lock straight back would starve it; four retry intervals
+// give every waiter its turn (kton-review measured 20 ms on Linux) (seen on CI: the next chunk won every time).
+const batchGap = 20 * time.Millisecond
+
 // AddAll adds envs in order, as Add would one by one. It holds the write lock for up to batchChunk at
 // a time; each chunk reads the scope files it touches and the position map once, and writes the
 // position map once. An envelope Add refuses is reported in its result and the batch goes on; a
@@ -84,6 +89,9 @@ func (r *Registry) AddAll(envs []core.Envelope) (results []AddResult, err error)
 		})
 		if err != nil {
 			return results, err
+		}
+		if i < len(envs) {
+			time.Sleep(batchGap)
 		}
 	}
 	return results, nil

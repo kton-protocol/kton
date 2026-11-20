@@ -132,3 +132,43 @@ func TestBatchRefreshesItsLock(t *testing.T) {
 		t.Errorf("lock mtime is %v old after locked(): a long batch would be stolen", time.Since(fi.ModTime()))
 	}
 }
+
+// R1, as kton-review reproduced it: a full Open in another registry during a batch that runs longer
+// than a waiter's patience succeeds. Open numbers the batch's unpositioned lines under the write lock,
+// so it needs the lock mid-batch. Here the waiter gives up after 40 x 5 ms = 200 ms and the batch runs
+// well past that.
+func TestOpenDuringALongBatchSucceeds(t *testing.T) {
+	defer func(d time.Duration, n int) { batchChunk, lockAttempts = d, n }(batchChunk, lockAttempts)
+	batchChunk, lockAttempts = 50*time.Millisecond, 40
+	dir := t.TempDir()
+	r, err := OpenForWrite(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envs := unscopedEnvelopes(t, 4000)
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { _, err := r.AddAll(envs); done <- err }()
+	time.Sleep(20 * time.Millisecond)
+	opens := 0
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+			if time.Since(start) < 400*time.Millisecond {
+				t.Fatalf("the batch took %v, not longer than a waiter's 200 ms: make it longer", time.Since(start))
+			}
+			if opens == 0 {
+				t.Fatal("no Open ran during the batch")
+			}
+			return
+		default:
+		}
+		if _, err := Open(dir); err != nil {
+			t.Fatalf("Open %d during the batch (%v in): %v", opens+1, time.Since(start), err)
+		}
+		opens++
+	}
+}

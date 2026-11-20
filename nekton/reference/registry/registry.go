@@ -99,8 +99,12 @@ func (r *Registry) withWriteLock(fn func() error) error {
 	return withLockFile(filepath.Join(r.dir, ".objects.lock"), fn)
 }
 
+// lockAttempts is how often a waiter retries the write lock, 5 ms apart: about 10 s. A variable so a
+// test can make a waiter give up sooner than a batch runs.
+var lockAttempts = 2000
+
 func withLockFile(lp string, fn func() error) error {
-	for attempt := 0; attempt < 2000; attempt++ {
+	for attempt := 0; attempt < lockAttempts; attempt++ {
 		f, err := os.OpenFile(lp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
 			f.Close()
