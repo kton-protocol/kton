@@ -12,7 +12,12 @@ import (
 func TestReadSubnektonForKeepsEveryLineThatCanCarryTheID(t *testing.T) {
 	id := "sha256:" + strings.Repeat("a", 64)
 	other := "sha256:" + strings.Repeat("b", 64)
-	escaped := `{"claimId":"sha256:` + strings.Repeat("a", 64) + `"}`
+	// The escape is built at run time so no editor or tool normalises it away: \u0073 is "s".
+	bs := string(rune(92))
+	escaped := `{"claimId":"` + bs + `u0073ha256:` + strings.Repeat("a", 64) + `"}`
+	if strings.Contains(escaped, id) || !strings.Contains(escaped, bs) {
+		t.Fatalf("the escaped line must spell the id only through an escape: %s", escaped)
+	}
 	p := filepath.Join(t.TempDir(), "s.jsonl")
 	body := `{"claimId":"` + id + `"}` + "\n" + `{"claimId":"` + other + `"}` + "\n" + escaped + "\n"
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
