@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.4.1
+
+### Upgrading from 0.4.0
+
+- **An alias file that a template could be redirected through is refused when it loads** (#278): a
+  template alias named like a template, a prefix named `urn`, `tag`, `did`, `mailto`, `http` or `https`
+  (any case), or a term whose name is an absolute IRI. Rename the alias; nothing else changes.
+
+### Added and changed
+
 - **`Registry.AddAll` adds a batch of claims in a few write-lock stretches** (kton-cockpit). Each envelope goes
   through `Add` as before. The lock is held for at most 2 s at a stretch, so a reader's open is not
   blocked for the whole batch; each stretch reads the scope files and the position map once and
@@ -16,6 +26,8 @@
   `mailto`, `http`, `https`, any case) and a term whose name is an absolute IRI are refused when the
   alias file loads. An absolute IRI is never resolved further, so a template predicate such as
   `urn:qm:approves` is signed as written; `--template` finds an exact template name before an alias.
+- **Writing the position map (`.seq`) retries a rename that Windows refuses for a moment** (plankton
+  core, #281): a reader holding the file open made a write fail with "Access is denied".
 
 ## 0.4.0 — released 2026-11-19
 
