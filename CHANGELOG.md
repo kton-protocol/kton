@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **`Registry.AddAll` adds a batch of claims under one write lock** (kton-cockpit). Each envelope goes
+  through `Add` as before; the batch reads each scope file and the position map once and writes the
+  position map once, where N `Add`s re-read both per claim. The store ends up byte for byte as N
+  `Add`s leave it. 2000 claims into one scope: 10.3 s one by one, 0.5 s as a batch; 16,600 claims: 5.1 s.
 - **Opening a nekton store checks each stored claim once, not twice** (kton-cockpit). Replay admitted
   every row and then admitted it again while indexing it; an open is about 1.6x faster (2000 claims
   in one scope: 274 ms -> 175 ms). Writing a claim no longer decodes every line of its scope file to

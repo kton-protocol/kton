@@ -60,6 +60,9 @@ func atomicWrite(path string, b []byte) error {
 //
 // It must NOT be called with the object write lock already held - it takes that lock itself.
 func (r *Registry) resolveSeqs(ids []string, persist bool) (map[string]int, error) {
+	if r.batch != nil {
+		return r.batch.assign(r, ids), nil
+	}
 	p := filepath.Join(r.dir, seqFileName)
 	m := core.ReadSeqMap(p)
 	r.epoch = m.Epoch
@@ -90,6 +93,9 @@ func (r *Registry) resolveSeqs(ids []string, persist bool) (map[string]int, erro
 }
 
 func (r *Registry) withWriteLock(fn func() error) error {
+	if r.batch != nil {
+		return r.batch.locked(fn) // AddAll holds the lock for the whole batch
+	}
 	return withLockFile(filepath.Join(r.dir, ".objects.lock"), fn)
 }
 
@@ -130,7 +136,7 @@ func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envel
 	err := r.withWriteLock(func() error {
 		// Union across EVERY line that carries this claim id - after this change there can be more
 		// than one, each recording a signature set as it arrived.
-		recs := readSubnektonFor(path, id)
+		recs := r.linesFor(path, id)
 		held, found := core.Envelope{}, false
 		for _, of := range recs {
 			if of.ClaimID != id {
@@ -171,9 +177,9 @@ func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envel
 			// anything had changed, and with it the only thing a cursor could have noticed.
 			// The line holds the envelope AS IT ARRIVED - the reader unions, which is what settle and
 			// Add already do for a twin.
-			return appendSubnekton(path, objectFile{ClaimID: id, Envelope: env})
+			return r.appendLine(path, objectFile{ClaimID: id, Envelope: env})
 		}
-		return appendSubnekton(path, objectFile{ClaimID: id, Envelope: merged})
+		return r.appendLine(path, objectFile{ClaimID: id, Envelope: merged})
 	})
 	return merged, err
 }
@@ -301,6 +307,7 @@ type Registry struct {
 	root          rootState       // this store's own root scope and the head it chains from (#213, root.go)
 	lazy          bool            // a write registry: scope files are loaded on demand (#248, lazy.go)
 	loaded        map[string]bool // scope files a write registry has loaded
+	batch         *batchState     // set while AddAll holds the write lock (batch.go)
 	deferredCount int
 	seen          map[string]bool // claim id -> present (idempotency)
 	maxSeq        int

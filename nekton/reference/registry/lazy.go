@@ -73,6 +73,9 @@ func (r *Registry) loadScope(scope string) error {
 		return nil
 	}
 	m := core.ReadSeqMap(filepath.Join(r.dir, seqFileName))
+	if r.batch != nil {
+		m = r.batch.seq // positions this batch issued are not on disk yet
+	}
 	recs := make([]Record, 0, len(files))
 	for _, of := range files {
 		rec := Record{ClaimID: of.ClaimID, Envelope: of.Envelope}
