@@ -40,7 +40,10 @@ fi
 for c in plankton nekton python3; do
   command -v $c >/dev/null 2>&1 || { echo "VERDICT: N-A (no $c on PATH)"; exit 0; }
 done
-export NEKTON_TEMPLATES="$KX/templates" NEKTON_ALIASES="$KX/aliases.json"
+# The examples keep the alias file at .kton/aliases.json since cockpit v0.5.5 (kton-examples 5c96d3c);
+# an older checkout has it at the root.
+ALIASES="$KX/.kton/aliases.json"; [ -f "$ALIASES" ] || ALIASES="$KX/aliases.json"
+export NEKTON_TEMPLATES="$KX/templates" NEKTON_ALIASES="$ALIASES"
 ROOT="${FOUREYES_KEEP:-$(mktemp -d)}"; [ -n "${FOUREYES_KEEP:-}" ] || trap 'rm -rf "$ROOT"' EXIT
 mkdir -p "$ROOT"
 
