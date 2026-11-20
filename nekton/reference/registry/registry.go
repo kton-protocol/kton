@@ -1393,7 +1393,9 @@ var legacyLayout = regexp.MustCompile(`(^|/)[a-z0-9]+/[0-9a-f]{64}\.json$`)
 // named on stderr and skipped. It is also COUNTED (unreadable), so a reader that needs the whole store
 // can refuse a read that is not (Registry.Unreadable; kton-review F2). A missing file is an empty
 // subnekton, not an error.
-func readSubnekton(path string) (recs []objectFile, unreadable int) { return readSubnektonFor(path, "") }
+func readSubnekton(path string) (recs []objectFile, unreadable int) {
+	return readSubnektonFor(path, "")
+}
 
 // readSubnektonFor is readSubnekton restricted to the lines that can carry claim id `id` ("" = all).
 // persistClaim looks for one claim's earlier lines under the write lock, and decoding the whole scope
