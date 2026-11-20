@@ -218,7 +218,8 @@ func TestCoSignatureUnionInsideASubnekton(t *testing.T) {
 	// Each LINE carries the signature set as it arrived - one apiece here. Merging is the READER's
 	// job, which is also what makes a mirror of either line alone converge to the same state.
 	twinLines := 0
-	for _, of := range readSubnekton(sub) {
+	ofs, _ := readSubnekton(sub)
+	for _, of := range ofs {
 		if of.ClaimID == idA {
 			twinLines++
 			if len(of.Envelope.Signatures) != 1 {

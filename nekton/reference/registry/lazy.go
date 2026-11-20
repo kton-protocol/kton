@@ -68,7 +68,8 @@ func (r *Registry) loadScope(scope string) error {
 		return nil
 	}
 	r.loaded[path] = true
-	files := readSubnekton(path)
+	files, bad := readSubnekton(path)
+	r.unreadable += bad
 	if len(files) == 0 {
 		return nil
 	}

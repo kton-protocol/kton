@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A nekton store line that does not parse is counted** (kton-review F2, via kton-cockpit). It was
+  skipped with a warning and was in neither the index, `RawRecords` nor `Dropped`, so a reader could
+  not tell that a store was short by it. `Registry.Unreadable()` reports how many lines `Open`,
+  `OpenUnion` (over every source) and an `OpenForWrite` scope load skipped; a reader that needs the
+  whole store refuses a non-zero count, as for plankton's `Degraded()`. `nekton mirror` reports such
+  peer lines and fails with "this copy is INCOMPLETE", as it does for a refused claim.
+
 ## 0.4.1 — released 2026-11-20
 
 ### Upgrading from 0.4.0
