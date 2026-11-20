@@ -2,20 +2,32 @@
 
 ## Unreleased
 
-- **`Registry.AddAll` adds a batch of claims in a few write-lock stretches** (kton-cockpit). Each envelope goes
-  through `Add` as before. The lock is held for at most 2 s at a stretch, so a reader's open is not
-  blocked for the whole batch; each stretch reads the scope files and the position map once and
+## 0.4.1 — released 2026-11-20
+
+### Upgrading from 0.4.0
+
+- **An alias file that a template could be redirected through is refused when it loads** (#278): a
+  template alias named like a template, a prefix named `urn`, `tag`, `did`, `mailto`, `http` or `https`
+  (any case), or a term whose name is an absolute IRI. Rename the alias; nothing else changes.
+
+### Added and changed
+
+- **`Registry.AddAll` adds a batch of claims in a few write-lock stretches** (#281, kton-cockpit). Each envelope goes
+  through `Add` as before. A stretch ends after the claim that takes it past about 2 s, and the lock is
+  then left free for 20 ms, so a reader's open waits for one stretch, not for the whole batch; each stretch reads the scope files and the position map once and
   writes the position map once, where N `Add`s re-read both per claim. The store ends up byte for byte as N
   `Add`s leave it. 2000 claims into one scope: 10.3 s one by one, 0.5 s as a batch; 16,600 claims: 5.1 s.
-- **Opening a nekton store checks each stored claim once, not twice** (kton-cockpit). Replay admitted
+- **Opening a nekton store checks each stored claim once, not twice** (#279, kton-cockpit). Replay admitted
   every row and then admitted it again while indexing it; an open is about 1.6x faster (2000 claims
   in one scope: 274 ms -> 175 ms). Writing a claim no longer decodes every line of its scope file to
   look for earlier lines of the same claim.
-- **An alias file can no longer redirect what a template signs** (kton-review). A template alias
+- **An alias file can no longer redirect what a template signs** (#278, kton-review). A template alias
   that takes a template's own name, a prefix named after an IRI scheme (`urn`, `tag`, `did`,
   `mailto`, `http`, `https`, any case) and a term whose name is an absolute IRI are refused when the
   alias file loads. An absolute IRI is never resolved further, so a template predicate such as
   `urn:qm:approves` is signed as written; `--template` finds an exact template name before an alias.
+- **Writing the position map (`.seq`) retries a rename that Windows refuses for a moment** (plankton
+  core, #281): a reader holding the file open made a write fail with "Access is denied".
 
 ## 0.4.0 — released 2026-11-19
 
