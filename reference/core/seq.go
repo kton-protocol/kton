@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"time"
 )
 
 // EnvelopeKey is what a FEDERATION POSITION is issued against: the stored bytes, not the record's
@@ -153,5 +155,18 @@ func WriteSeqMap(path string, m SeqMap) error {
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return replaceFile(tmp, path)
+}
+
+// replaceFile renames tmp over path. On Windows a rename over a file another process or goroutine has
+// open for reading fails with access denied for as long as it is open; readers of the numbering read
+// it without the write lock and hold it for microseconds, so the rename is retried for up to a second
+// (seen on CI: a store opened while a batch wrote its positions).
+func replaceFile(tmp, path string) error {
+	err := os.Rename(tmp, path)
+	for i := 0; err != nil && runtime.GOOS == "windows" && os.IsPermission(err) && i < 100; i++ {
+		time.Sleep(10 * time.Millisecond)
+		err = os.Rename(tmp, path)
+	}
+	return err
 }
