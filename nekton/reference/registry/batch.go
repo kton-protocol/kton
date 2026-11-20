@@ -17,9 +17,10 @@ import (
 // several processes, and quadratic for a batch.
 //
 // AddAll runs the same Add for every envelope - every check, twin union, deferral and position rule
-// is Add's own - but takes the write lock ONCE for the batch. Holding it, nothing else writes the
-// store, so what the batch read is still what is on disk: each scope file is read once and kept in
-// memory as it is appended to, and the position map is read once and written once at the end.
+// is Add's own - but takes the write lock once per chunk of the batch (batchChunk). Holding it,
+// nothing else writes the store, so what the chunk read is still what is on disk: each scope file is
+// read once and kept in memory as it is appended to, and the position map is read once and written
+// once at the end of the chunk.
 //
 // The result on disk is what N Adds would leave: the same lines in the same order, the same
 // positions. If the process dies mid-batch, the lines appended so far are on disk without positions;
@@ -40,37 +41,52 @@ type batchState struct {
 	lines    map[string][]objectFile // scope file -> its lines, as read once and appended since
 }
 
-// AddAll adds envs in order, as Add would one by one, under one write lock. An envelope Add refuses is
-// reported in its result and the batch goes on; a failure to write the store stops it, and the
-// positions issued so far are still written.
+// batchChunk is how long AddAll holds the write lock at a stretch. Between chunks it writes the
+// positions issued so far and releases the lock, so a reader's full Open - which numbers lines under
+// the same lock - or another writer waits at most this long, not for the whole batch: waiters give up
+// after about 10 s (kton-review R1 on #281: a 60k batch made a concurrent Open fail). A variable so a
+// test can shorten it.
+var batchChunk = 2 * time.Second
+
+// AddAll adds envs in order, as Add would one by one. It holds the write lock for up to batchChunk at
+// a time; each chunk reads the scope files it touches and the position map once, and writes the
+// position map once. An envelope Add refuses is reported in its result and the batch goes on; a
+// failure to write the store stops it, and the positions issued so far are still written.
 func (r *Registry) AddAll(envs []core.Envelope) (results []AddResult, err error) {
 	if r.batch != nil {
 		return nil, os.ErrInvalid // no nested batches
 	}
 	lp := filepath.Join(r.dir, ".objects.lock")
-	err = withLockFile(lp, func() (ferr error) {
-		b := &batchState{lockPath: lp, touched: time.Now(), lines: map[string][]objectFile{},
-			seq: core.ReadSeqMap(filepath.Join(r.dir, seqFileName))}
-		r.batch = b
-		r.epoch = b.seq.Epoch
-		defer func() {
-			r.batch = nil
-			if b.dirty {
-				if werr := core.WriteSeqMap(filepath.Join(r.dir, seqFileName), b.seq); werr != nil && ferr == nil {
-					ferr = werr
+	for i := 0; i < len(envs); {
+		err = withLockFile(lp, func() (ferr error) {
+			// A fresh state per chunk: between chunks another process may have written, so nothing
+			// read under an earlier lock is reused.
+			b := &batchState{lockPath: lp, touched: time.Now(), lines: map[string][]objectFile{},
+				seq: core.ReadSeqMap(filepath.Join(r.dir, seqFileName))}
+			r.batch = b
+			r.epoch = b.seq.Epoch
+			defer func() {
+				r.batch = nil
+				if b.dirty {
+					if werr := core.WriteSeqMap(filepath.Join(r.dir, seqFileName), b.seq); werr != nil && ferr == nil {
+						ferr = werr
+					}
 				}
+			}()
+			for start := time.Now(); i < len(envs) && time.Since(start) < batchChunk; i++ {
+				id, isNew, aerr := r.Add(envs[i])
+				if aerr != nil && isPersistErr(aerr) {
+					return aerr
+				}
+				results = append(results, AddResult{ID: id, IsNew: isNew, Err: aerr})
 			}
-		}()
-		for _, env := range envs {
-			id, isNew, aerr := r.Add(env)
-			if aerr != nil && isPersistErr(aerr) {
-				return aerr
-			}
-			results = append(results, AddResult{ID: id, IsNew: isNew, Err: aerr})
+			return nil
+		})
+		if err != nil {
+			return results, err
 		}
-		return nil
-	})
-	return results, err
+	}
+	return results, nil
 }
 
 // assign issues positions from the batch's map, as resolveSeqs does from the file.
