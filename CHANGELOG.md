@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Opening a nekton store checks each stored claim once, not twice** (kton-cockpit). Replay admitted
+  every row and then admitted it again while indexing it; an open is about 1.6x faster (2000 claims
+  in one scope: 274 ms -> 175 ms). Writing a claim no longer decodes every line of its scope file to
+  look for earlier lines of the same claim.
 - **An alias file can no longer redirect what a template signs** (kton-review). A template alias
   that takes a template's own name, a prefix named after an IRI scheme (`urn`, `tag`, `did`,
   `mailto`, `http`, `https`, any case) and a term whose name is an absolute IRI are refused when the

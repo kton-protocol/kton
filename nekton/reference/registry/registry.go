@@ -130,7 +130,7 @@ func (r *Registry) persistClaim(id, scope string, env core.Envelope) (core.Envel
 	err := r.withWriteLock(func() error {
 		// Union across EVERY line that carries this claim id - after this change there can be more
 		// than one, each recording a signature set as it arrived.
-		recs := readSubnekton(path)
+		recs := readSubnektonFor(path, id)
 		held, found := core.Envelope{}, false
 		for _, of := range recs {
 			if of.ClaimID != id {
@@ -627,7 +627,7 @@ func (r *Registry) settle(records []Record) (dropped int) {
 			// refuses hands on something we ourselves will not answer for, and the peer refuses it
 			// in turn - an import that looks complete and is not. Counted as refused, which is a
 			// different fact from deferred: one will never resolve, the other is still waiting.
-			if !r.index(rec) {
+			if !r.indexAdmitted(rec, st) {
 				refused++
 				progress = true // it is settled - permanently - so the loop has made progress
 				continue
@@ -825,6 +825,14 @@ func (r *Registry) index(rec Record) (accepted bool) {
 		return false
 	}
 	rec.ClaimID = id // by value: the copy this function indexes and appends carries the derived id
+	return r.indexAdmitted(rec, st)
+}
+
+// indexAdmitted is index for a row admissible() has already passed, with the statement it parsed and
+// rec.ClaimID set to the id it derived. settle admits every row once before its passes; running the
+// same checks again here re-canonicalised and re-parsed every stored claim a second time on every
+// Open (kton-cockpit 20.11.: about half of an open's cost).
+func (r *Registry) indexAdmitted(rec Record, st *claim.Statement) (accepted bool) {
 	if r.seen[rec.ClaimID] {
 		return true // already held; not a refusal
 	}
@@ -1369,7 +1377,14 @@ var legacyLayout = regexp.MustCompile(`(^|/)[a-z0-9]+/[0-9a-f]{64}\.json$`)
 // readSubnekton parses a subnekton file into its records. It is deliberately TOLERANT: one corrupt
 // or half-written line must not disable reads over every other record in the scope, so a bad line is
 // named on stderr and skipped. A missing file is an empty subnekton, not an error.
-func readSubnekton(path string) []objectFile {
+func readSubnekton(path string) []objectFile { return readSubnektonFor(path, "") }
+
+// readSubnektonFor is readSubnekton restricted to the lines that can carry claim id `id` ("" = all).
+// persistClaim looks for one claim's earlier lines under the write lock, and decoding the whole scope
+// file for that made every Add linear in the scope (kton-cockpit 20.11.). A line whose claimId is id
+// contains id as written, or spells it with a JSON escape; a line with neither is skipped undecoded.
+// Every line that passes is decoded and checked exactly as before.
+func readSubnektonFor(path, id string) []objectFile {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -1378,6 +1393,9 @@ func readSubnekton(path string) []objectFile {
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
+			continue
+		}
+		if id != "" && !strings.Contains(line, id) && !strings.Contains(line, `\`) {
 			continue
 		}
 		var of objectFile
