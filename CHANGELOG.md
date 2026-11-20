@@ -2,12 +2,24 @@
 
 ## Unreleased
 
-- **A nekton store line that does not parse is counted** (kton-review F2, via kton-cockpit). It was
+## 0.4.2
+
+### Upgrading from 0.4.1
+
+- **`nekton mirror` and `kton mirror nekton` fail on a peer store with a line that does not parse**
+  (#286, #287). They copied the rest and exited 0; now they copy the rest, name the count and exit
+  non-zero with "this copy is INCOMPLETE". A script that mirrors from such a store sees the failure;
+  remove the broken line from the peer's file to mirror it whole.
+
+### Added and changed
+
+- **A nekton store line that does not parse is counted** (#286, kton-review F2, via kton-cockpit). It was
   skipped with a warning and was in neither the index, `RawRecords` nor `Dropped`, so a reader could
   not tell that a store was short by it. `Registry.Unreadable()` reports how many lines `Open`,
   `OpenUnion` (over every source) and an `OpenForWrite` scope load skipped; a reader that needs the
   whole store refuses a non-zero count, as for plankton's `Degraded()`. `nekton mirror` reports such
-  peer lines and fails with "this copy is INCOMPLETE", as it does for a refused claim.
+  peer lines and fails with "this copy is INCOMPLETE", as it does for a refused claim; `kton mirror
+  nekton` does the same (#287).
 
 ## 0.4.1 — released 2026-11-20
 
