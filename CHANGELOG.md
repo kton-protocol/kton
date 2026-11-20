@@ -8,8 +8,8 @@
 
 - **`nekton mirror` and `kton mirror nekton` fail on a peer store with a line that does not parse**
   (#286, #287). They copied the rest and exited 0; now they copy the rest, name the count and exit
-  non-zero with "this copy is INCOMPLETE". A script that mirrors from such a store sees the failure;
-  remove the broken line from the peer's file to mirror it whole.
+  non-zero with "this copy is INCOMPLETE". A script that mirrors from such a store sees the failure.
+  Look at the line first: resolve a merge conflict; a torn last line can be removed.
 
 ### Added and changed
 
