@@ -1601,7 +1601,8 @@ func (r *Registry) Dropped() int { return r.dropped }
 // nor Dropped: a non-zero count means what this registry holds is NOT the whole store, and a reader
 // that needs the whole store (a federation union, a release gate) should refuse it - the counterpart
 // of plankton's Degraded (kton-review F2). A crash mid-append leaves such a line for good; it was
-// never acknowledged, but the count stays until the line is removed from the file.
+// never acknowledged, but the count stays until the line is removed from the file. A registry from
+// OpenForWrite reads only the scopes a write loaded, so its count covers those scopes, not the store.
 func (r *Registry) Unreadable() int { return r.unreadable }
 
 // RawRecords returns every record on disk (pre-settle), including orphans Open would drop. Used by
