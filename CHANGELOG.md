@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A declared step is projected as `nk:declared`** (kton-cockpit, MH 21.11.). A foton whose
+  `protocol.descriptor.declared` is a string - `hand` (a person stated the step) or `heuristic:<name>`
+  (a tool inferred it) - carries `nk:declared "<value>"` in its record quads (`rdf.RecordOf`,
+  `Record`) and in `plankton export --rdf`; a foton without it is an observed step and carries none.
+  SPEC 6.2 names the field, the vocabulary lists the term. The kernel does not act on the value, and
+  the field is covered like the rest of the descriptor, so no existing id changes.
+
 ## 0.4.2 — released 2026-11-20
 
 ### Upgrading from 0.4.1

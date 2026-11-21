@@ -84,6 +84,9 @@ func fotonQuads(id string, f *core.Foton) []byte {
 			q.add(act, rdfNsNK+"environment", iri(en), g)
 		}
 	}
+	if d := declaredOf(f.Protocol.Descriptor); d != "" {
+		q.add(act, rdfNsNK+"declared", lit(d, ""), g)
+	}
 	if d := descriptorLiteral(f.Protocol.Descriptor); d != "" {
 		q.add(act, rdfNsNK+"protocolDescriptor", lit(d, ""), g)
 	}
@@ -167,6 +170,14 @@ func Attribution(r *registry.Registry, fotonID string, keys []ed25519.PublicKey)
 		out[kid] = q.bytes()
 	}
 	return out, nil
+}
+
+// declaredOf is protocol.descriptor.declared when it is a non-empty string, "" otherwise (SPEC 6.2).
+// The value is projected as written and not interpreted: "hand" and "heuristic:<name>" are the
+// authoring tools' convention, and a foton without the field is an observed step.
+func declaredOf(d map[string]any) string {
+	s, _ := d["declared"].(string)
+	return s
 }
 
 // descriptorLiteral is the protocol descriptor in its canonical JSON form, or "" when there is none

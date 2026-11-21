@@ -78,3 +78,58 @@ func TestDescriptorIsOneLiteral(t *testing.T) {
 }
 
 func b64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
+
+// A declared step (protocol.descriptor.declared) is projected as nk:declared with its value, in both
+// projections; an observed step (no field) carries no nk:declared (SPEC 6.2).
+func TestDeclaredIsProjected(t *testing.T) {
+	r, err := registry.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := sha256.Sum256([]byte("k"))
+	k := ed25519.NewKeyFromSeed(s[:])
+	sign := func(desc map[string]any) string {
+		env, id, err := foton.SignWith(foton.Spec{Statement: "v1",
+			Inputs:   []foton.FileSpec{{Path: "in.csv", Hash: core.HashBytes([]byte("i"))}},
+			Outputs:  []foton.FileSpec{{Path: "out.csv", Hash: core.HashBytes([]byte("o"))}},
+			Protocol: &foton.ProtocolSpec{Kind: "run", Descriptor: desc}}, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := r.Add(env); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	for _, v := range []string{"hand", "heuristic:git-log"} {
+		id := sign(map[string]any{"cmd": "x", "declared": v})
+		own, err := Record(r, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(own), "<https://kton.dev/v/declared> "+nqLiteral(v)) {
+			t.Errorf("Record lacks nk:declared %q:\n%s", v, own)
+		}
+		ttl, err := Turtle(r, id, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(ttl, "nk:declared "+rdfLiteral(v)) {
+			t.Errorf("Turtle lacks nk:declared %q:\n%s", v, ttl)
+		}
+	}
+	// Turtle exports the whole registry, so the observed step gets a store of its own.
+	if r, err = registry.Open(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	observed := sign(map[string]any{"cmd": "x"})
+	own, _ := Record(r, observed)
+	ttl, _ := Turtle(r, observed, nil)
+	if strings.Contains(string(own), "kton.dev/v/declared") || strings.Contains(ttl, "nk:declared") {
+		t.Errorf("an observed step carries nk:declared:\n%s\n%s", own, ttl)
+	}
+	notString := sign(map[string]any{"cmd": "x", "declared": true})
+	if b, _ := Record(r, notString); strings.Contains(string(b), "kton.dev/v/declared") {
+		t.Errorf("a non-string declared is projected:\n%s", b)
+	}
+}
