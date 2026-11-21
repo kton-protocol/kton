@@ -80,7 +80,7 @@ func TestDescriptorIsOneLiteral(t *testing.T) {
 func b64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 
 // A declared step (protocol.descriptor.declared) is projected as nk:declared with its value, in both
-// projections; an observed step (no field) carries no nk:declared (SPEC 6.2).
+// projections; a step its signer did not declare (no field) carries no nk:declared (SPEC 6.2).
 func TestDeclaredIsProjected(t *testing.T) {
 	r, err := registry.Open(t.TempDir())
 	if err != nil {
@@ -118,15 +118,15 @@ func TestDeclaredIsProjected(t *testing.T) {
 			t.Errorf("Turtle lacks nk:declared %q:\n%s", v, ttl)
 		}
 	}
-	// Turtle exports the whole registry, so the observed step gets a store of its own.
+	// Turtle exports the whole registry, so the undeclared step gets a store of its own.
 	if r, err = registry.Open(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	observed := sign(map[string]any{"cmd": "x"})
-	own, _ := Record(r, observed)
-	ttl, _ := Turtle(r, observed, nil)
+	undeclared := sign(map[string]any{"cmd": "x"})
+	own, _ := Record(r, undeclared)
+	ttl, _ := Turtle(r, undeclared, nil)
 	if strings.Contains(string(own), "kton.dev/v/declared") || strings.Contains(ttl, "nk:declared") {
-		t.Errorf("an observed step carries nk:declared:\n%s\n%s", own, ttl)
+		t.Errorf("a step without the field carries nk:declared:\n%s\n%s", own, ttl)
 	}
 	notString := sign(map[string]any{"cmd": "x", "declared": true})
 	if b, _ := Record(r, notString); strings.Contains(string(b), "kton.dev/v/declared") {

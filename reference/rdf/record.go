@@ -174,7 +174,8 @@ func Attribution(r *registry.Registry, fotonID string, keys []ed25519.PublicKey)
 
 // declaredOf is protocol.descriptor.declared when it is a non-empty string, "" otherwise (SPEC 6.2).
 // The value is projected as written and not interpreted: "hand" and "heuristic:<name>" are the
-// authoring tools' convention, and a foton without the field is an observed step.
+// authoring tools' convention. A foton without the field was not declared by its signer; that does
+// not make it observed.
 func declaredOf(d map[string]any) string {
 	s, _ := d["declared"].(string)
 	return s
