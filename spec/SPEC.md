@@ -250,6 +250,13 @@ Protocol := {
 
 - `protocol.ref` MUST equal `sha256(canon(descriptor))` when `descriptor` is present.
 - The descriptor is **opaque**: a conforming kernel MUST NOT interpret it.
+- **Declared steps.** `protocol.descriptor.declared` MAY be a string saying that the step was not
+  observed by a recorder but declared by its signer: `hand` (a person stated it) or
+  `heuristic:<name>` (a tool inferred it). A foton without it was **not declared** by its signer; the kernel cannot tell whether
+  a recorder observed it (that is a question of who signed it and how). It is covered like the rest of
+  the descriptor (6.3): the same computation with and without `declared` is two records. The kernel
+  does not act on it; the RDF projection carries it as `nk:declared` with the value as written, so a
+  reader can find declared steps without decoding the descriptor.
 - **Conditional fotons.** `conditions` marks a step whose output depended on state the record cannot
   pin: a database query, a network call, the clock, an unseeded random source, a person's or a
   language-model agent's judgement. The output can be

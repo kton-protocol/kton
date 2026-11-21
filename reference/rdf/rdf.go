@@ -90,6 +90,9 @@ func Turtle(r *registry.Registry, sel string, trustKeys []ed25519.PublicKey) (st
 				b.WriteString(" ]")
 			}
 		}
+		if d := declaredOf(f.Protocol.Descriptor); d != "" {
+			fmt.Fprintf(&b, " ;\n    nk:declared %s", rdfLiteral(d))
+		}
 		if d := descriptorLiteral(f.Protocol.Descriptor); d != "" {
 			fmt.Fprintf(&b, " ;\n    nk:protocolDescriptor %s", rdfLiteral(d))
 		}
