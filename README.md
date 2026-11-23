@@ -221,10 +221,10 @@ one is what builds the release archives.*
 ## Build
 
 The repo is a Go **workspace** (`go.work`) tying three modules - `plankton` (kernel), `nekton`
-(kernel), `kton` (cockpit). Their one dependency outside the standard library is `golang.org/x/crypto`
-(and its `x/term`, `x/sys`), maintained by the Go team, for the OpenSSH key format of an encrypted
-signing key (`plankton/keys`, #277); `core` and everything that verifies use the standard library
-only. With **Go 1.22+**:
+(kernel), `kton` (cockpit). Their one dependency outside the standard library is `golang.org/x/crypto/blowfish`
+(with `x/term` and `x/sys` for the passphrase prompt), maintained by the Go team, for the OpenSSH key
+format of an encrypted signing key (`plankton/keys`, #277); `core` and everything that verifies use
+the standard library only. With **Go 1.22+**:
 
 ```sh
 git clone https://github.com/kton-protocol/kton && cd kton

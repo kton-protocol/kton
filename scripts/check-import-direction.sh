@@ -61,4 +61,31 @@ check 'plankton imports no os/exec (documents, never executes)' '"os/exec"' "$RO
 check 'nekton imports no os/exec (documents, never executes)'   '"os/exec"' "$ROOT/nekton/reference"
 check 'kton imports no os/exec (conducts, never executes)'      '"os/exec"' "$ROOT/kton/reference"
 
+# Verifying stays dependency-free (#277 K8): only signing reads a key file, and only the keys
+# package and the CLIs that sign import it. Every other kernel package - everything a verifier
+# uses - has no golang.org/x module among its dependencies. And no kernel package, for any
+# target, pulls in golang.org/x/crypto/ssh: the key format is read by keys/openssh.go over
+# x/crypto/blowfish alone (MH 23.11. on #277).
+for mod in reference nekton/reference; do
+  pkgs="$(cd "$ROOT/$mod" && go list ./... | grep -v -e '/keys$' -e '/keys/' -e '/cmd/')"
+  xdeps="$(cd "$ROOT/$mod" && go list -deps $pkgs | grep '^golang.org/x/' || true)"
+  if [[ -n "$xdeps" ]]; then
+    echo "FAIL: ${mod}: a package outside keys and cmd depends on golang.org/x (K8 on #277)" >&2
+    echo "$xdeps" >&2
+    fail=1
+  else
+    echo "ok: ${mod}: no package outside keys and cmd depends on golang.org/x (K8)"
+  fi
+  for target in "" "GOOS=js GOARCH=wasm"; do
+    ssh="$(cd "$ROOT/$mod" && env $target go list -deps ./... | grep '^golang.org/x/crypto/ssh' || true)"
+    if [[ -n "$ssh" ]]; then
+      echo "FAIL: ${mod} ${target:-native}: golang.org/x/crypto/ssh is a dependency" >&2
+      echo "$ssh" >&2
+      fail=1
+    else
+      echo "ok: ${mod} ${target:-native}: golang.org/x/crypto/ssh is no dependency"
+    fi
+  done
+done
+
 exit $fail

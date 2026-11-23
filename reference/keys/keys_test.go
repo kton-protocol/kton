@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -11,21 +12,29 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"golang.org/x/crypto/ssh"
 )
 
+// pubOfSSH reads an ssh-keygen .pub line ("ssh-ed25519 <base64 blob> comment") by hand, so the
+// tests need no SSH library either.
 func pubOfSSH(t *testing.T, path string) ed25519.PublicKey {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pk, _, _, _, err := ssh.ParseAuthorizedKey(b)
+	f := strings.Fields(string(b))
+	if len(f) < 2 || f[0] != keyTypeEd {
+		t.Fatalf("%s: not an ssh-ed25519 public key line", path)
+	}
+	blob, err := base64.StdEncoding.DecodeString(f[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pk.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey)
+	pub, err := readEdPublic(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pub
 }
 
 func fixed(p string) Passphrase {
@@ -71,6 +80,13 @@ func TestLoadOpenSSHFromSSHKeygen(t *testing.T) {
 	}
 	if _, err := Load("testdata/encrypted.key", fixed("wrong")); !errors.Is(err, ErrWrongPassphrase) {
 		t.Errorf("wrong passphrase: %v, want ErrWrongPassphrase", err)
+	}
+	// ssh-keygen at rounds 1, 16, 24 (its default) and 64 (kton-review A2).
+	for _, f := range []string{"encrypted-r1.key", "encrypted-r16.key", "encrypted-r64.key"} {
+		k, err := Load("testdata/"+f, fixed("correct horse"))
+		if err != nil || !bytes.Equal(k.Public().(ed25519.PublicKey), pubOfSSH(t, "testdata/"+f+".pub")) {
+			t.Errorf("%s: %v", f, err)
+		}
 	}
 	var askedFor string
 	got, err = Load("testdata/encrypted.key", func(p string) ([]byte, error) { askedFor = p; return []byte("correct horse"), nil })
