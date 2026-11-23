@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# kton-review A2 on #277: keys we write are read by ssh-keygen. (The other direction, keys made by
+# kton-review A1 and A2 on #277: the copied bcrypt_pbkdf is verbatim, and keys we write are read
+# by ssh-keygen. (The other direction, keys made by
 # ssh-keygen loading with the same seed, is in reference/keys/keys_test.go on checked-in fixtures.)
 # ssh-keygen is run here, not from a Go test: the kernels start no process (check-import-direction).
 #
@@ -13,6 +14,18 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 pass='correct horse'
 fail=0
+
+# A1: the copied bcrypt_pbkdf is upstream's, byte for byte below its 4-line header.
+copy="$ROOT/reference/keys/internal/bcrypt_pbkdf"
+upstream="$(cd "$ROOT/reference" && go mod download -json golang.org/x/crypto@v0.33.0 | sed -n 's/.*"Dir": "\(.*\)",/\1/p')/ssh/internal/bcrypt_pbkdf"
+for f in bcrypt_pbkdf.go bcrypt_pbkdf_test.go; do
+  if tail -n +5 "$copy/$f" | cmp -s - "$upstream/$f"; then
+    echo "ok: $f is x/crypto v0.33.0's, verbatim"
+  else
+    echo "FAIL: $f differs from x/crypto v0.33.0 ssh/internal/bcrypt_pbkdf" >&2
+    fail=1
+  fi
+done
 
 ( cd "$ROOT/reference" && KTON_KEYS_INTEROP_DIR="$work" go test -count=1 -run '^TestWriteInteropKeys$' ./keys >/dev/null )
 for k in "$work"/kton-r*.key; do
