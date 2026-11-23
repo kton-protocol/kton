@@ -9,8 +9,9 @@
   private-key form, encrypted with a passphrase (bcrypt-pbkdf, AES-256-CTR): the format
   `ssh-keygen -t ed25519` writes, and `ssh-keygen -p` changes the passphrase. Every `--sign` reads
   the plain hex seed as before and the OpenSSH form, encrypted or not, including keys made by
-  `ssh-keygen`. The passphrase comes from `KTON_KEY_PASSPHRASE`, which is read at start and removed
-  from the process environment, else the controlling terminal (no echo; `/dev/tty`, not stdin);
+  `ssh-keygen`. The passphrase comes from `KTON_KEY_PASSPHRASE`, which is read at start and unset so
+  that processes started later do not inherit it (on Linux `/proc/<pid>/environ` still shows the
+  start value, to the same user and root), else the controlling terminal (no echo; `/dev/tty`, not stdin);
   never from an argument or a file. `pubkey` and `keyid` name an encrypted key without its passphrase. The
   seed, and so the keyid, is the same in both forms. `--encrypt` with `--seed` is refused (a fixture
   key is rebuilt from its seed). For a library caller, `kton.dev/plankton/keys` has `Load(path,

@@ -12,8 +12,7 @@ import (
 )
 
 // EnvPassphrase is the environment variable the reference CLIs read a key's passphrase from, for CI
-// and scripts. It is read once and then removed from the process environment (TakeEnvPassphrase);
-// it is never set or logged.
+// and scripts. TakeEnvPassphrase reads and unsets it; it is never set or logged.
 const EnvPassphrase = "KTON_KEY_PASSPHRASE"
 
 var (
@@ -22,8 +21,9 @@ var (
 	envSet  bool
 )
 
-// TakeEnvPassphrase reads $KTON_KEY_PASSPHRASE and removes it from the process environment, so
-// nothing started later inherits it (kton-review K3 on #277). A program calls it first thing in main;
+// TakeEnvPassphrase reads $KTON_KEY_PASSPHRASE and unsets it, so processes started later do not
+// inherit it (kton-review K3 on #277). It cannot hide the start value: on Linux /proc/<pid>/environ
+// keeps the environment the process started with, readable by the same user and root. A program calls it first thing in main;
 // CLIPassphrase and NewPassphrase call it too, so a caller that forgets still unsets it on first use.
 // The value is held for later keys; a value set again later replaces it. The returned slice is a copy.
 func TakeEnvPassphrase() ([]byte, bool) {

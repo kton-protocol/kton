@@ -118,8 +118,8 @@ env:
 `
 
 func main() {
-	// Take the key passphrase out of the environment before anything else runs, so nothing this
-	// process starts later can inherit it (#277, kton-review K3).
+	// Unset the key passphrase before anything else runs, so no process started later inherits it
+	// (#277, kton-review K3). /proc/<pid>/environ still shows the start value on Linux.
 	keys.TakeEnvPassphrase()
 	if len(os.Args) < 2 {
 		fmt.Print(usage)
