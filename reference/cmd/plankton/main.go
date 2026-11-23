@@ -13,6 +13,7 @@ import (
 
 	"kton.dev/plankton/blobstore"
 	"kton.dev/plankton/core"
+	"kton.dev/plankton/keys"
 	"kton.dev/plankton/registry"
 )
 
@@ -117,6 +118,9 @@ env:
 `
 
 func main() {
+	// Take the key passphrase out of the environment before anything else runs, so nothing this
+	// process starts later can inherit it (#277, kton-review K3).
+	keys.TakeEnvPassphrase()
 	if len(os.Args) < 2 {
 		fmt.Print(usage)
 		os.Exit(2)

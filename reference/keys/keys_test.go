@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,16 +131,62 @@ func TestMarshalEncryptedRoundTrip(t *testing.T) {
 	}
 }
 
+func noTerminal(t *testing.T) {
+	t.Helper()
+	old := OpenTerminal
+	OpenTerminal = func() (Terminal, func(), error) { return Terminal{}, nil, errors.New("no tty in this test") }
+	t.Cleanup(func() { OpenTerminal = old })
+}
+
+// kton-review K3 on #277: the variable is read, then removed from the process environment, so a
+// child started after the key loads does not inherit it (a child gets os.Environ()); the value is
+// held for the next key, replaced by a later one, and dropped by ForgetEnvPassphrase.
 func TestPassphraseFromEnv(t *testing.T) {
+	noTerminal(t)
+	t.Cleanup(ForgetEnvPassphrase)
 	t.Setenv(EnvPassphrase, "correct horse")
 	if _, err := Load("testdata/encrypted.key", CLIPassphrase); err != nil {
-		t.Errorf("CLIPassphrase with %s: %v", EnvPassphrase, err)
+		t.Fatalf("CLIPassphrase with %s: %v", EnvPassphrase, err)
+	}
+	if _, ok := os.LookupEnv(EnvPassphrase); ok {
+		t.Errorf("%s is still in the environment after the key loaded", EnvPassphrase)
+	}
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, EnvPassphrase+"=") {
+			t.Errorf("os.Environ, what a child inherits, still has %s", EnvPassphrase)
+		}
+	}
+	if _, err := Load("testdata/encrypted.key", CLIPassphrase); err != nil {
+		t.Errorf("a second key after the variable was taken: %v", err)
 	}
 	if p, err := NewPassphrase("x"); err != nil || string(p) != "correct horse" {
 		t.Errorf("NewPassphrase: %q %v", p, err)
 	}
+	t.Setenv(EnvPassphrase, "other")
+	if p, _ := TakeEnvPassphrase(); string(p) != "other" {
+		t.Errorf("a later value did not replace the held one: %q", p)
+	}
+	ForgetEnvPassphrase()
+	if _, err := Load("testdata/encrypted.key", CLIPassphrase); err == nil || !strings.Contains(err.Error(), EnvPassphrase) {
+		t.Errorf("after Forget, no variable and no terminal: %v; want a refusal naming %s", err, EnvPassphrase)
+	}
 	t.Setenv(EnvPassphrase, "")
 	if _, err := NewPassphrase("x"); err == nil {
 		t.Error("an empty passphrase from the environment was accepted for a new key")
+	}
+}
+
+// Asked on the controlling terminal, not stdin: an opened console that is not a terminal is refused,
+// and stdin is never read.
+func TestPromptNeedsATerminal(t *testing.T) {
+	ForgetEnvPassphrase()
+	os.Unsetenv(EnvPassphrase)
+	r, w, _ := os.Pipe()
+	defer w.Close()
+	old := OpenTerminal
+	OpenTerminal = func() (Terminal, func(), error) { return Terminal{In: r, Out: io.Discard}, func() { r.Close() }, nil }
+	defer func() { OpenTerminal = old }()
+	if _, err := CLIPassphrase("k"); err == nil {
+		t.Error("a pipe was accepted as the terminal")
 	}
 }

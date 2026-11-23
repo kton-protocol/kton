@@ -15,6 +15,7 @@ import (
 	"kton.dev/nekton/claim"
 	"kton.dev/nekton/registry"
 	"kton.dev/plankton/core"
+	"kton.dev/plankton/keys"
 )
 
 const usage = `nekton - signed-claim commitment substrate (reference)
@@ -95,6 +96,9 @@ example set at github.com/gitmick/kton-examples
 `
 
 func main() {
+	// Take the key passphrase out of the environment before anything else runs, so nothing this
+	// process starts later can inherit it (#277, kton-review K3).
+	keys.TakeEnvPassphrase()
 	if len(os.Args) < 2 {
 		fmt.Print(usage)
 		os.Exit(2)

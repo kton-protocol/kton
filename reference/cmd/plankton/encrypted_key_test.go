@@ -17,6 +17,7 @@ func TestKeygenEncrypt(t *testing.T) {
 	if err := keygen([]string{name, "--encrypt", "--seed", strings.Repeat("ab", 32)}); err == nil {
 		t.Error("--encrypt with --seed was accepted")
 	}
+	t.Cleanup(keys.ForgetEnvPassphrase)
 	t.Setenv(keys.EnvPassphrase, "s3cret pass")
 	if err := keygen([]string{name, "--encrypt"}); err != nil {
 		t.Fatal(err)
@@ -56,6 +57,10 @@ func TestKeygenEncrypt(t *testing.T) {
 func TestEncryptedKeyWithoutPassphraseSource(t *testing.T) {
 	t.Setenv(keys.EnvPassphrase, "") // restored after the test
 	os.Unsetenv(keys.EnvPassphrase)
+	keys.ForgetEnvPassphrase()
+	old := keys.OpenTerminal // never ask a developer's terminal from a test
+	keys.OpenTerminal = func() (keys.Terminal, func(), error) { return keys.Terminal{}, nil, os.ErrNotExist }
+	t.Cleanup(func() { keys.OpenTerminal = old })
 	name := filepath.Join(t.TempDir(), "bob")
 	if err := keygen([]string{name}); err != nil {
 		t.Fatal(err)

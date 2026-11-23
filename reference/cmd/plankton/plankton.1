@@ -274,7 +274,9 @@ binary - the binary is self-documenting offline.
 .SH ENVIRONMENT
 .TP
 .B KTON_KEY_PASSPHRASE
-The passphrase of an encrypted signing key, for scripts and CI; without it the terminal is asked.
+The passphrase of an encrypted signing key, for scripts and CI. It is read at start and removed from
+the process environment, so nothing started later inherits it. Without it, the controlling terminal
+(/dev/tty, CONIN$ on Windows) is asked, not stdin.
 .TP
 .B PLANKTON_DIR
 Registry directory (default ./plankton-data).
