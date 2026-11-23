@@ -188,7 +188,8 @@ reads the per-claim layout of 0.2 (it names the file and refuses). Upgrade every
 shared registry at the same time, and read the "Upgrading" notes in [`CHANGELOG.md`](CHANGELOG.md)
 for every release you skip.
 
-*`go install` works for all three, on **Go 1.25 or newer**:*
+*`go install` works for all three. Through the default module proxy (`proxy.golang.org`) any Go from
+1.22 does it; resolving directly from the repository (`GOPROXY=direct`) needs **Go 1.25 or newer**:*
 
 ```sh
 go install kton.dev/plankton/cmd/plankton@v0.4.3
