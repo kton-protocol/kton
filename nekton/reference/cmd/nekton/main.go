@@ -36,10 +36,6 @@ usage:
   nekton verify --root [--registry D] [--json]        the root chain: entries, local head, registered
                                                       subnektons and whether each is held, forks (reported,
                                                       never rejected)
-  nekton verify --store [--registry D] [--json]       list the store lines that do not parse as a record
-                                                      (file, line, byte offset, first bytes), so a torn
-                                                      tail or a merge-conflict marker can be removed by
-                                                      hand; exit 0 none, 5 some
   nekton seed <scope-name> --sign key.key [--add] [--registry D]  open a (sub)nekton scope; prints its scope id
       --print-id         print ONLY the bare id on stdout, human lines to stderr
                          (same contract as plankton author --print-id): ID=$(nekton seed … --print-id)
@@ -63,6 +59,10 @@ usage:
                                                       key, 3 genuine but ingest would refuse it,
                                                       4 held here but DEFERRED - its prev/seed has
                                                       not arrived (incomplete, not invalid, §11)
+  nekton verify --store [--registry D] [--json]       list the store lines that do not parse as a record
+                                                      (file, line, byte offset, first bytes), so a torn
+                                                      tail or a merge-conflict marker can be removed by
+                                                      hand; exit 0 none, 5 some
   nekton records [--json] [--since N]                  every claim WITH its signed envelope: the
                                                       SPEC §12 sync(since) answer, over stdout
   nekton position [--registry D] [--json]             did anything change? epoch, maxSeq and a fingerprint
