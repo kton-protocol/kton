@@ -67,3 +67,44 @@ func TestUnreadableLinesNamesEachLine(t *testing.T) {
 		}
 	}
 }
+
+// kton-review V2 on #297: a store of a newer format is refused, as Open refuses it, not listed line
+// by line as unreadable. Nothing is written to it.
+func TestUnreadableLinesRefusesANewerFormat(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := Open(dir)
+	if _, err := r.Write(note("a"), keyOf("a")); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "objects", formatMarker)
+	newer := []byte("nekton-store 99\n")
+	if err := os.WriteFile(marker, newer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := UnreadableLines(dir); err == nil || !strings.Contains(err.Error(), "format 99") {
+		t.Fatalf("newer format: %v, %v; want a refusal naming the format", got, err)
+	}
+	if b, _ := os.ReadFile(marker); string(b) != string(newer) {
+		t.Errorf("the marker changed: %q", b)
+	}
+}
+
+// The offset points at the head's first byte, also for a line with leading blanks.
+func TestUnreadableLinesOffsetMatchesHead(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(dir, "objects", "unscoped.nekton.jsonl")
+	content := "\n   \t<<<<<<< HEAD\n"
+	if err := os.WriteFile(f, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := UnreadableLines(dir)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("%v %+v", err, got)
+	}
+	if l := got[0]; l.Line != 2 || !strings.HasPrefix(content[l.Offset:], l.Head) || l.Head != "<<<<<<< HEAD" {
+		t.Errorf("%+v: offset does not point at the head", l)
+	}
+}

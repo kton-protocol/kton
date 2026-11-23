@@ -62,7 +62,8 @@ usage:
   nekton verify --store [--registry D] [--json]       list the store lines that do not parse as a record
                                                       (file, line, byte offset, first bytes), so a torn
                                                       tail or a merge-conflict marker can be removed by
-                                                      hand; exit 0 none, 5 some
+                                                      hand; exit 0 none, 5 some, 1 the store cannot
+                                                      be read (I/O, legacy layout, newer format)
   nekton records [--json] [--since N]                  every claim WITH its signed envelope: the
                                                       SPEC §12 sync(since) answer, over stdout
   nekton position [--registry D] [--json]             did anything change? epoch, maxSeq and a fingerprint
@@ -447,7 +448,7 @@ func run(cmd string, args []string) error {
 				return err
 			}
 			if n > 0 {
-				os.Exit(5)
+				exitStore(5)
 			}
 			return nil
 		}

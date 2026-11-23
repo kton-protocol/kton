@@ -15,7 +15,7 @@ import (
 type UnreadableLine struct {
 	File   string `json:"file"`   // the subnekton file, relative to the registry directory, with "/"
 	Line   int    `json:"line"`   // 1-based line number in that file
-	Offset int64  `json:"offset"` // byte offset of the line's first byte in that file
+	Offset int64  `json:"offset"` // byte offset in that file of Head's first byte
 	Head   string `json:"head"`   // the line's first bytes, as stored (at most unreadableHeadBytes)
 	Err    string `json:"error"`  // why it does not parse
 }
@@ -29,6 +29,12 @@ const unreadableHeadBytes = 80
 // objects directory has no unreadable lines.
 func UnreadableLines(dir string) ([]UnreadableLine, error) {
 	objectsDir := filepath.Join(dir, "objects")
+	// A store of a newer format is refused, as Open refuses it, rather than having every line of a
+	// layout this build does not know listed as unreadable (kton-review V2). Read-only: the marker
+	// is read, never written.
+	if err := checkStoreFormat(dir, objectsDir); err != nil {
+		return nil, err
+	}
 	var files, legacy []string
 	if err := filepath.WalkDir(objectsDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -70,6 +76,8 @@ func UnreadableLines(dir string) ([]UnreadableLine, error) {
 			if line == "" {
 				continue
 			}
+			// The offset and the head describe the same bytes: the trimmed line's first one.
+			start += int64(strings.Index(raw, line))
 			if err := parseRecordLine(line, &objectFile{}); err != nil {
 				head := line
 				if len(head) > unreadableHeadBytes {
@@ -85,6 +93,10 @@ func UnreadableLines(dir string) ([]UnreadableLine, error) {
 
 // parseRecordLine is the one rule for whether a store line is a record. readSubnektonFor and
 // UnreadableLines both use it, so the count and the list cannot drift apart.
+//
+// It decides only whether a line is one JSON record. A line that parses but is no valid record
+// (`null`, `{}`, a claim without an envelope) is dropped later, on load, and counted in Dropped(),
+// with the records refused on their merits (kton-review V1 on #297; naming those is #287).
 func parseRecordLine(line string, of *objectFile) error {
 	return json.Unmarshal([]byte(line), of)
 }

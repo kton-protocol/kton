@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 
 	"kton.dev/nekton/registry"
 )
@@ -38,3 +39,7 @@ func storeLinesReport(w io.Writer, regDir string, asJSON bool) (int, error) {
 	}
 	return len(bad), nil
 }
+
+// exitStore is os.Exit for `verify --store`, a variable so a test can hold the exit code without a
+// subprocess (the architecture guard keeps os/exec out of this module, tests included).
+var exitStore = os.Exit

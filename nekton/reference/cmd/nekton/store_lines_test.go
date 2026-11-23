@@ -58,3 +58,34 @@ func TestVerifyStoreNamesUnreadableLines(t *testing.T) {
 		t.Errorf("--json: %v %+v", err, j)
 	}
 }
+
+// kton-review T1 on #297: the command, not only the report, exits 5 on a torn store and 0 on a whole
+// one. Removing the exit fails this test.
+func TestVerifyStoreExitCode(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := registry.Open(dir)
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	env, _, err := claim.SignWith(claim.Spec{Subject: []claim.SubjectSpec{{URI: "urn:x"}}, Predicate: "https://kton.dev/v/x", By: "b", When: "2026-11-18T00:00:00Z"}, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Add(env); err != nil {
+		t.Fatal(err)
+	}
+	code := -1
+	exitStore = func(c int) { code = c }
+	defer func() { exitStore = os.Exit }()
+	if err := run("verify", []string{"--store", "--registry", dir}); err != nil || code != -1 {
+		t.Fatalf("whole store: err=%v, exit=%d; want no exit (0)", err, code)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "objects", "*.nekton.jsonl"))
+	fh, err := os.OpenFile(files[0], os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh.WriteString("<<<<<<< HEAD\n")
+	fh.Close()
+	if err := run("verify", []string{"--store", "--registry", dir}); err != nil || code != 5 {
+		t.Fatalf("torn store: err=%v, exit=%d; want 5", err, code)
+	}
+}
