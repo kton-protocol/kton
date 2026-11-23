@@ -1,0 +1,145 @@
+package keys
+
+import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"golang.org/x/crypto/ssh"
+)
+
+func pubOfSSH(t *testing.T, path string) ed25519.PublicKey {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pk, _, _, _, err := ssh.ParseAuthorizedKey(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pk.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey)
+}
+
+func fixed(p string) Passphrase {
+	return func(string) ([]byte, error) { return []byte(p), nil }
+}
+
+// The plain form keygen has always written is read exactly as before.
+func TestLoadPlainHexSeed(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	f := filepath.Join(t.TempDir(), "a.key")
+	os.WriteFile(f, []byte(hex.EncodeToString(priv.Seed())+"\n"), 0o600)
+	asked := false
+	got, err := Load(f, func(string) ([]byte, error) { asked = true; return nil, nil })
+	if err != nil || !bytes.Equal(got, priv) {
+		t.Fatalf("Load = %v, %v", got, err)
+	}
+	if asked {
+		t.Error("a plain key asked for a passphrase")
+	}
+	if pub, err := PublicKey([]byte(hex.EncodeToString(priv.Seed()))); err != nil || !bytes.Equal(pub, priv.Public().(ed25519.PublicKey)) {
+		t.Errorf("PublicKey = %v, %v", pub, err)
+	}
+	if _, err := Parse([]byte("abcd"), "", nil); err == nil {
+		t.Error("a short seed was accepted")
+	}
+}
+
+// Keys made by ssh-keygen: unencrypted, and encrypted with a passphrase.
+func TestLoadOpenSSHFromSSHKeygen(t *testing.T) {
+	want := pubOfSSH(t, "testdata/plain-openssh.key.pub")
+	got, err := Load("testdata/plain-openssh.key", nil)
+	if err != nil || !bytes.Equal(got.Public().(ed25519.PublicKey), want) {
+		t.Fatalf("unencrypted: %v", err)
+	}
+
+	want = pubOfSSH(t, "testdata/encrypted.key.pub")
+	b, _ := os.ReadFile("testdata/encrypted.key")
+	if !IsEncrypted(b) {
+		t.Error("IsEncrypted = false for an encrypted key")
+	}
+	if _, err := Load("testdata/encrypted.key", nil); !errors.Is(err, ErrNoPassphrase) {
+		t.Errorf("no passphrase source: %v, want ErrNoPassphrase", err)
+	}
+	if _, err := Load("testdata/encrypted.key", fixed("wrong")); !errors.Is(err, ErrWrongPassphrase) {
+		t.Errorf("wrong passphrase: %v, want ErrWrongPassphrase", err)
+	}
+	var askedFor string
+	got, err = Load("testdata/encrypted.key", func(p string) ([]byte, error) { askedFor = p; return []byte("correct horse"), nil })
+	if err != nil || !bytes.Equal(got.Public().(ed25519.PublicKey), want) {
+		t.Fatalf("encrypted: %v", err)
+	}
+	if askedFor != "testdata/encrypted.key" {
+		t.Errorf("the callback was asked about %q", askedFor)
+	}
+	// Naming the key needs no passphrase: the public half is stored in clear.
+	if pub, err := PublicKey(b); err != nil || !bytes.Equal(pub, want) {
+		t.Errorf("PublicKey of the encrypted key = %v, %v", pub, err)
+	}
+	// A failing source is passed through, not mistaken for a wrong passphrase.
+	boom := errors.New("no tty")
+	if _, err := Load("testdata/encrypted.key", func(string) ([]byte, error) { return nil, boom }); !errors.Is(err, boom) {
+		t.Errorf("source error: %v", err)
+	}
+}
+
+func TestRefusesANonEd25519Key(t *testing.T) {
+	if _, err := Load("testdata/rsa.key", nil); err == nil || !strings.Contains(err.Error(), "Ed25519") {
+		t.Errorf("rsa: %v", err)
+	}
+	b, _ := os.ReadFile("testdata/rsa.key")
+	if _, err := PublicKey(b); err == nil {
+		t.Error("PublicKey accepted an RSA key")
+	}
+}
+
+// What keygen --encrypt writes holds the same seed, so the keyid does not change, and ssh-keygen can
+// read it (checked by hand: `ssh-keygen -y -f` prints the same public key).
+func TestMarshalEncryptedRoundTrip(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	if _, err := MarshalEncrypted(priv, nil); err == nil {
+		t.Error("an empty passphrase was accepted")
+	}
+	a, err := MarshalEncrypted(priv, []byte("pw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := MarshalEncrypted(priv, []byte("pw"))
+	if bytes.Equal(a, b) {
+		t.Error("two encryptions gave the same bytes: the salt is not fresh")
+	}
+	if !strings.HasPrefix(string(a), "-----BEGIN OPENSSH PRIVATE KEY-----") || !IsEncrypted(a) {
+		t.Errorf("not an encrypted OpenSSH key:\n%s", a)
+	}
+	if bytes.Contains(a, []byte(hex.EncodeToString(priv.Seed()))) {
+		t.Error("the seed is in the file in clear")
+	}
+	got, err := Parse(a, "k", fixed("pw"))
+	if err != nil || !bytes.Equal(got, priv) {
+		t.Fatalf("round trip: %v", err)
+	}
+	if pub, err := PublicKey(a); err != nil || !bytes.Equal(pub, priv.Public().(ed25519.PublicKey)) {
+		t.Errorf("PublicKey: %v", err)
+	}
+}
+
+func TestPassphraseFromEnv(t *testing.T) {
+	t.Setenv(EnvPassphrase, "correct horse")
+	if _, err := Load("testdata/encrypted.key", CLIPassphrase); err != nil {
+		t.Errorf("CLIPassphrase with %s: %v", EnvPassphrase, err)
+	}
+	if p, err := NewPassphrase("x"); err != nil || string(p) != "correct horse" {
+		t.Errorf("NewPassphrase: %q %v", p, err)
+	}
+	t.Setenv(EnvPassphrase, "")
+	if _, err := NewPassphrase("x"); err == nil {
+		t.Error("an empty passphrase from the environment was accepted for a new key")
+	}
+}

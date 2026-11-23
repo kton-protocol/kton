@@ -60,7 +60,7 @@ every reference output. Whether that fulfilment is \fIaccepted\fR as a validatio
 attestation - not plankton's verdict.
 .SH COMMANDS
 .TP
-.B plankton keygen \fIname\fR [--seed \fI64-hex\fR] [--force]
+.B plankton keygen \fIname\fR [--encrypt] [--seed \fI64-hex\fR] [--force]
 Generate an Ed25519 signing identity: writes \fIname\fR.key (secret) and \fIname\fR.pub.
 \fB--seed\fR derives it from a seed rather than the entropy pool, so a corpus or a snapshot rebuilds
 to the same record ids - the public key is inside every signed payload, so a random key per run moves
@@ -72,6 +72,14 @@ against that filename - the signatures stay valid, the ability to check them doe
 \fB--force\fR replaces it deliberately by \fBmoving\fR the old file to \fIname\fR.key.old; this
 command deletes key material under no circumstances. Re-running with an identical \fB--seed\fR is a
 no-op, so a reproducible snapshot does not need \fB--force\fR.
+.IP
+\fB--encrypt\fR writes \fIname\fR.key in the OpenSSH private-key form, encrypted with a passphrase
+(bcrypt-pbkdf, AES-256-CTR), as \fBssh-keygen -t ed25519\fR writes it; \fBssh-keygen -p\fR changes
+the passphrase. The passphrase comes from \fBKTON_KEY_PASSPHRASE\fR, else it is asked twice on the
+terminal. The seed, and so the keyid, is the same as in the plain form. Not with \fB--seed\fR.
+Every command that signs (\fB--sign\fR) reads the plain hex seed and the OpenSSH form, encrypted or
+not, including keys made by \fBssh-keygen\fR; \fBpubkey\fR and \fBkeyid\fR read an encrypted key
+without its passphrase.
 .TP
 .B plankton pubkey \fIkey.key\fR|\fIhex\fR
 Print the public key hex. Needed because an identity can be written by hand (a bare 32-byte seed is a
@@ -264,6 +272,9 @@ subset). A pure offline serialization; plankton documents, it does not reason.
 Print this manual page (roff source; pipe to \fBman -l -\fR to render). The page is embedded in the
 binary - the binary is self-documenting offline.
 .SH ENVIRONMENT
+.TP
+.B KTON_KEY_PASSPHRASE
+The passphrase of an encrypted signing key, for scripts and CI; without it the terminal is asked.
 .TP
 .B PLANKTON_DIR
 Registry directory (default ./plankton-data).

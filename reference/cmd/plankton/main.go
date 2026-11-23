@@ -19,13 +19,17 @@ import (
 const usage = `plankton - content-addressed lineage substrate (reference)
 
 usage:
-  plankton keygen <name> [--seed <64-hex>] [--force]  generate a signing identity (<name>.key/.pub)
+  plankton keygen <name> [--encrypt] [--seed <64-hex>] [--force]  generate a signing identity (<name>.key/.pub)
       An existing key file is NEVER overwritten: replacing an identity destroys the only copy of
       its private seed. --force moves the old file to <name>.key.old rather than deleting it.
       An identical --seed is a no-op, so a reproducible snapshot can re-run.
       --seed <64-hex>                                 derive it from a seed, not the entropy pool, so a corpus or
                                                       snapshot rebuilds to the same record ids (fixtures only:
                                                       the key is only as strong as its seed)
+      --encrypt          write <name>.key in the OpenSSH form, encrypted with a passphrase from
+                         $KTON_KEY_PASSPHRASE or asked twice on the terminal. Same seed, same keyid.
+      Every --sign reads either form, and keys made by ssh-keygen -t ed25519; an encrypted key's
+      passphrase comes from $KTON_KEY_PASSPHRASE or the terminal, never from an argument.
   plankton pubkey <key.key|hex>                       print the public key hex (what verify/--trust-keys read)
   plankton keyid <key.pub|key.key|hex>                print the keyid shown in signatures (map key -> identity)
   plankton author --in F ... --out F ... --cmd "…" [--located PATH=URL] [--sign key.key] [-o out] [--add]

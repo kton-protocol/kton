@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- **Passphrase-protected signing keys** (#277, kton-cockpit for the QM Workbench, MH 19.11.).
+  `plankton keygen --encrypt` and `nekton keygen --encrypt` write `<name>.key` in the OpenSSH
+  private-key form, encrypted with a passphrase (bcrypt-pbkdf, AES-256-CTR): the format
+  `ssh-keygen -t ed25519` writes, and `ssh-keygen -p` changes the passphrase. Every `--sign` reads
+  the plain hex seed as before and the OpenSSH form, encrypted or not, including keys made by
+  `ssh-keygen`. The passphrase comes from `KTON_KEY_PASSPHRASE`, else the terminal (no echo); never
+  from an argument or a file. `pubkey` and `keyid` name an encrypted key without its passphrase. The
+  seed, and so the keyid, is the same in both forms. `--encrypt` with `--seed` is refused (a fixture
+  key is rebuilt from its seed). For a library caller, `kton.dev/plankton/keys` has `Load(path,
+  pass)` with a passphrase callback, `PublicKey`, `IsEncrypted` and `MarshalEncrypted`. Nothing in
+  the protocol, the SPEC or verification changes.
+
+### Upgrading
+
+- **The kernel's first dependency outside the standard library**: `golang.org/x/crypto` v0.33.0
+  (with `x/term`, `x/sys`), for the OpenSSH key format. It is required by `kton.dev/plankton`, used
+  only by the new `keys` package; `core` and everything that verifies stay standard-library only.
+  v0.33.0 is the newest release that keeps the `go 1.22` floor. Linking it brings package `net` into
+  the plankton binary (nekton's already had it); no kernel opens a socket, and the architecture
+  guard still holds.
+
 ## 0.4.3 — released 2026-11-23
 
 - **A declared step is projected as `nk:declared`** (#292, kton-cockpit, MH 21.11.). A foton whose

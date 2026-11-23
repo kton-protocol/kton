@@ -19,6 +19,7 @@ import (
 	"kton.dev/nekton/claim"
 	"kton.dev/nekton/registry"
 	"kton.dev/plankton/core"
+	"kton.dev/plankton/keys"
 )
 
 // keyidHex: first 16 hex chars of sha256(rawPublicKey) - identical to plankton (shared identity).
@@ -34,6 +35,13 @@ func keyidOf(s string) (string, error) {
 	isKey := strings.HasSuffix(s, ".key")
 	txt := s
 	if b, err := os.ReadFile(s); err == nil {
+		if keys.IsPEM(b) { // an OpenSSH key, encrypted or not: its public half needs no passphrase
+			pub, err := keys.PublicKey(b)
+			if err != nil {
+				return "", fmt.Errorf("%s: %w", s, err)
+			}
+			return keyidHex(pub), nil
+		}
 		txt = string(b)
 	}
 	txt = strings.TrimSpace(txt)
@@ -66,9 +74,11 @@ func keyidOf(s string) (string, error) {
 // corpora, not for an identity that signs anything anyone must trust.
 func keygen(args []string) error {
 	var name, seedHex string
-	force := false
+	force, encrypt := false, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--encrypt":
+			encrypt = true
 		case "--seed":
 			i++
 			seedHex = arg(args, i)
@@ -82,7 +92,13 @@ func keygen(args []string) error {
 		}
 	}
 	if name == "" {
-		return fmt.Errorf("usage: nekton keygen <name> [--seed <64-hex>] [--force]")
+		return fmt.Errorf("usage: nekton keygen <name> [--encrypt] [--seed <64-hex>] [--force]")
+	}
+	// --seed is for fixtures and reproducible corpora: a key that anyone can rebuild from its seed
+	// is not protected by encrypting the file, and the fresh salt would make a re-run differ.
+	if encrypt && seedHex != "" {
+		return fmt.Errorf("--encrypt and --seed together: a --seed key is a fixture, rebuilt from its seed;\n" +
+			"  encrypting its file protects nothing")
 	}
 
 	var pub ed25519.PublicKey
@@ -106,7 +122,22 @@ func keygen(args []string) error {
 	// os.WriteFile's mode applies only to a NEW file, so an existing 0644 key file kept 0644 and
 	// took the new private seed. The public half is written second, and a failure there
 	// removes the private half rather than leaving a keypair whose public key nobody has.
-	kw, err := core.WriteKeyFile(name+".key", []byte(hex.EncodeToString(priv.Seed())), 0o600, force)
+	// --encrypt (#277): the OpenSSH private-key form, encrypted with a passphrase from
+	// $KTON_KEY_PASSPHRASE or asked twice on the terminal. ssh-keygen -p changes it later. The seed,
+	// and so the keyid, is the same as in the plain form.
+	content := []byte(hex.EncodeToString(priv.Seed()))
+	if encrypt {
+		pass, err := keys.NewPassphrase(name + ".key")
+		if err != nil {
+			return err
+		}
+		content, err = keys.MarshalEncrypted(priv, pass)
+		clear(pass)
+		if err != nil {
+			return err
+		}
+	}
+	kw, err := core.WriteKeyFile(name+".key", content, 0o600, force)
 	if err != nil {
 		return err
 	}
@@ -142,6 +173,14 @@ func keygen(args []string) error {
 func pubkey(arg string) error {
 	txt := arg
 	if b, err := os.ReadFile(arg); err == nil {
+		if keys.IsPEM(b) { // an OpenSSH key: the public half is stored in clear, no passphrase asked
+			pub, err := keys.PublicKey(b)
+			if err != nil {
+				return fmt.Errorf("%s: %w", arg, err)
+			}
+			fmt.Println(hex.EncodeToString(pub))
+			return nil
+		}
 		txt = string(b)
 	}
 	seed, err := hex.DecodeString(strings.TrimSpace(txt))
@@ -181,19 +220,10 @@ func keyidFromArg(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// loadPriv reads a signer's key file: the plain hex seed, or the OpenSSH form, encrypted or not
+// (#277). An encrypted key's passphrase comes from $KTON_KEY_PASSPHRASE or the terminal, never argv.
 func loadPriv(path string) (ed25519.PrivateKey, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	seed, err := hex.DecodeString(strings.TrimSpace(string(b)))
-	if err != nil {
-		return nil, err
-	}
-	if len(seed) != ed25519.SeedSize {
-		return nil, fmt.Errorf("expected %d-byte seed, got %d", ed25519.SeedSize, len(seed))
-	}
-	return ed25519.NewKeyFromSeed(seed), nil
+	return keys.Load(path, keys.CLIPassphrase)
 }
 
 // signingKey returns the signing identity: the key at keyPath, or - when keyPath is empty - a fresh
