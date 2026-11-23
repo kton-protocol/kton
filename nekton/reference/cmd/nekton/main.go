@@ -36,6 +36,10 @@ usage:
   nekton verify --root [--registry D] [--json]        the root chain: entries, local head, registered
                                                       subnektons and whether each is held, forks (reported,
                                                       never rejected)
+  nekton verify --store [--registry D] [--json]       list the store lines that do not parse as a record
+                                                      (file, line, byte offset, first bytes), so a torn
+                                                      tail or a merge-conflict marker can be removed by
+                                                      hand; exit 0 none, 5 some
   nekton seed <scope-name> --sign key.key [--add] [--registry D]  open a (sub)nekton scope; prints its scope id
       --print-id         print ONLY the bare id on stdout, human lines to stderr
                          (same contract as plankton author --print-id): ID=$(nekton seed … --print-id)
@@ -430,6 +434,23 @@ func run(cmd string, args []string) error {
 		return listMaterial(args)
 
 	case "verify":
+		if len(args) > 0 && args[0] == "--store" {
+			rest, asJSON := takeJSON(args[1:])
+			regDir := ""
+			if len(rest) == 2 && rest[0] == "--registry" {
+				regDir = rest[1]
+			} else if len(rest) != 0 {
+				return fmt.Errorf("usage: nekton verify --store [--registry dir] [--json]")
+			}
+			n, err := storeLinesReport(os.Stdout, regOrDefault(regDir), asJSON)
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				os.Exit(5)
+			}
+			return nil
+		}
 		if len(args) > 0 && args[0] == "--root" {
 			rest, asJSON := takeJSON(args[1:])
 			regDir := ""

@@ -1416,8 +1416,8 @@ func readSubnektonFor(path, id string) (out []objectFile, unreadable int) {
 			continue
 		}
 		var of objectFile
-		if err := json.Unmarshal([]byte(line), &of); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping unreadable record in %s: %v\n", path, err)
+		if err := parseRecordLine(line, &of); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping unreadable record in %s: %v (`nekton verify --store` lists it)\n", path, err)
 			unreadable++
 			continue
 		}

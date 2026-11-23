@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **`nekton verify --store` names the store lines that do not parse** (#287 part 1, kton-review N2).
+  `Unreadable()` gave a count and the warning only the file, so repairing a store meant finding the
+  line yourself. It prints each line's file, line number, byte offset, first bytes and parse error
+  (`--json` for the same as data), reads the files without opening the store, and changes nothing:
+  exit 0 when every line parses, 5 when some do not. `registry.UnreadableLines(dir)` is the same
+  list for a library caller, decided by the same rule as the count, so the two cannot disagree. The
+  skip warning now points at the command.
+
 ## 0.4.3 — released 2026-11-23
 
 - **A declared step is projected as `nk:declared`** (#292, kton-cockpit, MH 21.11.). A foton whose
