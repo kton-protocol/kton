@@ -21,6 +21,14 @@
   `TakeEnvPassphrase`/`ForgetEnvPassphrase` for a program that reads the variable. Nothing in
   the protocol, the SPEC or verification changes.
 
+- **`nekton verify --store` names the store lines that do not parse** (#287 part 1, kton-review N2).
+  `Unreadable()` gave a count and the warning only the file, so repairing a store meant finding the
+  line yourself. It prints each line's file, line number, byte offset, first bytes and parse error
+  (`--json` for the same as data), reads the files without opening the store, and changes nothing:
+  exit 0 when every line parses, 5 when some do not. `registry.UnreadableLines(dir)` is the same
+  list for a library caller, decided by the same rule as the count, so the two cannot disagree. The
+  skip warning now points at the command.
+
 ### Upgrading
 
 - **The kernel's first dependency outside the standard library**: `golang.org/x/crypto` v0.33.0,
