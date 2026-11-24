@@ -156,6 +156,14 @@ arrived, so it is in no index (incomplete, not invalid, SPEC \(sc11: add the pre
 resolves). The public key may be a
 \fB.pub file path\fR OR the hex string itself.
 .TP
+.B nekton verify --store [--registry \fIdir\fR] [--json]
+List the store lines that do not parse as a record and that opening the store skips: for each, the
+subnekton file, line number, byte offset, first bytes and parse error. It reads the files without
+opening the store and changes nothing, so a torn last line or a merge-conflict marker can be found
+and removed by hand. A line that is JSON but no valid record is not listed here: opening the store
+drops it, with records refused on their merits. Exit status: 0 every line parses; 5 some do not; 1 the store cannot be
+read (an I/O error, the legacy layout, or a newer store format).
+.TP
 .B nekton about \fIsubject\fR
 Claims about a subject (a "sha256:..." hash or a URI).
 .TP

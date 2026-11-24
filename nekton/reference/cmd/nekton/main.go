@@ -59,6 +59,11 @@ usage:
                                                       key, 3 genuine but ingest would refuse it,
                                                       4 held here but DEFERRED - its prev/seed has
                                                       not arrived (incomplete, not invalid, §11)
+  nekton verify --store [--registry D] [--json]       list the store lines that do not parse as a record
+                                                      (file, line, byte offset, first bytes), so a torn
+                                                      tail or a merge-conflict marker can be removed by
+                                                      hand; exit 0 none, 5 some, 1 the store cannot
+                                                      be read (I/O, legacy layout, newer format)
   nekton records [--json] [--since N]                  every claim WITH its signed envelope: the
                                                       SPEC §12 sync(since) answer, over stdout
   nekton position [--registry D] [--json]             did anything change? epoch, maxSeq and a fingerprint
@@ -430,6 +435,23 @@ func run(cmd string, args []string) error {
 		return listMaterial(args)
 
 	case "verify":
+		if len(args) > 0 && args[0] == "--store" {
+			rest, asJSON := takeJSON(args[1:])
+			regDir := ""
+			if len(rest) == 2 && rest[0] == "--registry" {
+				regDir = rest[1]
+			} else if len(rest) != 0 {
+				return fmt.Errorf("usage: nekton verify --store [--registry dir] [--json]")
+			}
+			n, err := storeLinesReport(os.Stdout, regOrDefault(regDir), asJSON)
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				exitStore(5)
+			}
+			return nil
+		}
 		if len(args) > 0 && args[0] == "--root" {
 			rest, asJSON := takeJSON(args[1:])
 			regDir := ""

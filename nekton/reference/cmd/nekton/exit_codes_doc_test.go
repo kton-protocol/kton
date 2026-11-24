@@ -31,7 +31,7 @@ func TestEveryVerifyExitCodeIsDocumented(t *testing.T) {
 		rest = rest[:j]
 	}
 	codes := map[string]bool{"0": true} // success is the documented default
-	for _, m := range regexp.MustCompile(`os\.Exit\((\d+)\)`).FindAllStringSubmatch(rest, -1) {
+	for _, m := range regexp.MustCompile(`(?:os\.Exit|exitStore)\((\d+)\)`).FindAllStringSubmatch(rest, -1) {
 		codes[m[1]] = true
 	}
 	if len(codes) < 4 {
