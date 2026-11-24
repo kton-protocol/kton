@@ -164,8 +164,8 @@ before you run what is inside it - a provenance tool that asks you to trust an u
 has already lost the argument.
 
 ```sh
-ver=v0.2.1                      # see github.com/kton-protocol/kton/releases
-plat=linux_amd64                # or linux_arm64, darwin_amd64, darwin_arm64, windows_amd64
+ver=v0.4.3                      # see github.com/kton-protocol/kton/releases
+plat=linux_amd64                # or linux_arm64, darwin_amd64, darwin_arm64 (windows_amd64 is a .zip)
 base="https://github.com/kton-protocol/kton/releases/download/$ver"
 curl -fLO "$base/kton_${ver}_${plat}.tar.gz"
 curl -fLO "$base/kton_${ver}_${plat}.tar.gz.sha256"
@@ -180,18 +180,21 @@ The archive holds the three binaries and the licence - nothing to configure: no 
 runtime, no service. `plankton` and `nekton` are the kernels; `kton` is the cockpit and the only one
 that ever reaches the network (`kton fetch`, Rekor anchoring).
 
-**Versions.** The binaries are at **0.2.1**; the specification they implement is **0.1 (draft)**. Those
-are two axes on purpose - 0.2 changed the nekton store layout, not the protocol - so a record
-authored by a 0.2 binary still stamps `specVersion: "0.1"`. A 0.1 binary **cannot read a 0.2 nekton
-store and does not say so**; upgrade every binary that touches a shared registry at the same time,
-and read the first section of [`CHANGELOG.md`](CHANGELOG.md) before you do.
+**Versions.** The binaries are at **0.4.3**; the specification they implement is **0.1 (draft)**. Those
+are two axes on purpose - the releases since 0.2 changed the reference implementation and the nekton
+store layout, not the protocol - so a record authored by a 0.4 binary still stamps `specVersion: "0.1"`.
+A store of a newer layout than a binary knows is refused with the format named, and 0.4 no longer
+reads the per-claim layout of 0.2 (it names the file and refuses). Upgrade every binary that touches a
+shared registry at the same time, and read the "Upgrading" notes in [`CHANGELOG.md`](CHANGELOG.md)
+for every release you skip.
 
-*`go install` works for all three, on **Go 1.25 or newer**:*
+*`go install` works for all three. Through the default module proxy (`proxy.golang.org`) any Go from
+1.22 does it; resolving directly from the repository (`GOPROXY=direct`) needs **Go 1.25 or newer**:*
 
 ```sh
-go install kton.dev/plankton/cmd/plankton@v0.2.1
-go install kton.dev/nekton/cmd/nekton@v0.2.1
-go install kton.dev/kton/cmd/kton@v0.2.1
+go install kton.dev/plankton/cmd/plankton@v0.4.3
+go install kton.dev/nekton/cmd/nekton@v0.4.3
+go install kton.dev/kton/cmd/kton@v0.4.3
 ```
 
 *The modules live in subdirectories (`reference/`, `nekton/reference/`, `kton/reference/`) while
@@ -212,8 +215,8 @@ exist. Inside the workspace nothing changed: the `use` directives still win over
 change to plankton is visible to nekton without a tag.*
 
 *Note also that a versioned install wants a **subdirectory-prefixed tag**: the same help text says
-"If set, all vcs tags must be prefixed with subdir", so `@v0.2.1` looks for `reference/v0.2.1`, not
-the repository's `v0.2.1`. Both exist — the prefixed tags are what `go install` resolves, the plain
+"If set, all vcs tags must be prefixed with subdir", so `@v0.4.3` looks for `reference/v0.4.3`, not
+the repository's `v0.4.3`. Both exist — the prefixed tags are what `go install` resolves, the plain
 one is what builds the release archives.*
 
 *The alternative remains a release archive, or the source build below.*
