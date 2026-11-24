@@ -72,6 +72,15 @@ jobs:
           ( cd reference        && GOOS=js GOARCH=wasm go build ./... )
           ( cd nekton/reference && GOOS=js GOARCH=wasm go build ./... )
 
+      # #277, kton-review A2/A4: keys we write are read by ssh-keygen (rounds 1, 16, 64, and
+      # plankton keygen --encrypt end to end), and the reader agrees with x/crypto/ssh on its
+      # corpus. The reverse direction (ssh-keygen keys load) is in the keys package's own tests.
+      - name: OpenSSH key interop (ssh-keygen, x/crypto/ssh as an oracle)
+        run: |
+          set -e
+          bash scripts/check-openssh-interop.sh
+          ( cd reference/keys/oracle && GOWORK=off go test ./... )
+
       - name: conformance vectors are frozen (regenerate → expect no diff)
         run: |
           ( cd reference && go run ./testdata/gen )
@@ -189,3 +198,11 @@ jobs:
             echo "== $target"
             go test ./core/ -run XXX -fuzz "$target" -fuzztime 30s
           done
+      - name: short fuzz over the OpenSSH key reader (#277, kton-review A4)
+        # FuzzParse: no panic, and anything accepted is K5-consistent. The oracle module then checks
+        # that whatever kton accepts, golang.org/x/crypto/ssh accepts with the same seed; it is its
+        # own module so the kernel never depends on x/crypto/ssh.
+        run: |
+          set -e
+          ( cd reference && go test ./keys/ -run XXX -fuzz FuzzParse -fuzztime 30s )
+          ( cd reference/keys/oracle && GOWORK=off go test . -run XXX -fuzz FuzzAgreesWithSSH -fuzztime 30s )

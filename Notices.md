@@ -70,3 +70,10 @@ This section includes any Exclusion Notices made against a Draft Deliverable or 
 	(ii) identification of the specific part(s) of the Specification whose implementation makes the excluded claim a Necessary Claim.
 
 -----------------------------------------------------------------------------------------
+
+## Third-party code
+
+- **`reference/keys/internal/bcrypt_pbkdf/`** is copied verbatim from `golang.org/x/crypto`
+  v0.33.0, `ssh/internal/bcrypt_pbkdf` (#277, kton-review A1), because `x/crypto` keeps it
+  internal. Copyright 2014 The Go Authors; BSD-3-Clause, the licence text is
+  [`LICENSE`](reference/keys/internal/bcrypt_pbkdf/LICENSE) in that directory.

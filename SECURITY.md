@@ -43,9 +43,8 @@ Stated here rather than left for a reporter to rediscover. Both come from extern
   FAT/exFAT and some network mounts behave similarly. `WriteKeyFile` now **verifies** the mode after
   writing instead of assuming it, and `keygen` prints a warning naming the mode it actually got — but
   the underlying fact stands: on those platforms, file permissions are not what keeps a private key
-  from other users of the machine. Restrict access by other means, or generate keys elsewhere.
-  Implementing Windows ACLs would need `golang.org/x/sys`, and the kernels carry no third-party
-  dependencies.
+  from other users of the machine. Restrict access by other means, generate keys elsewhere, or
+  encrypt the key with a passphrase (`keygen --encrypt`, #277). Windows ACLs are not implemented.
 
 ## Supported versions
 

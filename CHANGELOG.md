@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+
+- **Passphrase-protected signing keys** (#277, kton-cockpit for the QM Workbench, MH 19.11.).
+  `plankton keygen --encrypt` and `nekton keygen --encrypt` write `<name>.key` in the OpenSSH
+  private-key form, encrypted with a passphrase (bcrypt_pbkdf at 24 rounds, AES-256-CTR): the format
+  `ssh-keygen -t ed25519` writes, and `ssh-keygen -p` changes the passphrase. Only Ed25519 keys,
+  the ciphers `none` and `aes256-ctr` and the KDF `bcrypt` (at most 1024 rounds) are read; anything
+  else, and any other PEM, is refused by name. Every `--sign` reads
+  the plain hex seed as before and the OpenSSH form, encrypted or not, including keys made by
+  `ssh-keygen`. The passphrase comes from `KTON_KEY_PASSPHRASE`, which is read at start and unset so
+  that processes started later do not inherit it (on Linux `/proc/<pid>/environ` still shows the
+  start value, to the same user and root), else the controlling terminal (no echo; `/dev/tty`, not stdin);
+  never from an argument or a file. `pubkey` and `keyid` name an encrypted key without its passphrase. The
+  seed, and so the keyid, is the same in both forms. `--encrypt` with `--seed` is refused (a fixture
+  key is rebuilt from its seed). For a library caller, `kton.dev/plankton/keys` has `Load(path,
+  pass)` with a passphrase callback, `PublicKey`, `IsEncrypted`, `MarshalEncrypted`, and
+  `TakeEnvPassphrase`/`ForgetEnvPassphrase` for a program that reads the variable. Nothing in
+  the protocol, the SPEC or verification changes.
+
 - **`nekton verify --store` names the store lines that do not parse** (#287 part 1, kton-review N2).
   `Unreadable()` gave a count and the warning only the file, so repairing a store meant finding the
   line yourself. It prints each line's file, line number, byte offset, first bytes and parse error
@@ -9,6 +28,19 @@
   exit 0 when every line parses, 5 when some do not. `registry.UnreadableLines(dir)` is the same
   list for a library caller, decided by the same rule as the count, so the two cannot disagree. The
   skip warning now points at the command.
+
+### Upgrading
+
+- **The kernel's first dependency outside the standard library**: `golang.org/x/crypto` v0.33.0,
+  of which only `x/crypto/blowfish` is used, plus `x/term` (and `x/sys`) for the passphrase prompt.
+  It is required by `kton.dev/plankton` and imported only by the new `keys` package; `core` and
+  every package a verifier uses stay standard-library only, and no kernel package depends on
+  `x/crypto/ssh`, for any target (both checked by `scripts/check-import-direction.sh`). The OpenSSH
+  key format is read and written by the kernel's own Ed25519-only reader (`keys/openssh.go`), over
+  `bcrypt_pbkdf` copied verbatim from `x/crypto/ssh/internal/bcrypt_pbkdf` v0.33.0 (BSD-3-Clause,
+  its licence beside it) and the standard library's AES-CTR: `x/crypto/ssh` would have brought the
+  whole SSH protocol into the kernels and their WebAssembly builds for one key format (MH 23.11. on
+  #277). v0.33.0 is the newest `x/crypto` release that keeps the `go 1.22` floor.
 
 ## 0.4.3 — released 2026-11-23
 
