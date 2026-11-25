@@ -63,7 +63,10 @@ func (c *trigCtx) refTerm(v string) npTerm {
 		if n, ok := core.NormalizeContentHash(v); ok && strings.HasPrefix(v, "sha256:") {
 			return iriT(c.prefixes["pk"] + strings.TrimPrefix(n, "sha256:"))
 		}
-		if strings.Contains(v, "://") && strictIRI(v) {
+		// An object value is an IRI only if it is one as written; anything else is a literal, so a
+		// value with a lone '%' no longer takes its whole claim out of the projection (kton-review N1
+		// on #314).
+		if strings.Contains(v, "://") && strictIRI(v) && percentEncodingValid(v) {
 			return iriT(v)
 		}
 		return litT(v, "")

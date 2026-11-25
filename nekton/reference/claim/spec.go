@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"kton.dev/plankton/core"
 )
@@ -176,18 +177,59 @@ func isHexDigit(c byte) bool {
 	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }
 
-// percentEncodedIRIs refuses a predicate or context IRI with a '%' that starts no %XX escape, for a
-// body built from the convenience fields and for a PredicateBody alike. Such an IRI is invalid (RFC
-// 3987): its N-Quads projection is refused by a conforming store, so a signed, held claim would never
-// load (kton-cockpit, 25.11.). Escaping it as %25 is no fix - that is a different, valid IRI another
-// claim may name (#268 T1) - so it is refused before it is signed.
-func percentEncodedIRIs(body map[string]any) error {
+// IRIText reports whether s can stand in an IRI position exactly as written: valid UTF-8, every
+// '%' starting a %XX escape, and no character the N-Quads writer would otherwise have to
+// percent-encode (a control, space, C1, U+2028/U+2029, or one of <>"{}|^`\). Encoding is no option:
+// "a b" would become "a%20b", the IRI another claim may name genuinely (#268 T1, kton-review N2 on
+// #314). The signer and the per-record projection use this one rule.
+func IRIText(s string) bool {
+	if !utf8.ValidString(s) || !PercentEncodingValid(s) {
+		return false
+	}
+	for _, r := range s {
+		if r <= 0x20 || (r >= 0x7f && r <= 0x9f) || r == 0x2028 || r == 0x2029 || strings.ContainsRune("<>\"{}|^`\\", r) {
+			return false
+		}
+	}
+	return true
+}
+
+// checkIRIs refuses a claim whose predicate, context or IRI-shaped subject uri is no IRIText, for a body built
+// from the convenience fields and for a PredicateBody alike, before it is signed. Such a claim's
+// projection is refused by a conforming store (kton-cockpit 25.11.) or would merge two IRIs into one;
+// a signed claim cannot be fixed later. Object values are not checked: a string there is a value, and
+// the projection keeps one that is no valid IRI as a literal.
+// hasScheme reports whether s starts with an RFC 3986 scheme and ':' (a letter, then letters,
+// digits, + - .).
+func hasScheme(s string) bool {
+	i := strings.IndexByte(s, ':')
+	if i <= 0 {
+		return false
+	}
+	for j, c := range s[:i] {
+		letter := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+		if !letter && (j == 0 || !(c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.')) {
+			return false
+		}
+	}
+	return true
+}
+
+func checkIRIs(body map[string]any, subjects []SubjectSpec) error {
 	for _, k := range []string{"predicate", "context"} {
 		m, _ := body[k].(map[string]any)
-		u, _ := m["uri"].(string)
-		if !PercentEncodingValid(u) {
-			return fmt.Errorf("%s %q has a '%%' that does not start a %%XX escape, so it is no IRI; "+
-				"write %%25 for a literal '%%'", k, u)
+		if u, _ := m["uri"].(string); !IRIText(u) {
+			return fmt.Errorf("%s %q is no IRI as written: a space, a control character, one of "+
+				"<>\"{}|^`\\, or a '%%' that starts no %%XX escape (write %%25 for a literal '%%')", k, u)
+		}
+	}
+	// A subject uri is a string (SPEC §7.1), and one that is no IRI at all ("kton video") stays
+	// signable; the projection names it as unprojectable. One that starts with a scheme claims to be
+	// an IRI, and then must be one as written.
+	for _, sub := range subjects {
+		if hasScheme(sub.URI) && !IRIText(sub.URI) {
+			return fmt.Errorf("subject uri %q is no IRI as written: a space, a control character, one of "+
+				"<>\"{}|^`\\, or a '%%' that starts no %%XX escape", sub.URI)
 		}
 	}
 	return nil
@@ -253,7 +295,7 @@ func StatementPayload(spec Spec) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := percentEncodedIRIs(body); err != nil {
+	if err := checkIRIs(body, spec.Subject); err != nil {
 		return nil, err
 	}
 	pt := spec.PredicateType

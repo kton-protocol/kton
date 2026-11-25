@@ -196,13 +196,14 @@ func recordNQuads(qs []npQuad) ([]byte, error) {
 	// Characters an IRI may not carry are percent-encoded, as the TriG face does, plus the C1 controls
 	// and U+2028/U+2029, which parsers reject. What is left to refuse is an IRI with no scheme.
 	iri := func(s string) (string, error) {
-		e := recordIRIEsc(s)
-		// A lone '%' is not escaped (as %25 it would name a different IRI, #268 T1), so it is refused:
-		// an RFC 3987 store rejects the whole document for it (kton-cockpit 25.11.).
-		if !strictIRI(e) || !percentEncodingValid(e) {
-			return "", fmt.Errorf("%q is not an absolute IRI, so this claim has no well-formed per-record projection", s)
+		// Refused, not encoded: percent-encoding a space or a lone '%' names a different IRI, one another
+		// claim may name genuinely, so two subjects or predicates would become one (#268 T1, kton-review
+		// N2 on #314). The signer refuses the same with claim.IRIText; this catches a claim signed before.
+		if !claim.IRIText(s) || !strictIRI(s) {
+			return "", fmt.Errorf("%q is not an absolute IRI as written, so this claim has no well-formed "+
+				"per-record projection", s)
 		}
-		return "<" + e + ">", nil
+		return "<" + s + ">", nil
 	}
 	lines := make([]string, 0, len(qs))
 	for _, q := range qs {
@@ -234,21 +235,6 @@ func recordNQuads(qs []npQuad) ([]byte, error) {
 		lines = append(lines, s+" "+p+" "+o+" "+g+" .")
 	}
 	return joinSorted(lines), nil
-}
-
-// recordIRIEsc percent-encodes, as UTF-8 bytes, every character strictIRI refuses.
-func recordIRIEsc(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r <= 0x20 || (r >= 0x7f && r <= 0x9f) || r == 0x2028 || r == 0x2029 || strings.ContainsRune("<>\"{}|^`\\", r) {
-			for _, c := range []byte(string(r)) {
-				fmt.Fprintf(&b, "%%%02X", c)
-			}
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 func joinSorted(lines []string) []byte {
