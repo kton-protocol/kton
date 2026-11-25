@@ -480,6 +480,17 @@ func showTemplate(tset template.Set, name string) error {
 		fmt.Printf("context:   %s\n", tset.Resolve(t.Context))
 	}
 	fmt.Printf("subject:   %s\n", t.Target)
+	// #300: the template's intent, advisory. Printed resolved, as the predicate is; nothing enforces it.
+	if len(t.SignerRoles) > 0 {
+		roles := make([]string, len(t.SignerRoles))
+		for i, r := range t.SignerRoles {
+			roles[i] = tset.Resolve(r)
+		}
+		fmt.Printf("signers:   %s  (intended roles, advisory)\n", strings.Join(roles, ", "))
+	}
+	if len(t.Scopes) > 0 {
+		fmt.Printf("scopes:    %s  (intended, advisory)\n", strings.Join(t.Scopes, ", "))
+	}
 	fmt.Printf("fields (use --set name=value):\n")
 	for _, fn := range sortedFieldNames(t.Fields) {
 		f := t.Fields[fn]

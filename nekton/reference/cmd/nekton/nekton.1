@@ -113,7 +113,9 @@ and auto-stamps \fBwhen\fR. Needs no jq/openssl.
 .B nekton templates [--show \fIname\fR]
 List installed templates (from NEKTON_TEMPLATES) and their aliases. With \fB--show \fIname\fR (or a
 positional name/alias) it prints that template's fields: name, type, required/optional, role, and
-enum options - so you never have to open the template JSON to learn its `--set` keys.
+enum options - so you never have to open the template JSON to learn its `--set` keys. A template's
+advisory \fBsignerRoles\fR and \fBscopes\fR (#300: who it is meant to be signed by, and which scopes it
+is meant for) are printed too; nothing enforces them.
 .TP
 .B nekton show \fIclaim.dsse.json\fR|\fIsha256:id\fR
 Print one claim: subject, predicate, the object/statement, signer, and timestamp (from a file or a
