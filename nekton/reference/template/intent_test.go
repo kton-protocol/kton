@@ -61,6 +61,14 @@ func TestIntentRefusals(t *testing.T) {
 		{"role with a leading space", `"signerRoles": [" role:lead"], `, "does not resolve to an absolute IRI"},
 		{"role IRI with >", `"signerRoles": ["https://example.org/r>x"], `, "does not resolve to an absolute IRI"},
 		{"role IRI with a space", `"signerRoles": ["https://example.org/r x"], `, "does not resolve to an absolute IRI"},
+		// kton-review on kton-cockpit #262: control characters in a role, and none in the reason.
+		{"role with an ESC sequence", `"signerRoles": ["https://example.org/r/\u001b[31mRED\u001b[0m"], `, "control characters"},
+		{"role with ESC, twice", `"signerRoles": ["https://example.org/r/\u001bx", "https://example.org/r/\u001bx"], `, "control characters"},
+		{"role with DEL", `"signerRoles": ["https://example.org/r/\u007fx"], `, "control characters"},
+		{"role with a C1 control", `"signerRoles": ["https://example.org/r/\u009bx"], `, "control characters"},
+		{"role with a line separator", `"signerRoles": ["https://example.org/r/\u2028x"], `, "control characters"},
+		{"role with a right-to-left override", `"signerRoles": ["https://example.org/r/\u202ex"], `, "control characters"},
+		{"role with a no-break space", `"signerRoles": ["https://example.org/r/\u00a0x"], `, "control characters"},
 		{"scope by name", `"scopes": ["qa"], `, "not a scope seed IRI"},
 		{"scope as a claim id", `"scopes": ["sha256:` + strings.TrimPrefix(seedIRI, template.ScopeIRIPrefix) + `"], `, "not a scope seed IRI"},
 		{"scope upper-case hex", `"scopes": ["` + strings.ToUpper(seedIRI[len(template.ScopeIRIPrefix):]) + `"], `, "not a scope seed IRI"},
@@ -79,13 +87,39 @@ func TestIntentRefusals(t *testing.T) {
 			if _, ok := set.Get("qa/review"); ok {
 				t.Fatal("loaded")
 			}
-			if r := set.RefusedReason("qa/review"); !strings.Contains(r, c.want) {
+			r := set.RefusedReason("qa/review")
+			if !strings.Contains(r, c.want) {
 				t.Errorf("reason %q, want %q", r, c.want)
+			}
+			// A reason is printed to terminals: it must carry no control character from the file.
+			for _, ch := range r {
+				if ch < 0x20 || ch == 0x7f || (ch >= 0x80 && ch < 0xa0) || ch == 0x2028 || ch == 0x202e {
+					t.Errorf("reason carries control character %U: %q", ch, r)
+				}
 			}
 			if _, ok := set.Get("qa/note"); !ok {
 				t.Error("the other template went down with it")
 			}
 		})
+	}
+}
+
+// The duplicate-role reason quotes the resolved role (it printed it raw with %s), and a role with
+// a non-ASCII but graphic character is still accepted.
+func TestIntentDuplicateReasonIsQuoted(t *testing.T) {
+	set, _ := template.New(map[string][]byte{"qa/review": intentTpl(
+		`"signerRoles": ["role:a\"b", "https://example.org/role/a\"b"], `)}, []byte(intentAliases))
+	if r := set.RefusedReason("qa/review"); !strings.Contains(r, "does not resolve") {
+		t.Errorf("a quote in a role: %q", r)
+	}
+	set, _ = template.New(map[string][]byte{"qa/review": intentTpl(
+		`"signerRoles": ["role:prüfer", "https://example.org/role/prüfer"], `)}, []byte(intentAliases))
+	if r := set.RefusedReason("qa/review"); !strings.Contains(r, `names "https://example.org/role/prüfer" twice`) {
+		t.Errorf("duplicate reason not quoted: %q", r)
+	}
+	set, _ = template.New(map[string][]byte{"qa/review": intentTpl(`"signerRoles": ["role:prüfer"], `)}, []byte(intentAliases))
+	if _, ok := set.Get("qa/review"); !ok {
+		t.Errorf("a graphic non-ASCII role was refused: %q", set.RefusedReason("qa/review"))
 	}
 }
 
