@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0 — released 2026-11-25
+
 ### Added
 
 - **Passphrase-protected signing keys** (#277, kton-cockpit for the QM Workbench, MH 19.11.).
