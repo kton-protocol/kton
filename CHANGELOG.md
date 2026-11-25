@@ -27,8 +27,9 @@
   IRIs (`https://kton.dev/o/<64-hex>`; absent means any scope). Both are advisory, like `target`:
   signing, verifying and the store ignore them, a claim from the template is the same with or
   without them, and kton grants no permissions. A reader compares them with the signers and scopes
-  it observes. `nekton templates --show` prints them. An empty role, a role or scope named twice,
-  or a scope that is not a seed IRI refuses that template with the reason. A template without the
+  it observes. `nekton templates --show` prints them. An empty role, a role that does not resolve
+  to an absolute IRI (a bare word, an undeclared prefix, spaces or `<>"{}|^`\`), a role or scope
+  named twice, or a scope that is not a seed IRI refuses that template with the reason. A template without the
   keys keeps its id.
 
 - **`nekton verify --store` names the store lines that do not parse** (#287 part 1, kton-review N2).

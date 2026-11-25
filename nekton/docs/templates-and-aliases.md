@@ -50,7 +50,8 @@ It is shapes over opaque IRIs; it produces one signed claim.
   "predicate": "reviewed",           // IRI or alias
   "context": "ctx:gxp",              // IRI or alias (optional)
   "vocab": "sha256:…",              // optional, federated term definitions
-  "signerRoles": ["role:qa-reviewer"],   // optional, advisory: who is meant to sign (#300)
+  "signerRoles": ["role:qa-reviewer"],   // optional, advisory: who is meant to sign (#300);
+                                         // needs "prefixes": {"role": "https://…/role/"} in aliases.json
   "scopes": ["https://kton.dev/o/<64-hex>"], // optional, advisory: which scopes it is meant for
   "fields": {
     "outcome": {"type":"enum","values":["pass","fail"],"required":true,"role":"object","widget":"enum"},
@@ -67,10 +68,13 @@ Field grammar:
   signing, verifying and the store ignore both, and a claim signed by someone else or written into
   another scope is as valid as before; kton grants no permissions. A view or a review compares them
   with the signers and scopes it observes. `signerRoles` is a list of opaque IRIs or CURIEs, resolved
-  through the alias file like the predicate; the kernel does not interpret a role. `scopes` is a list
+  through the alias file like the predicate; the kernel does not interpret a role, but each must
+  resolve to an absolute IRI (`scheme://…`, or `urn:`, `tag:`, `did:`, `mailto:`) without spaces or
+  `<>"{}|^`\`: a bare word or a CURIE with an undeclared prefix would mean something different
+  in each registry that loads the template. `scopes` is a list
   of scope seed IRIs, `https://kton.dev/o/<64-hex>` (the seed claim's id): a scope's name is local to
   one registry's config, and a template federates. Absent `scopes` means any scope. An empty role, a
-  role named twice (after resolution), a scope that is not a seed IRI, or a scope named twice refuses
+  role that does not resolve to such an IRI, a role named twice (after resolution), a scope that is not a seed IRI, or a scope named twice refuses
   that template, with the reason; a value of the wrong JSON type (a string instead of a list) skips
   the file as not valid template JSON. A template without the keys keeps its id.
 - **replace** (template key) - `previous`, or absent. `previous` says a claim from this template usually

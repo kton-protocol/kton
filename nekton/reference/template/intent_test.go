@@ -55,6 +55,12 @@ func TestIntentRefusals(t *testing.T) {
 		{"empty role", `"signerRoles": [""], `, "empty entry"},
 		{"role twice", `"signerRoles": ["role:a", "role:a"], `, "twice"},
 		{"role twice after resolution", `"signerRoles": ["role:a", "https://example.org/role/a"], `, "twice"},
+		// kton-review R1 on #301: a role must resolve to an absolute IRI.
+		{"role as a bare word", `"signerRoles": ["reviewer"], `, "does not resolve to an absolute IRI"},
+		{"role with an undeclared prefix", `"signerRoles": ["zz:lead"], `, "does not resolve to an absolute IRI"},
+		{"role with a leading space", `"signerRoles": [" role:lead"], `, "does not resolve to an absolute IRI"},
+		{"role IRI with >", `"signerRoles": ["https://example.org/r>x"], `, "does not resolve to an absolute IRI"},
+		{"role IRI with a space", `"signerRoles": ["https://example.org/r x"], `, "does not resolve to an absolute IRI"},
 		{"scope by name", `"scopes": ["qa"], `, "not a scope seed IRI"},
 		{"scope as a claim id", `"scopes": ["sha256:` + strings.TrimPrefix(seedIRI, template.ScopeIRIPrefix) + `"], `, "not a scope seed IRI"},
 		{"scope upper-case hex", `"scopes": ["` + strings.ToUpper(seedIRI[len(template.ScopeIRIPrefix):]) + `"], `, "not a scope seed IRI"},

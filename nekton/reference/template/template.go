@@ -79,6 +79,14 @@ func (s Set) intentError(t Template) string {
 			return "\"signerRoles\" has an empty entry"
 		}
 		full := s.Resolve(r)
+		// kton-review R1 on #301: a role must resolve to an absolute IRI, here. Unlike the predicate it
+		// is never checked again at signing, and a role whose meaning depends on the reader's aliases
+		// would make intended-vs-observed differ per registry once the template federates. Characters
+		// every projection would have to escape are refused as well.
+		if !isAbsoluteIRI(full) || strings.ContainsAny(full, " \t\n\r<>\"{}|^`\\") {
+			return fmt.Sprintf("\"signerRoles\": %q does not resolve to an absolute IRI without spaces or "+
+				"<>\"{}|^`\\ (resolved: %q); a role is an IRI, or a CURIE the alias file resolves", r, full)
+		}
 		if prev, dup := seen[full]; dup {
 			return fmt.Sprintf("\"signerRoles\" names %s twice (%q and %q)", full, prev, r)
 		}
