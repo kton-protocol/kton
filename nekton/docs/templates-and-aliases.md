@@ -63,6 +63,11 @@ It is shapes over opaque IRIs; it produces one signed claim.
 ```
 
 Field grammar:
+- **text** - every string in a template that is printed or signed must be free of control
+  characters: the name, field names and enum values (spaces allowed there), and the predicate and
+  context as resolved (no spaces, controls or `<>"{}|^`\`). A template that breaks this is refused
+  with the value quoted; one whose name breaks it is skipped. An absolute IRI needs a real scheme
+  before `://` (a letter, then letters, digits, `+ - .`).
 - **signerRoles**, **scopes** (template keys, #300) - the template's INTENT: who a claim from it is
   meant to be signed by, and which scopes it is meant to be written into. Advisory, like `target`:
   signing, verifying and the store ignore both, and a claim signed by someone else or written into

@@ -124,6 +124,47 @@ func cleanIRIText(x string) bool {
 	return true
 }
 
+// graphicText reports whether x is valid UTF-8 of graphic runes (spaces allowed, no tab, newline,
+// control, format or separator rune other than U+0020). Template names, field names and enum values
+// are printed by listings and signed into claims; an escape sequence in one must not reach either.
+func graphicText(x string) bool {
+	if !utf8.ValidString(x) {
+		return false
+	}
+	for _, c := range x {
+		if !unicode.IsGraphic(c) || (unicode.IsSpace(c) && c != ' ') {
+			return false
+		}
+	}
+	return true
+}
+
+// textError names a string in the template that a listing would print or a claim would sign with a
+// control character in it, or returns "". The predicate and context are checked as resolved, since
+// the resolved IRI is what is signed. Every value is quoted in the reason.
+func (s Set) textError(t Template) string {
+	for _, k := range []struct{ key, v string }{{"predicate", t.Predicate}, {"context", t.Context}} {
+		if k.v == "" {
+			continue
+		}
+		if full := s.Resolve(k.v); !cleanIRIText(full) {
+			return fmt.Sprintf("%q: %q (resolved: %q) has a space, a control character or one of "+
+				"<>\"{}|^`\\", k.key, k.v, full)
+		}
+	}
+	for _, fn := range sortedKeys(t.Fields) {
+		if !graphicText(fn) || fn == "" {
+			return fmt.Sprintf("field name %q has a control character or is empty", fn)
+		}
+		for _, v := range t.Fields[fn].Values {
+			if !graphicText(v) {
+				return fmt.Sprintf("field %q: enum value %q has a control character", fn, v)
+			}
+		}
+	}
+	return ""
+}
+
 func isScopeIRI(x string) bool {
 	h, ok := strings.CutPrefix(x, ScopeIRIPrefix)
 	if !ok || len(h) != 64 {
@@ -270,7 +311,16 @@ func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (
 		// the declared name is what makes it possible, and that key was introduced to stop hyphenated
 		// names being mangled. Both properties are wanted, so the collision is named instead of
 		// silently broken either way.
+		// A name with a control character is SKIPPED, not refused: refusals are keyed by name, and a
+		// caller printing Refused() would print the escape sequence it is being protected from.
+		if !graphicText(name) {
+			s.skip(key, fmt.Sprintf("its name %q has a control character; it is not loaded", name))
+			continue
+		}
 		reason := templateShapeError(t)
+		if reason == "" {
+			reason = s.textError(t)
+		}
 		if reason == "" {
 			reason = s.intentError(t)
 		}
@@ -319,12 +369,15 @@ func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (
 var fixedSchemes = map[string]bool{"urn": true, "tag": true, "did": true, "mailto": true, "http": true, "https": true}
 
 // isAbsoluteIRI reports an IRI no alias resolves further: scheme:// or one of fixedSchemes.
+//
+// The scheme must be one (RFC 3986: a letter, then letters, digits, + - .): "://x", "zz:lead://x"
+// and "1a://x" are not IRIs although they contain "://" (kton-review N2 on #301).
 func isAbsoluteIRI(x string) bool {
-	if strings.Contains(x, "://") {
-		return true
-	}
 	i := strings.IndexByte(x, ':')
-	return i > 0 && fixedSchemes[strings.ToLower(x[:i])]
+	if i <= 0 || !validScheme(x[:i]) {
+		return false
+	}
+	return strings.HasPrefix(x[i:], "://") || fixedSchemes[strings.ToLower(x[:i])]
 }
 
 // check refuses alias entries that would redirect an absolute IRI: a prefix named after an IRI
@@ -742,11 +795,13 @@ func xsdInteger(v string) bool {
 // A CURIE with an undeclared prefix is NOT accepted on syntax alone: `qa:x` is a syntactically valid
 // IRI with scheme qa, and signing it would attest a term nobody defined.
 func (s Set) iriValue(v string) (string, bool) {
-	if v == "" || strings.ContainsAny(v, " \t\n\r<>\"{}|\\^`") {
+	// cleanIRIText, not an ASCII list: an ESC or another control character in a value would be
+	// signed into the claim (same class as the template role, kton-review on #306).
+	if v == "" || !cleanIRIText(v) {
 		return "", false
 	}
 	if r := s.Resolve(v); r != v {
-		return r, !strings.ContainsAny(r, " \t\n\r<>\"{}|\\^`")
+		return r, cleanIRIText(r)
 	}
 	i := strings.IndexByte(v, ':')
 	if i <= 0 || i == len(v)-1 {
