@@ -188,14 +188,7 @@ func absoluteIRI(s string) bool {
 // percentEncodingValid reports whether every '%' in s starts a %XX escape. A subject like urn:x:%zz is
 // no IRI: escaping its '%' would make it urn:x:%25zz, a different, valid IRI that another claim may
 // name - two subjects would become one (#268 review T1). So it is refused and named instead.
-func percentEncodingValid(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == '%' && !(i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2])) {
-			return false
-		}
-	}
-	return true
-}
+func percentEncodingValid(s string) bool { return claim.PercentEncodingValid(s) }
 
 // recordNQuads serializes quads as canonical N-Quads under the strict rule: an IRI that cannot stand
 // is an error, and a literal escapes every control character.
@@ -204,7 +197,9 @@ func recordNQuads(qs []npQuad) ([]byte, error) {
 	// and U+2028/U+2029, which parsers reject. What is left to refuse is an IRI with no scheme.
 	iri := func(s string) (string, error) {
 		e := recordIRIEsc(s)
-		if !strictIRI(e) {
+		// A lone '%' is not escaped (as %25 it would name a different IRI, #268 T1), so it is refused:
+		// an RFC 3987 store rejects the whole document for it (kton-cockpit 25.11.).
+		if !strictIRI(e) || !percentEncodingValid(e) {
 			return "", fmt.Errorf("%q is not an absolute IRI, so this claim has no well-formed per-record projection", s)
 		}
 		return "<" + e + ">", nil

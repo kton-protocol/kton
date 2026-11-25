@@ -113,7 +113,8 @@ func (s Set) intentError(t Template) string {
 // <>"{}|^`\. A role reaches RDF projections, frontends and terminals; an ESC sequence in a template
 // must not (kton-review, found on kton-cockpit #262).
 func cleanIRIText(x string) bool {
-	if !utf8.ValidString(x) {
+	// A '%' must start a %XX escape (RFC 3987): a store refuses the IRI otherwise (kton-cockpit 25.11.).
+	if !utf8.ValidString(x) || !claim.PercentEncodingValid(x) {
 		return false
 	}
 	for _, c := range x {
@@ -148,8 +149,8 @@ func (s Set) textError(t Template) string {
 			continue
 		}
 		if full := s.Resolve(k.v); !cleanIRIText(full) {
-			return fmt.Sprintf("%q: %q (resolved: %q) has a space, a control character or one of "+
-				"<>\"{}|^`\\", k.key, k.v, full)
+			return fmt.Sprintf("%q: %q (resolved: %q) has a space, a control character, one of "+
+				"<>\"{}|^`\\ or a %% that starts no %%XX escape", k.key, k.v, full)
 		}
 	}
 	for _, fn := range sortedKeys(t.Fields) {

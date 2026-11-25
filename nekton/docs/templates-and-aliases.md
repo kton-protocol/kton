@@ -65,7 +65,7 @@ It is shapes over opaque IRIs; it produces one signed claim.
 Field grammar:
 - **text** - every string in a template that is printed or signed must be free of control
   characters: the name, field names and enum values (spaces allowed there), and the predicate and
-  context as resolved (no spaces, controls or `<>"{}|^`\`). A template that breaks this is refused
+  context as resolved (no spaces, controls or `<>"{}|^`\`, and every `%` starts a `%XX` escape). A template that breaks this is refused
   with the value quoted; one whose name breaks it is skipped. An absolute IRI needs a real scheme
   before `://` (a letter, then letters, digits, `+ - .`).
 - **signerRoles**, **scopes** (template keys, #300) - the template's INTENT: who a claim from it is
