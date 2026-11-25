@@ -31,6 +31,10 @@
   names each refused template and why; the rest of the set keeps working. One whose name carries a
   control character is skipped. Claims already signed are unchanged and still verify: this only
   decides what can be written from now on.
+- **A CURIE whose local part contains `://` now resolves** (#307, N2). 0.5.0 took any text with
+  `://` as an absolute IRI, so with a declared prefix `ex`, a predicate `ex:a://b` was signed as
+  written; 0.5.1 resolves it through the prefix, so a template using one signs a different
+  predicate from now on. A predicate that is a real IRI (`https://…`, `urn:…`) is unaffected.
 
 ## 0.5.0 — released 2026-11-25
 
