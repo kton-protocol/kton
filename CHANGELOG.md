@@ -6,7 +6,8 @@
   refuses a predicate or context, and a subject `uri` that starts with a scheme, if it has a space,
   a control character, one of `<>"{}|^`\` or a `%` that starts no `%XX` escape
   (`claim.IRIText`). A subject that does not claim to be an IRI (`kton video`) still signs, as SPEC
-  §7.1 allows. The per-record projection no longer percent-encodes such an IRI but refuses the
+  §7.1 allows. "Starts with a scheme" is syntax only: text whose first word parses as one, such as
+  `Note: kton video`, counts as an IRI and is refused; name such a subject by a URN or a hash. The per-record projection no longer percent-encodes such an IRI but refuses the
   claim: encoding turned `…/a b` into `…/a%20b`, the IRI another claim may name genuinely (#268 T1).
   An object string that is no valid IRI is a literal and no longer takes its claim out of the
   projection.
