@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.1 — released 2026-11-25
+
 - **SPEC §12 says what happens when a deferred record settles** (kton-cockpit's question,
   25.11.). It is offered once, at its position, while unresolved; settling it later is not a
   change to the record, so `sync` does not offer it again, and a peer settles it on its own union
@@ -20,6 +22,15 @@
   `iri` field value with a control character is refused at signing. And `://` alone no longer
   makes an absolute IRI: the part before it must be a scheme (kton-review N2 on #301), so
   `zz:lead://x` or `://x` is not a role.
+
+### Upgrading from 0.5.0
+
+- **A template 0.5.0 loaded may now be refused** (#306, #307): one whose predicate or context
+  resolves to text with a space, a control character or `<>"{}|^`\`, whose role is not a clean
+  absolute IRI, or whose field names or enum values carry a control character. `nekton templates`
+  names each refused template and why; the rest of the set keeps working. One whose name carries a
+  control character is skipped. Claims already signed are unchanged and still verify: this only
+  decides what can be written from now on.
 
 ## 0.5.0 — released 2026-11-25
 
