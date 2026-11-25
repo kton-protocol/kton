@@ -2,29 +2,34 @@
 
 ## Unreleased
 
-- **Every IRI a claim carries must be one as written** (kton-review N1/N2 on #314). Signing now
-  refuses a predicate or context, and a subject `uri` that starts with a scheme, if it has a space,
-  a control character, one of `<>"{}|^`\` or a `%` that starts no `%XX` escape
-  (`claim.IRIText`). A subject that does not claim to be an IRI (`kton video`) still signs, as SPEC
-  §7.1 allows. "Starts with a scheme" is syntax only: text whose first word parses as one, such as
-  `Note: kton video`, counts as an IRI and is refused; name such a subject by a URN or a hash. The per-record projection no longer percent-encodes such an IRI but refuses the
-  claim: encoding turned `…/a b` into `…/a%20b`, the IRI another claim may name genuinely (#268 T1).
-  An object string that is no valid IRI is a literal and no longer takes its claim out of the
-  projection.
+## 0.5.2 — released 2026-11-25
 
-  **Upgrading:** a claim signed before, with a space or a lone `%` in its predicate or subject, was
-  projected with the IRI encoded; it is now refused by `nanopub.Record` and skipped (named) by
-  `RegistryReport`. Its id and signature are unchanged and it still verifies. The published TriG and
-  `nanopublish` keep their encoding, since it feeds the Trusty URI.
-
-- **A `%` that starts no `%XX` escape is refused in an IRI** (kton-cockpit, 25.11., found on their
+- **A `%` that starts no `%XX` escape is refused in an IRI** (#314, kton-cockpit, found on their
   v0.5.1 bump). 0.5.1 signed a claim with the predicate `https://example.test/v/has%zz` and
   projected it unchanged; an RFC 3987 store (oxigraph) refused the whole N-Quads document for it.
-  Now one rule, `claim.PercentEncodingValid`, is applied when a template loads (predicate, context,
-  roles), when an `iri` field value is filled in, when a claim is signed (predicate and context,
-  from the convenience fields or a `PredicateBody`), and in the per-record projection, which refuses
-  such a claim signed before rather than emit it. It is not rewritten as `%25`: that names a
-  different, valid IRI another claim may use (#268 T1). Write `%25` for a literal `%`.
+  One rule, `claim.PercentEncodingValid`, is now applied when a template loads (predicate, context,
+  roles), when an `iri` field value is filled in, when a claim is signed, and in the per-record
+  projection. It is not rewritten as `%25`: that names a different, valid IRI another claim may use
+  (#268 T1). Write `%25` for a literal `%`.
+- **Every IRI a claim carries must be one as written** (#315, kton-review N1/N2 on #314). Signing
+  refuses a predicate or context, and a subject `uri` that starts with a scheme, if it has a space,
+  a control character, one of `<>"{}|^`\` or a lone `%` (`claim.IRIText`). A subject that does not
+  claim to be an IRI (`kton video`) still signs, as SPEC §7.1 allows. "Starts with a scheme" is
+  syntax only: text whose first word parses as one, such as `Note: kton video`, counts as an IRI
+  and is refused; name such a subject by a URN or a hash. The per-record projection refuses such an
+  IRI instead of percent-encoding it, which turned `…/a b` into `…/a%20b`, the IRI another claim may
+  name genuinely (#268 T1). An object string that is no valid IRI is a literal and no longer takes
+  its claim out of the projection.
+
+### Upgrading from 0.5.1
+
+- **Fewer claims can be signed.** A predicate, context or IRI-shaped subject with a space, a
+  control character or a lone `%` is refused at signing, as is a template carrying one.
+- **Some old claims leave the per-record projection.** A claim signed before with such an IRI was
+  projected with the IRI encoded (or, for a lone `%`, unchanged and unloadable). `nanopub.Record`
+  now refuses it and `RegistryReport` skips it by name. Its id and signature are unchanged, it
+  still verifies, and it stays in its scope's chain. The published TriG and `nanopublish` keep
+  their encoding, since it feeds the Trusty URI.
 
 ## 0.5.1 — released 2026-11-25
 
