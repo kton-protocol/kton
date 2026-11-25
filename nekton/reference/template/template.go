@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"kton.dev/nekton/claim"
 	"kton.dev/plankton/core"
@@ -83,12 +85,12 @@ func (s Set) intentError(t Template) string {
 		// is never checked again at signing, and a role whose meaning depends on the reader's aliases
 		// would make intended-vs-observed differ per registry once the template federates. Characters
 		// every projection would have to escape are refused as well.
-		if !isAbsoluteIRI(full) || strings.ContainsAny(full, " \t\n\r<>\"{}|^`\\") {
-			return fmt.Sprintf("\"signerRoles\": %q does not resolve to an absolute IRI without spaces or "+
-				"<>\"{}|^`\\ (resolved: %q); a role is an IRI, or a CURIE the alias file resolves", r, full)
+		if !isAbsoluteIRI(full) || !cleanIRIText(full) {
+			return fmt.Sprintf("\"signerRoles\": %q does not resolve to an absolute IRI without spaces, control "+
+				"characters or <>\"{}|^`\\ (resolved: %q); a role is an IRI, or a CURIE the alias file resolves", r, full)
 		}
 		if prev, dup := seen[full]; dup {
-			return fmt.Sprintf("\"signerRoles\" names %s twice (%q and %q)", full, prev, r)
+			return fmt.Sprintf("\"signerRoles\" names %q twice (%q and %q)", full, prev, r)
 		}
 		seen[full] = r
 	}
@@ -99,11 +101,27 @@ func (s Set) intentError(t Template) string {
 				"name is local to one registry's config, so a template names the scope by its seed", sc, ScopeIRIPrefix)
 		}
 		if seenScope[sc] {
-			return fmt.Sprintf("\"scopes\" names %s twice", sc)
+			return fmt.Sprintf("\"scopes\" names %q twice", sc)
 		}
 		seenScope[sc] = true
 	}
 	return ""
+}
+
+// cleanIRIText reports whether x has only characters an IRI may carry as they are: no whitespace,
+// no control or other non-graphic rune (C0, DEL, C1, line and paragraph separators), and none of
+// <>"{}|^`\. A role reaches RDF projections, frontends and terminals; an ESC sequence in a template
+// must not (kton-review, found on kton-cockpit #262).
+func cleanIRIText(x string) bool {
+	if !utf8.ValidString(x) {
+		return false
+	}
+	for _, c := range x {
+		if !unicode.IsGraphic(c) || unicode.IsSpace(c) || strings.ContainsRune("<>\"{}|^`\\", c) {
+			return false
+		}
+	}
+	return true
 }
 
 func isScopeIRI(x string) bool {

@@ -69,8 +69,8 @@ Field grammar:
   another scope is as valid as before; kton grants no permissions. A view or a review compares them
   with the signers and scopes it observes. `signerRoles` is a list of opaque IRIs or CURIEs, resolved
   through the alias file like the predicate; the kernel does not interpret a role, but each must
-  resolve to an absolute IRI (`scheme://…`, or `urn:`, `tag:`, `did:`, `mailto:`) without spaces or
-  `<>"{}|^`\`: a bare word or a CURIE with an undeclared prefix would mean something different
+  resolve to an absolute IRI (`scheme://…`, or `urn:`, `tag:`, `did:`, `mailto:`) without spaces,
+  control or other non-graphic characters, or `<>"{}|^`\`: a bare word or a CURIE with an undeclared prefix would mean something different
   in each registry that loads the template. `scopes` is a list
   of scope seed IRIs, `https://kton.dev/o/<64-hex>` (the seed claim's id): a scope's name is local to
   one registry's config, and a template federates. Absent `scopes` means any scope. An empty role, a

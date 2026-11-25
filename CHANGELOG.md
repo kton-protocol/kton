@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A template role with a control character is refused** (kton-review, found on kton-cockpit
+  #262). 0.5.0 accepted a `signerRoles` entry that resolved to an absolute IRI even when it held an
+  ESC sequence, DEL, a C1 control or a line separator, and the duplicate-role refusal printed the
+  role unquoted, so a caller printing `Set.Refused()` wrote the bytes to its terminal. A role must
+  now be valid UTF-8 of graphic, non-space characters, and every refusal reason quotes the value.
+
 ## 0.5.0 — released 2026-11-25
 
 ### Added
