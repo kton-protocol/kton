@@ -169,6 +169,12 @@ func (c *trigCtx) hashRef(v string) string {
 // Object field values keep hashRef's rule: they are untyped text, "Note:foo" is an absolute IRI by
 // syntax alone, and their form feeds nanopublish's Trusty URI.
 func (c *trigCtx) subjectRef(v string) string {
+	// The per-record projection takes a subject as an IRI only as written: hashRef would percent-encode
+	// "https://x/a b" to the IRI of a different subject, "https://x/a%20b" (kton-review N2 on #314).
+	// Such a subject stays a literal, which Record refuses. The published TriG keeps its encoding.
+	if c.strict && !strings.HasPrefix(v, "sha256:") && !claim.IRIText(v) {
+		return quote(v)
+	}
 	if r := c.hashRef(v); !strings.HasPrefix(r, `"`) {
 		return r
 	}

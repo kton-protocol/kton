@@ -105,7 +105,7 @@ func TestBrokenPercentSubjectIsSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad, _, err := reg.Add(signedAbout(t, "urn:x:%zz", map[string]any{"v": "1"}))
+	bad, _, err := reg.Add(signedBefore(t, "urn:x:%zz", "https://kton.dev/v/reviewed", map[string]any{"v": "1"}))
 	if err != nil {
 		t.Fatal(err)
 	}

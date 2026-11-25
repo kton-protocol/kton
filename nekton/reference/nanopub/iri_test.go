@@ -1,6 +1,8 @@
 package nanopub
 
 import (
+	"bytes"
+	"crypto/ed25519"
 	"strings"
 	"testing"
 
@@ -17,6 +19,30 @@ func signedAbout(t *testing.T, subject string, object map[string]any) core.Envel
 		Predicate: "https://kton.dev/v/reviewed", By: "reviewer", When: "2026-10-25T00:00:00Z",
 		Object: object,
 	}, seedKey("reviewer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env
+}
+
+// signedBefore signs a claim about subject the way a kernel before the signer's IRI check did
+// (kton-review N1/N2 on #314): it builds the payload with a stand-in subject and swaps the real one
+// in, so the projection can be tested on a claim that can no longer be authored.
+func signedBefore(t *testing.T, subject, predicate string, object map[string]any) core.Envelope {
+	t.Helper()
+	const standIn = "urn:stand-in:subject"
+	const standInPred = "https://kton.dev/v/stand-in-predicate"
+	payload, err := claim.StatementPayload(claim.Spec{
+		Subject:   []claim.SubjectSpec{{URI: standIn}},
+		Predicate: standInPred, By: "reviewer", When: "2026-10-25T00:00:00Z", Object: object,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = bytes.Replace(payload, []byte(standIn), []byte(subject), 1)
+	payload = bytes.Replace(payload, []byte(standInPred), []byte(predicate), 1)
+	k := seedKey("reviewer")
+	env, _, err := claim.Seal(payload, ed25519.Sign(k, core.PAE(core.PayloadType, payload)), k.Public().(ed25519.PublicKey))
 	if err != nil {
 		t.Fatal(err)
 	}
