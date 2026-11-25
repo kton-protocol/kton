@@ -164,7 +164,7 @@ before you run what is inside it - a provenance tool that asks you to trust an u
 has already lost the argument.
 
 ```sh
-ver=v0.5.1                      # see github.com/kton-protocol/kton/releases
+ver=v0.5.2                      # see github.com/kton-protocol/kton/releases
 plat=linux_amd64                # or linux_arm64, darwin_amd64, darwin_arm64 (windows_amd64 is a .zip)
 base="https://github.com/kton-protocol/kton/releases/download/$ver"
 curl -fLO "$base/kton_${ver}_${plat}.tar.gz"
@@ -180,7 +180,7 @@ The archive holds the three binaries and the licence - nothing to configure: no 
 runtime, no service. `plankton` and `nekton` are the kernels; `kton` is the cockpit and the only one
 that ever reaches the network (`kton fetch`, Rekor anchoring).
 
-**Versions.** The binaries are at **0.5.1**; the specification they implement is **0.1 (draft)**. Those
+**Versions.** The binaries are at **0.5.2**; the specification they implement is **0.1 (draft)**. Those
 are two axes on purpose - the releases since 0.2 changed the reference implementation and the nekton
 store layout, not the protocol - so a record authored by a 0.4 binary still stamps `specVersion: "0.1"`.
 A store of a newer layout than a binary knows is refused with the format named, and 0.4 no longer
@@ -192,9 +192,9 @@ for every release you skip.
 1.22 does it; resolving directly from the repository (`GOPROXY=direct`) needs **Go 1.25 or newer**:*
 
 ```sh
-go install kton.dev/plankton/cmd/plankton@v0.5.1
-go install kton.dev/nekton/cmd/nekton@v0.5.1
-go install kton.dev/kton/cmd/kton@v0.5.1
+go install kton.dev/plankton/cmd/plankton@v0.5.2
+go install kton.dev/nekton/cmd/nekton@v0.5.2
+go install kton.dev/kton/cmd/kton@v0.5.2
 ```
 
 *The modules live in subdirectories (`reference/`, `nekton/reference/`, `kton/reference/`) while
@@ -215,8 +215,8 @@ exist. Inside the workspace nothing changed: the `use` directives still win over
 change to plankton is visible to nekton without a tag.*
 
 *Note also that a versioned install wants a **subdirectory-prefixed tag**: the same help text says
-"If set, all vcs tags must be prefixed with subdir", so `@v0.5.1` looks for `reference/v0.5.1`, not
-the repository's `v0.5.1`. Both exist — the prefixed tags are what `go install` resolves, the plain
+"If set, all vcs tags must be prefixed with subdir", so `@v0.5.2` looks for `reference/v0.5.2`, not
+the repository's `v0.5.2`. Both exist — the prefixed tags are what `go install` resolves, the plain
 one is what builds the release archives.*
 
 *The alternative remains a release archive, or the source build below.*
