@@ -67,6 +67,7 @@ func TestIntentRefusals(t *testing.T) {
 		{"role with DEL", `"signerRoles": ["https://example.org/r/\u007fx"], `, "control characters"},
 		{"role with a C1 control", `"signerRoles": ["https://example.org/r/\u009bx"], `, "control characters"},
 		{"role with a line separator", `"signerRoles": ["https://example.org/r/\u2028x"], `, "control characters"},
+		{"role with a right-to-left override", `"signerRoles": ["https://example.org/r/\u202ex"], `, "control characters"},
 		{"role with a no-break space", `"signerRoles": ["https://example.org/r/\u00a0x"], `, "control characters"},
 		{"scope by name", `"scopes": ["qa"], `, "not a scope seed IRI"},
 		{"scope as a claim id", `"scopes": ["sha256:` + strings.TrimPrefix(seedIRI, template.ScopeIRIPrefix) + `"], `, "not a scope seed IRI"},
@@ -92,7 +93,7 @@ func TestIntentRefusals(t *testing.T) {
 			}
 			// A reason is printed to terminals: it must carry no control character from the file.
 			for _, ch := range r {
-				if ch < 0x20 || ch == 0x7f || (ch >= 0x80 && ch < 0xa0) || ch == 0x2028 {
+				if ch < 0x20 || ch == 0x7f || (ch >= 0x80 && ch < 0xa0) || ch == 0x2028 || ch == 0x202e {
 					t.Errorf("reason carries control character %U: %q", ch, r)
 				}
 			}
