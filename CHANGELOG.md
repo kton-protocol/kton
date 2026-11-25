@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **SPEC §12 says what happens when a deferred record settles** (kton-cockpit's question,
+  25.11.). It is offered once, at its position, while unresolved; settling it later is not a
+  change to the record, so `sync` does not offer it again, and a peer settles it on its own union
+  or asks `claim(id)`. A participant may renumber it, but a peer must not rely on that. This
+  states what the reference registry already does; no code changes.
+
 - **A template role with a control character is refused** (kton-review, found on kton-cockpit
   #262). 0.5.0 accepted a `signerRoles` entry that resolved to an absolute IRI even when it held an
   ESC sequence, DEL, a C1 control or a line separator, and the duplicate-role refusal printed the
