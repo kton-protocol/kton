@@ -7,6 +7,13 @@
   ESC sequence, DEL, a C1 control or a line separator, and the duplicate-role refusal printed the
   role unquoted, so a caller printing `Set.Refused()` wrote the bytes to its terminal. A role must
   now be valid UTF-8 of graphic, non-space characters, and every refusal reason quotes the value.
+- **The same for the rest of a template** (kton-review follow-up on #306). A predicate or context
+  that resolves to text with a space, a control character or `<>"{}|^`\` refuses the template; a
+  field name or enum value with a control character too (spaces stay allowed in enum values). A
+  template whose name has one is skipped, not refused, so `Set.Refused()` never carries it. An
+  `iri` field value with a control character is refused at signing. And `://` alone no longer
+  makes an absolute IRI: the part before it must be a scheme (kton-review N2 on #301), so
+  `zz:lead://x` or `://x` is not a role.
 
 ## 0.5.0 — released 2026-11-25
 
