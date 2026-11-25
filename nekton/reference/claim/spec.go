@@ -160,6 +160,39 @@ func normHashField(m map[string]any) {
 	}
 }
 
+// PercentEncodingValid reports whether every '%' in s starts a %XX escape (two hex digits), as an
+// IRI requires (RFC 3987). The empty string is valid. The template loader, the signer and the
+// per-record projection use this one rule, so they agree on what can be written.
+func PercentEncodingValid(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && !(i+2 < len(s) && isHexDigit(s[i+1]) && isHexDigit(s[i+2])) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+}
+
+// percentEncodedIRIs refuses a predicate or context IRI with a '%' that starts no %XX escape, for a
+// body built from the convenience fields and for a PredicateBody alike. Such an IRI is invalid (RFC
+// 3987): its N-Quads projection is refused by a conforming store, so a signed, held claim would never
+// load (kton-cockpit, 25.11.). Escaping it as %25 is no fix - that is a different, valid IRI another
+// claim may name (#268 T1) - so it is refused before it is signed.
+func percentEncodedIRIs(body map[string]any) error {
+	for _, k := range []string{"predicate", "context"} {
+		m, _ := body[k].(map[string]any)
+		u, _ := m["uri"].(string)
+		if !PercentEncodingValid(u) {
+			return fmt.Errorf("%s %q has a '%%' that does not start a %%XX escape, so it is no IRI; "+
+				"write %%25 for a literal '%%'", k, u)
+		}
+	}
+	return nil
+}
+
 // BuildPredicate assembles the predicate body from the convenience fields (used when
 // PredicateBody is absent). Keys omitted when empty; canonicalization sorts them.
 func (spec Spec) BuildPredicate() (map[string]any, error) {
@@ -218,6 +251,9 @@ func (spec Spec) BuildPredicate() (map[string]any, error) {
 func StatementPayload(spec Spec) ([]byte, error) {
 	body, err := spec.BuildPredicate()
 	if err != nil {
+		return nil, err
+	}
+	if err := percentEncodedIRIs(body); err != nil {
 		return nil, err
 	}
 	pt := spec.PredicateType

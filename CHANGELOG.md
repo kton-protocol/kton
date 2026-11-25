@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A `%` that starts no `%XX` escape is refused in an IRI** (kton-cockpit, 25.11., found on their
+  v0.5.1 bump). 0.5.1 signed a claim with the predicate `https://example.test/v/has%zz` and
+  projected it unchanged; an RFC 3987 store (oxigraph) refused the whole N-Quads document for it.
+  Now one rule, `claim.PercentEncodingValid`, is applied when a template loads (predicate, context,
+  roles), when an `iri` field value is filled in, when a claim is signed (predicate and context,
+  from the convenience fields or a `PredicateBody`), and in the per-record projection, which refuses
+  such a claim signed before rather than emit it. It is not rewritten as `%25`: that names a
+  different, valid IRI another claim may use (#268 T1). Write `%25` for a literal `%`.
+
 ## 0.5.1 — released 2026-11-25
 
 - **SPEC §12 says what happens when a deferred record settles** (kton-cockpit's question,
