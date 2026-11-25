@@ -838,7 +838,9 @@ Records are immutable and content-addressed, so replication is a conflict-free s
   and its position stays where it was. A peer is therefore not told by `sync` that a record moved
   from unresolved to resolved at the participant that holds it. It settles the record against its
   own union once it holds the dependency (§11), or it asks `claim(id)` again. A participant MAY
-  renumber a settled record, but a peer MUST NOT rely on it.
+  renumber a settled record, but a peer MUST NOT rely on it. A peer that receives a record it
+  already holds, with the same id and bytes, changes nothing: records are content-addressed and
+  replication is a set union.
 
   A change to a record that has already been answered for - a co-signature added to it - MUST reach a
   peer that is past it. How is the participant's business: a store whose records carry an order of
