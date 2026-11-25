@@ -52,6 +52,71 @@ type Template struct {
 	// "previous": the signing tool fills the reserved field `replaces` with the claim this one
 	// supersedes. Absent: nothing is filled in. The kernel does not decide what "previous" is.
 	Replace string `json:"replace,omitempty"`
+	// SignerRoles and Scopes state INTENT (#300): who a claim from this template is meant to be
+	// signed by, as roles, and which scopes it is meant to be written into. Both are advisory, like
+	// Target: signing, verifying and the store ignore them, and a claim signed by someone else or
+	// written into another scope is exactly as valid as before - kton grants no permissions. A
+	// reader (a view, a review, a cockpit) compares them with the signers and scopes it observes.
+	//
+	// A role is an opaque IRI or CURIE, resolved through the aliases like the predicate; the kernel
+	// does not interpret it. A scope is named by its seed's IRI (ScopeIRIPrefix + the seed claim's
+	// hex), because a scope's NAME is local to one registry's config and a template federates.
+	// Absent Scopes means any scope.
+	SignerRoles []string `json:"signerRoles,omitempty"`
+	Scopes      []string `json:"scopes,omitempty"`
+}
+
+// ScopeIRIPrefix is how a template names a scope in Scopes: the IRI of the scope's seed claim id,
+// https://kton.dev/o/<64 hex>, the form the RDF projection gives every content hash.
+const ScopeIRIPrefix = "https://kton.dev/o/"
+
+// intentError names what makes a template's SignerRoles or Scopes unusable, or returns "". It runs
+// with the Set's aliases, because two CURIEs that resolve to one role are the same role.
+func (s Set) intentError(t Template) string {
+	seen := map[string]string{}
+	for _, r := range t.SignerRoles {
+		if strings.TrimSpace(r) == "" {
+			return "\"signerRoles\" has an empty entry"
+		}
+		full := s.Resolve(r)
+		// kton-review R1 on #301: a role must resolve to an absolute IRI, here. Unlike the predicate it
+		// is never checked again at signing, and a role whose meaning depends on the reader's aliases
+		// would make intended-vs-observed differ per registry once the template federates. Characters
+		// every projection would have to escape are refused as well.
+		if !isAbsoluteIRI(full) || strings.ContainsAny(full, " \t\n\r<>\"{}|^`\\") {
+			return fmt.Sprintf("\"signerRoles\": %q does not resolve to an absolute IRI without spaces or "+
+				"<>\"{}|^`\\ (resolved: %q); a role is an IRI, or a CURIE the alias file resolves", r, full)
+		}
+		if prev, dup := seen[full]; dup {
+			return fmt.Sprintf("\"signerRoles\" names %s twice (%q and %q)", full, prev, r)
+		}
+		seen[full] = r
+	}
+	seenScope := map[string]bool{}
+	for _, sc := range t.Scopes {
+		if !isScopeIRI(sc) {
+			return fmt.Sprintf("\"scopes\": %q is not a scope seed IRI (%s<64 lowercase hex>); a scope's "+
+				"name is local to one registry's config, so a template names the scope by its seed", sc, ScopeIRIPrefix)
+		}
+		if seenScope[sc] {
+			return fmt.Sprintf("\"scopes\" names %s twice", sc)
+		}
+		seenScope[sc] = true
+	}
+	return ""
+}
+
+func isScopeIRI(x string) bool {
+	h, ok := strings.CutPrefix(x, ScopeIRIPrefix)
+	if !ok || len(h) != 64 {
+		return false
+	}
+	for _, c := range h {
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ReplacesField is the reserved field that names the claim a claim replaces: a claim id (#257).
@@ -187,7 +252,11 @@ func newWithOrigin(templates map[string][]byte, aliases []byte, origin string) (
 		// the declared name is what makes it possible, and that key was introduced to stop hyphenated
 		// names being mangled. Both properties are wanted, so the collision is named instead of
 		// silently broken either way.
-		if reason := templateShapeError(t); reason != "" {
+		reason := templateShapeError(t)
+		if reason == "" {
+			reason = s.intentError(t)
+		}
+		if reason != "" {
 			if s.refused == nil {
 				s.refused = map[string]string{}
 			}
