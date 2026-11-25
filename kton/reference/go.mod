@@ -12,6 +12,6 @@ go 1.22
 // real versions. They are also why the three modules must be tagged in dependency order:
 // plankton, then nekton, then kton.
 require (
-	kton.dev/nekton v0.4.3
-	kton.dev/plankton v0.4.3
+	kton.dev/nekton v0.5.0
+	kton.dev/plankton v0.5.0
 )
