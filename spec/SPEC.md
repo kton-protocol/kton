@@ -833,6 +833,13 @@ Records are immutable and content-addressed, so replication is a conflict-free s
   records and later resolves one locally can never deliver it: it was never offered while unresolved,
   and once resolved it sits at a position below every cursor already issued.
 
+  Resolving a record is **not** a change to it. When a participant later obtains the dependency and
+  settles a record it already offered, the record's bytes are the same, so nothing new is offered
+  and its position stays where it was. A peer is therefore not told by `sync` that a record moved
+  from unresolved to resolved at the participant that holds it. It settles the record against its
+  own union once it holds the dependency (§11), or it asks `claim(id)` again. A participant MAY
+  renumber a settled record, but a peer MUST NOT rely on it.
+
   A change to a record that has already been answered for - a co-signature added to it - MUST reach a
   peer that is past it. How is the participant's business: a store whose records carry an order of
   their own (a hash chain) records the change as a new entry and leaves the existing one in place; a
